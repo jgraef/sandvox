@@ -8,14 +8,7 @@ use bevy_ecs::{
         MessageReader,
     },
     query::With,
-    schedule::{
-        IntoScheduleConfigs,
-        SystemCondition,
-        common_conditions::{
-            resource_changed,
-            resource_exists_and_changed,
-        },
-    },
+    schedule::IntoScheduleConfigs,
     system::{
         Commands,
         Populated,
@@ -35,9 +28,9 @@ use winit::keyboard::KeyCode;
 
 use crate::{
     app::{
+        DeltaTime,
         Focused,
         GrabCursor,
-        WindowSize,
     },
     ecs::{
         plugin::{
@@ -78,17 +71,21 @@ pub struct CameraControllerState {
 
 #[derive(Clone, Copy, Debug, Component)]
 pub struct CameraControllerConfig {
+    // rad / (pixel * second)
     pub mouse_sensitivity: f32,
+
     pub keybindings: CameraControllerKeybindings,
+
+    // block / second
     pub movement_speed: f32,
 }
 
 impl Default for CameraControllerConfig {
     fn default() -> Self {
         Self {
-            mouse_sensitivity: 4.0,
+            mouse_sensitivity: 0.3,
             keybindings: Default::default(),
-            movement_speed: 0.25,
+            movement_speed: 8.0,
         }
     }
 }
@@ -167,20 +164,20 @@ fn grab_cursor(
 fn update_camera(
     mouse_position: Option<Res<MousePosition>>,
     keys: Res<Keys>,
-    active_window: Single<(&WindowSize, &AttachedCamera), With<Focused>>,
+    delta_time: Res<DeltaTime>,
+    camera: Single<&AttachedCamera, With<Focused>>,
     mut cameras: Query<(
         &mut LocalTransform,
         &mut CameraControllerState,
         &CameraControllerConfig,
     )>,
 ) {
-    let (window_size, camera) = *active_window;
-
     if let Ok((mut transform, mut state, config)) = cameras.get_mut(camera.0) {
+        let dt = delta_time.seconds();
+
         // mouse
         if let Some(mouse_position) = mouse_position {
-            let scale = config.mouse_sensitivity * 2.0 / window_size.size.sum() as f32;
-            let delta = mouse_position.frame_delta * scale;
+            let delta = dt * config.mouse_sensitivity * mouse_position.frame_delta;
             tracing::trace!(?delta, ?mouse_position.frame_delta, "mouse movement");
 
             state.yaw += delta.x;
@@ -197,7 +194,8 @@ fn update_camera(
         tracing::trace!(?keys.pressed, "keys pressed");
         let mut check_key = |key_code, direction| {
             if keys.pressed.contains(&key_code) {
-                transform.translate_local(&Translation3::from(config.movement_speed * direction));
+                transform
+                    .translate_local(&Translation3::from(dt * config.movement_speed * direction));
             }
         };
 

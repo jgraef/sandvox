@@ -16,6 +16,7 @@ use bevy_ecs::{
     },
     resource::Resource,
     schedule::{
+        InternedSystemSet,
         IntoScheduleConfigs,
         Schedule,
         ScheduleLabel,
@@ -48,9 +49,11 @@ impl Default for WorldBuilder {
 
         schedules.insert(Schedule::new(schedule::Startup));
         schedules.insert(Schedule::new(schedule::PostStartup));
+
         schedules.insert(Schedule::new(schedule::PreUpdate));
         schedules.insert(Schedule::new(schedule::Update));
-        schedules.insert(Schedule::new(schedule::PostStartup));
+        schedules.insert(Schedule::new(schedule::PostUpdate));
+
         schedules.insert(Schedule::new(schedule::Render));
 
         schedules.add_systems(schedule::PreUpdate, message_update_system);
@@ -92,6 +95,16 @@ impl WorldBuilder {
     ) -> &mut Self {
         let mut schedules = self.world.resource_mut::<Schedules>();
         schedules.add_systems(schedule, systems);
+        self
+    }
+
+    pub fn configure_system_sets<M>(
+        &mut self,
+        schedule: impl ScheduleLabel,
+        systems: impl IntoScheduleConfigs<InternedSystemSet, M>,
+    ) -> &mut Self {
+        let mut schedules = self.world.resource_mut::<Schedules>();
+        schedules.configure_sets(schedule, systems);
         self
     }
 

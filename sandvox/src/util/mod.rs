@@ -2,7 +2,9 @@ pub mod image;
 pub mod oneshot;
 
 use std::ops::{
+    Add,
     Bound,
+    Mul,
     Range,
     RangeBounds,
 };
@@ -23,4 +25,11 @@ pub fn normalize_index_bounds(range: impl RangeBounds<usize>, len: usize) -> Ran
     let end = end.max(start);
 
     Range { start, end }
+}
+
+pub fn lerp<T>(x0: T, x1: T, t: f32) -> T
+where
+    T: Mul<f32, Output = T> + Add<T, Output = T>,
+{
+    x0 * (1.0 - t) + x1 * t
 }

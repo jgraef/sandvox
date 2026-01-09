@@ -12,6 +12,7 @@ use bevy_ecs::{
         Changed,
         Or,
     },
+    resource::Resource,
     schedule::IntoScheduleConfigs,
     system::{
         Commands,
@@ -45,10 +46,7 @@ use crate::{
         schedule,
         transform::GlobalTransform,
     },
-    render::{
-        RenderPipelineContext,
-        RenderSystems,
-    },
+    render::RenderSystems,
     wgpu::WgpuContext,
 };
 
@@ -56,11 +54,17 @@ pub struct CameraPlugin;
 
 impl Plugin for CameraPlugin {
     fn setup(&self, builder: &mut WorldBuilder) -> Result<(), Error> {
-        builder.add_message::<CameraAdded>().add_systems(
-            schedule::Render,
-            (create_camera_bind_groups, update_camera_bind_groups)
-                .before(RenderSystems::BeginFrame),
-        );
+        builder
+            .add_message::<CameraAdded>()
+            .add_systems(
+                schedule::Startup,
+                create_camera_bind_group_layout.in_set(RenderSystems::Setup),
+            )
+            .add_systems(
+                schedule::Render,
+                (create_camera_bind_groups, update_camera_bind_groups)
+                    .before(RenderSystems::BeginFrame),
+            );
 
         Ok(())
     }
@@ -200,9 +204,34 @@ fn camera_added(mut world: DeferredWorld, context: HookContext) {
 #[derive(Clone, Copy, Debug, Message)]
 struct CameraAdded(Entity);
 
+#[derive(Clone, Debug, Resource)]
+pub struct CameraBindGroupLayout {
+    pub bind_group_layout: wgpu::BindGroupLayout,
+}
+
+fn create_camera_bind_group_layout(wgpu: Res<WgpuContext>, mut commands: Commands) {
+    let bind_group_layout =
+        wgpu.device
+            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("camera"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+
+    commands.insert_resource(CameraBindGroupLayout { bind_group_layout });
+}
+
 fn create_camera_bind_groups(
     wgpu: Res<WgpuContext>,
-    pipeline_context: Res<RenderPipelineContext>,
+    camera_bind_group_layout: Res<CameraBindGroupLayout>,
     mut added: MessageReader<CameraAdded>,
     cameras: Query<(&CameraProjection, Option<&GlobalTransform>)>,
     mut commands: Commands,
@@ -213,7 +242,7 @@ fn create_camera_bind_groups(
                 transform.map_or_else(|| Isometry3::identity(), |transform| *transform.isometry());
             let data = CameraData::new(projection, &transform);
             let bind_group =
-                CameraBindGroup::new(&wgpu, &pipeline_context.camera_bind_group_layout, &data);
+                CameraBindGroup::new(&wgpu, &camera_bind_group_layout.bind_group_layout, &data);
             commands.entity(entity).insert(bind_group);
         }
     }

@@ -1,6 +1,10 @@
 use std::{
     collections::HashMap,
     sync::Arc,
+    time::{
+        Duration,
+        Instant,
+    },
 };
 
 use bevy_ecs::{
@@ -34,9 +38,7 @@ use bevy_ecs::{
 use color_eyre::eyre::Error;
 use nalgebra::{
     Point2,
-    Point3,
     Vector2,
-    Vector3,
 };
 use winit::{
     application::ApplicationHandler,
@@ -60,34 +62,17 @@ use crate::{
             WorldBuilder,
         },
         schedule,
-        transform::{
-            LocalTransform,
-            TransformHierarchyPlugin,
-        },
+        transform::TransformHierarchyPlugin,
     },
     input::InputPlugin,
     render::{
         RenderPlugin,
-        camera::{
-            CameraPlugin,
-            CameraProjection,
-        },
-        camera_controller::{
-            CameraController,
-            CameraControllerPlugin,
-        },
-        surface::{
-            AttachedCamera,
-            ClearColor,
-        },
-    },
-    voxel::flat::{
-        CHUNK_SIDE_LENGTH,
-        FlatChunk,
-        FlatChunkPlugin,
-        IsOpaque,
+        camera::CameraPlugin,
+        camera_controller::CameraControllerPlugin,
+        texture_atlas::AtlasPlugin,
     },
     wgpu::WgpuPlugin,
+    world::WorldPlugin,
 };
 
 #[derive(Debug)]
@@ -98,6 +83,9 @@ pub struct App {
 impl App {
     pub fn new() -> Result<Self, Error> {
         let world = WorldBuilder::default()
+            .insert_resource(DeltaTime {
+                delta: Duration::ZERO,
+            })
             .add_plugin(AppPlugin::default())?
             .add_plugin(TransformHierarchyPlugin)?
             .add_plugin(InputPlugin)?
@@ -105,8 +93,8 @@ impl App {
             .add_plugin(RenderPlugin::default())?
             .add_plugin(CameraPlugin)?
             .add_plugin(CameraControllerPlugin)?
-            .add_plugin(FlatChunkPlugin::<TestVoxel>::default())?
-            .add_systems(schedule::PostStartup, init_world)
+            .add_plugin(AtlasPlugin)?
+            .add_plugin(WorldPlugin)?
             .build();
 
         Ok(Self { world })
@@ -123,11 +111,15 @@ impl App {
     }
 
     fn update(&mut self) {
+        let start_time = Instant::now();
+
         self.world.run_schedule(schedule::PreUpdate);
         self.world.run_schedule(schedule::Update);
         self.world.run_schedule(schedule::PostUpdate);
 
         self.world.run_schedule(schedule::Render);
+
+        self.world.resource_mut::<DeltaTime>().delta = start_time.elapsed();
     }
 }
 
@@ -569,59 +561,13 @@ fn ungrab_cursor(world: DeferredWorld, context: HookContext) {
         .unwrap();
 }
 
-fn init_world(mut commands: Commands) {
-    let chunk_side_length = CHUNK_SIDE_LENGTH as f32;
-    let chunk_center = Point3::from(Vector3::repeat(0.5 * chunk_side_length));
-
-    commands.spawn((
-        {
-            /*let noise = Perlin::new(1312);
-            let scaling = 1.0 / chunk_side_length;
-
-            FlatChunk::from_fn(move |point| {
-                let value = noise.get((point.cast::<f32>() * scaling).cast::<f64>().into());
-
-                if value > 0.0 {
-                    TestVoxel::Dirt
-                }
-                else {
-                    TestVoxel::Air
-                }
-            })*/
-            FlatChunk::from_fn(|_point| TestVoxel::Dirt)
-        },
-        LocalTransform::from(Point3::origin()),
-    ));
-
-    let camera_entity = commands
-        .spawn((
-            CameraProjection::default(),
-            LocalTransform::look_at(
-                &(chunk_center - chunk_side_length * Vector3::z()),
-                &chunk_center,
-                &Vector3::y(),
-            ),
-            CameraController::default(),
-        ))
-        .id();
-
-    commands.spawn((
-        Window {
-            title: "SandVox".to_owned(),
-        },
-        ClearColor::default(),
-        AttachedCamera(camera_entity),
-    ));
+#[derive(Clone, Copy, Debug, Resource)]
+pub struct DeltaTime {
+    pub delta: Duration,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum TestVoxel {
-    Air,
-    Dirt,
-}
-
-impl IsOpaque for TestVoxel {
-    fn is_opaque(&self) -> bool {
-        matches!(self, Self::Dirt)
+impl DeltaTime {
+    pub fn seconds(&self) -> f32 {
+        self.delta.as_secs_f32()
     }
 }

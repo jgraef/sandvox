@@ -7,7 +7,10 @@ struct VertexInput {
     normal: vec4f,
 
     @location(2)
-    uv: vec2f
+    uv: vec2f,
+
+    @location(3)
+    texture_id: u32,
 }
 
 struct VertexOutput {
@@ -22,6 +25,10 @@ struct VertexOutput {
 
     @location(2)
     uv: vec2f,
+
+    @location(3)
+    @interpolate(flat, either)
+    texture_id: u32,
 }
 
 struct Camera {
@@ -40,6 +47,15 @@ var texture_albedo: texture_2d<f32>;
 @binding(1)
 var sampler_albedo: sampler;
 
+struct AtlasSlot {
+    offset: vec2f,
+    size: vec2f,
+}
+
+@group(1)
+@binding(2)
+var<storage, read> atlas_data: array<AtlasSlot>;
+
 @vertex
 fn vertex_main(input: VertexInput) -> VertexOutput {
     let world_position = input.position;
@@ -52,16 +68,27 @@ fn vertex_main(input: VertexInput) -> VertexOutput {
         world_position,
         normal,
         input.uv,
+        input.texture_id,
     );
 }
 
 @fragment
 fn fragment_main(input: VertexOutput) -> @location(0) vec4f {
     let normal = normalize(input.normal.xyz);
-    let light_dir = vec3f(0, 0, -1);
-    let attenuation = mix(0.5, 1.0, abs(dot(normal, light_dir)));
+    let light_dir = -normalize(vec3f(0.5, 1, 0.5));
+    //let attenuation = mix(0.5, 1.0, max(0, dot(normal, light_dir)));
+    let attenuation = mix(0.6, 1.0, dot(normal, light_dir));
 
-    var color = textureSample(texture_albedo, sampler_albedo, input.uv);
+    let uv = atlas_map_uv(input.texture_id, input.uv);
+    var color = textureSample(texture_albedo, sampler_albedo, uv);
+    //let color = vec4f(1, 0, 1, 1);
+
     return vec4f(color.rgb * attenuation, 1.0);
     //return vec4f(0.0, 1.0, 0.0, 1.0);
+}
+
+
+fn atlas_map_uv(texture_id: u32, uv: vec2f) -> vec2f {
+    let entry = atlas_data[texture_id];
+    return mix(entry.offset, entry.offset + entry.size, uv % vec2f(1));
 }

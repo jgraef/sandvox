@@ -6,15 +6,26 @@ use std::{
     sync::Arc,
 };
 
-use bevy_ecs::resource::Resource;
+use bevy_ecs::{
+    resource::Resource,
+    schedule::{
+        IntoScheduleConfigs,
+        SystemSet,
+    },
+    system::Commands,
+    world::World,
+};
 use color_eyre::eyre::Error;
 use nalgebra::Vector2;
 use palette::LinSrgba;
 
 use crate::{
-    ecs::plugin::{
-        Plugin,
-        WorldBuilder,
+    ecs::{
+        plugin::{
+            Plugin,
+            WorldBuilder,
+        },
+        schedule,
     },
     wgpu::buffer::{
         StagingPool,
@@ -29,11 +40,30 @@ pub struct WgpuPlugin {
 
 impl Plugin for WgpuPlugin {
     fn setup(&self, builder: &mut WorldBuilder) -> Result<(), Error> {
-        let context = WgpuContext::new(&self.config)?;
-        builder.insert_resource(context);
+        let context_builder = WgpuContextBuilder::new(self.config)?;
+        builder.insert_resource(context_builder).add_systems(
+            schedule::Startup,
+            create_wgpu_context
+                .in_set(WgpuSystems::CreateContext)
+                .after(WgpuSystems::RequestFeatures),
+        );
 
         Ok(())
     }
+}
+
+fn create_wgpu_context(mut commands: Commands) {
+    commands.queue(|world: &mut World| {
+        let context_builder = world.remove_resource::<WgpuContextBuilder>().unwrap();
+        let context = context_builder.build().unwrap();
+        world.insert_resource(context);
+    })
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, SystemSet)]
+pub enum WgpuSystems {
+    CreateContext,
+    RequestFeatures,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -55,6 +85,103 @@ impl Default for WgpuConfig {
     }
 }
 
+#[derive(Debug, Resource)]
+pub struct WgpuContextBuilder {
+    pub config: WgpuConfig,
+    pub instance: wgpu::Instance,
+    pub adapter: wgpu::Adapter,
+    pub adapter_info: wgpu::AdapterInfo,
+    pub supported_features: wgpu::Features,
+    pub supported_limits: wgpu::Limits,
+    pub enabled_features: wgpu::Features,
+    pub enabled_limits: wgpu::Limits,
+}
+
+impl WgpuContextBuilder {
+    pub fn new(config: WgpuConfig) -> Result<Self, Error> {
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+            backends: config.backends,
+            ..Default::default()
+        });
+
+        // fixme: this won't do on web
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: config.power_preference,
+            ..Default::default()
+        }))?;
+
+        let adapter_info = adapter.get_info();
+
+        let supported_features = adapter.features();
+        let supported_limits = adapter.limits();
+
+        let enabled_features = wgpu::Features::default();
+        let enabled_limits = wgpu::Limits::defaults();
+
+        Ok(Self {
+            config,
+            instance,
+            adapter,
+            adapter_info,
+            supported_features,
+            supported_limits,
+            enabled_features,
+            enabled_limits,
+        })
+    }
+
+    #[track_caller]
+    pub fn request_features(&mut self, features: wgpu::Features) -> &mut Self {
+        let unsupported = features.difference(self.supported_features);
+        if !unsupported.is_empty() {
+            panic!("Requested features that iare not supported by the adapter: {unsupported:?}");
+        }
+
+        self.enabled_features.insert(features);
+
+        self
+    }
+
+    pub fn build(self) -> Result<WgpuContext, Error> {
+        // fixme: this won't do on web
+        let (device, queue) = pollster::block_on(async {
+            // these might need to be modified
+
+            let (device, queue) = self
+                .adapter
+                .request_device(&wgpu::DeviceDescriptor {
+                    required_features: self.enabled_features,
+                    required_limits: self.enabled_limits,
+                    memory_hints: match self.config.memory_hints {
+                        MemoryHints::Performance => wgpu::MemoryHints::Performance,
+                        MemoryHints::MemoryUsage => wgpu::MemoryHints::MemoryUsage,
+                    },
+                    ..Default::default()
+                })
+                .await?;
+
+            Ok::<_, Error>((device, queue))
+        })?;
+
+        let info = WgpuInfo {
+            adapter: self.adapter_info,
+            features: device.features(),
+            limits: device.limits(),
+        };
+
+        let staging_pool = StagingPool::new(self.config.staging_chunk_size, "staging pool");
+
+        Ok(WgpuContext {
+            instance: self.instance,
+            adapter: self.adapter,
+            device,
+            queue,
+            staging_pool,
+            info: Arc::new(info),
+        })
+    }
+}
+
 #[derive(Clone, Debug, Resource)]
 pub struct WgpuContext {
     pub instance: wgpu::Instance,
@@ -63,61 +190,6 @@ pub struct WgpuContext {
     pub queue: wgpu::Queue,
     pub staging_pool: StagingPool,
     pub info: Arc<WgpuInfo>,
-}
-
-impl WgpuContext {
-    pub fn new(config: &WgpuConfig) -> Result<Self, Error> {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends: config.backends,
-            ..Default::default()
-        });
-
-        // fixme: this won't do on web
-        let (adapter, device, queue) = pollster::block_on(async {
-            let adapter = instance
-                .request_adapter(&wgpu::RequestAdapterOptions {
-                    power_preference: config.power_preference,
-                    ..Default::default()
-                })
-                .await?;
-
-            // these might need to be modified
-            let required_features = wgpu::Features::default();
-            let required_limits = wgpu::Limits::defaults();
-
-            let (device, queue) = adapter
-                .request_device(&wgpu::DeviceDescriptor {
-                    required_features,
-                    required_limits,
-                    memory_hints: match config.memory_hints {
-                        MemoryHints::Performance => wgpu::MemoryHints::Performance,
-                        MemoryHints::MemoryUsage => wgpu::MemoryHints::MemoryUsage,
-                    },
-                    ..Default::default()
-                })
-                .await?;
-
-            Ok::<_, Error>((adapter, device, queue))
-        })?;
-
-        let info = WgpuInfo {
-            adapter: adapter.get_info(),
-            features: device.features(),
-            limits: device.limits(),
-        };
-        tracing::debug!("{info:#?}");
-
-        let staging_pool = StagingPool::new(config.staging_chunk_size, "staging pool");
-
-        Ok(Self {
-            instance,
-            adapter,
-            device,
-            queue,
-            staging_pool,
-            info: Arc::new(info),
-        })
-    }
 }
 
 #[derive(Clone, Debug)]

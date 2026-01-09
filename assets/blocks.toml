@@ -1,0 +1,14 @@
+[air]
+# no texture
+
+[dirt]
+texture = "blocks/dirt.png"
+
+[stone]
+texture = "blocks/stone.png"
+
+[sand]
+texture = "blocks/sand.png"
+
+[cobble]
+texture = "blocks/cobble.png"

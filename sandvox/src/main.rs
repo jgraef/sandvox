@@ -5,6 +5,7 @@ pub mod render;
 pub mod util;
 pub mod voxel;
 pub mod wgpu;
+pub mod world;
 
 use clap::{
     Parser,
@@ -14,7 +15,7 @@ use color_eyre::eyre::Error;
 
 use crate::{
     app::App,
-    wgpu::WgpuContext,
+    wgpu::WgpuContextBuilder,
 };
 
 #[derive(Debug, Parser)]
@@ -51,7 +52,17 @@ fn main() -> Result<(), Error> {
 }
 
 fn wgpu_info() -> Result<(), Error> {
-    let wgpu = WgpuContext::new(&Default::default())?;
-    println!("{:#?}", wgpu.info);
+    let builder = WgpuContextBuilder::new(Default::default())?;
+
+    println!("supported features:");
+    for (feature, _) in builder.supported_features.iter_names() {
+        println!("  {feature}");
+    }
+
+    println!("supported limits: {:#?}", builder.supported_limits);
+
+    let context = builder.build()?;
+    println!("adapter info: {:#?}", context.info.adapter);
+
     Ok(())
 }

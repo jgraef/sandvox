@@ -17,10 +17,7 @@ use crate::ecs::{
         Plugin,
         WorldBuilder,
     },
-    schedule::{
-        PostStartup,
-        PostUpdate,
-    },
+    schedule,
     transform::systems::{
         mark_dirty_trees,
         propagate_parent_transforms,
@@ -46,7 +43,7 @@ impl Plugin for TransformHierarchyPlugin {
         builder
             // add transform systems to startup so the first update is "correct"
             .add_systems(
-                PostStartup,
+                schedule::PostStartup,
                 (
                     mark_dirty_trees,
                     propagate_parent_transforms,
@@ -56,7 +53,7 @@ impl Plugin for TransformHierarchyPlugin {
                     .in_set(TransformSystems::Propagate),
             )
             .add_systems(
-                PostUpdate,
+                schedule::PostUpdate,
                 (
                     mark_dirty_trees,
                     propagate_parent_transforms,
