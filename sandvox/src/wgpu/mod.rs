@@ -22,15 +22,29 @@ use crate::{
     },
 };
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct WgpuPlugin {
+    pub config: WgpuConfig,
+}
+
+impl Plugin for WgpuPlugin {
+    fn setup(&self, builder: &mut WorldBuilder) -> Result<(), Error> {
+        let context = WgpuContext::new(&self.config)?;
+        builder.insert_resource(context);
+
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct WgpuConfig {
     pub backends: wgpu::Backends,
     pub power_preference: wgpu::PowerPreference,
     pub staging_chunk_size: wgpu::BufferSize,
     pub memory_hints: MemoryHints,
 }
 
-impl Default for WgpuPlugin {
+impl Default for WgpuConfig {
     fn default() -> Self {
         Self {
             backends: wgpu::Backends::VULKAN,
@@ -41,10 +55,20 @@ impl Default for WgpuPlugin {
     }
 }
 
-impl Plugin for WgpuPlugin {
-    fn setup(&self, builder: &mut WorldBuilder) -> Result<(), Error> {
+#[derive(Clone, Debug, Resource)]
+pub struct WgpuContext {
+    pub instance: wgpu::Instance,
+    pub adapter: wgpu::Adapter,
+    pub device: wgpu::Device,
+    pub queue: wgpu::Queue,
+    pub staging_pool: StagingPool,
+    pub info: Arc<WgpuInfo>,
+}
+
+impl WgpuContext {
+    pub fn new(config: &WgpuConfig) -> Result<Self, Error> {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends: self.backends,
+            backends: config.backends,
             ..Default::default()
         });
 
@@ -52,7 +76,7 @@ impl Plugin for WgpuPlugin {
         let (adapter, device, queue) = pollster::block_on(async {
             let adapter = instance
                 .request_adapter(&wgpu::RequestAdapterOptions {
-                    power_preference: self.power_preference,
+                    power_preference: config.power_preference,
                     ..Default::default()
                 })
                 .await?;
@@ -65,7 +89,7 @@ impl Plugin for WgpuPlugin {
                 .request_device(&wgpu::DeviceDescriptor {
                     required_features,
                     required_limits,
-                    memory_hints: match self.memory_hints {
+                    memory_hints: match config.memory_hints {
                         MemoryHints::Performance => wgpu::MemoryHints::Performance,
                         MemoryHints::MemoryUsage => wgpu::MemoryHints::MemoryUsage,
                     },
@@ -76,22 +100,31 @@ impl Plugin for WgpuPlugin {
             Ok::<_, Error>((adapter, device, queue))
         })?;
 
-        let adapter_info = Arc::new(adapter.get_info());
-        tracing::debug!(?adapter_info);
-        let staging_pool = StagingPool::new(self.staging_chunk_size, "staging pool");
+        let info = WgpuInfo {
+            adapter: adapter.get_info(),
+            features: device.features(),
+            limits: device.limits(),
+        };
+        tracing::debug!("{info:#?}");
 
-        let context = WgpuContext {
+        let staging_pool = StagingPool::new(config.staging_chunk_size, "staging pool");
+
+        Ok(Self {
             instance,
             adapter,
             device,
             queue,
-            adapter_info,
             staging_pool,
-        };
-        builder.insert_resource(context);
-
-        Ok(())
+            info: Arc::new(info),
+        })
     }
+}
+
+#[derive(Clone, Debug)]
+pub struct WgpuInfo {
+    pub adapter: wgpu::AdapterInfo,
+    pub features: wgpu::Features,
+    pub limits: wgpu::Limits,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -99,16 +132,6 @@ pub enum MemoryHints {
     #[default]
     Performance,
     MemoryUsage,
-}
-
-#[derive(Clone, Debug, Resource)]
-pub struct WgpuContext {
-    pub instance: wgpu::Instance,
-    pub adapter: wgpu::Adapter,
-    pub device: wgpu::Device,
-    pub queue: wgpu::Queue,
-    pub adapter_info: Arc<wgpu::AdapterInfo>,
-    pub staging_pool: StagingPool,
 }
 
 pub fn create_texture(

@@ -24,14 +24,22 @@ use bevy_ecs::{
     },
     world::World,
 };
-use clap::Parser;
 use color_eyre::eyre::Error;
-use nalgebra::Vector2;
-use palette::WithAlpha;
+use nalgebra::{
+    Point3,
+    Vector2,
+    Vector3,
+};
+use noise::{
+    NoiseFn,
+    Perlin,
+};
 use winit::{
     application::ApplicationHandler,
+    event::StartCause,
     event_loop::{
         ActiveEventLoop,
+        ControlFlow,
         EventLoop,
     },
     window::{
@@ -47,22 +55,30 @@ use crate::{
             WorldBuilder,
         },
         schedule,
+        transform::{
+            LocalTransform,
+            TransformHierarchyPlugin,
+        },
     },
     render::{
         RenderPlugin,
-        camera::CameraProjection,
+        camera::{
+            CameraPlugin,
+            CameraProjection,
+        },
         surface::{
             AttachedCamera,
             ClearColor,
         },
     },
+    voxel::flat::{
+        CHUNK_SIDE_LENGTH,
+        FlatChunk,
+        FlatChunkPlugin,
+        IsOpaque,
+    },
     wgpu::WgpuPlugin,
 };
-
-#[derive(Debug, Parser)]
-pub struct Args {
-    // todo
-}
 
 #[derive(Debug)]
 pub struct App {
@@ -70,18 +86,16 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(args: Args) -> Result<Self, Error> {
-        let _ = args;
-
-        let mut builder = WorldBuilder::default();
-
-        builder.register_plugin(AppPlugin::default())?;
-        builder.register_plugin(WgpuPlugin::default())?;
-        builder.register_plugin(RenderPlugin::default())?;
-
-        builder.add_systems(schedule::PostStartup, init_world);
-
-        let world = builder.build();
+    pub fn new() -> Result<Self, Error> {
+        let world = WorldBuilder::default()
+            .add_plugin(AppPlugin::default())?
+            .add_plugin(TransformHierarchyPlugin)?
+            .add_plugin(WgpuPlugin::default())?
+            .add_plugin(RenderPlugin::default())?
+            .add_plugin(CameraPlugin)?
+            .add_plugin(FlatChunkPlugin::<TestVoxel>::default())?
+            .add_systems(schedule::PostStartup, init_world)
+            .build();
 
         Ok(Self { world })
     }
@@ -90,6 +104,14 @@ impl App {
         let event_loop = EventLoop::new()?;
         event_loop.run_app(&mut self)?;
         Ok(())
+    }
+
+    fn update(&mut self) {
+        self.world.run_schedule(schedule::PreUpdate);
+        self.world.run_schedule(schedule::Update);
+        self.world.run_schedule(schedule::PostUpdate);
+
+        self.world.run_schedule(schedule::Render);
     }
 }
 
@@ -112,13 +134,23 @@ impl ApplicationHandler for App {
         window_id: WindowId,
         event: winit::event::WindowEvent,
     ) {
-        let redraw = self
-            .world
+        self.world
             .run_system_cached_with(handle_event, (event_loop, window_id, event))
             .unwrap();
+    }
 
-        if redraw {
-            self.world.run_schedule(schedule::Render);
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        event_loop.set_control_flow(ControlFlow::Poll);
+    }
+
+    fn new_events(&mut self, event_loop: &ActiveEventLoop, cause: StartCause) {
+        let _ = event_loop;
+
+        match cause {
+            StartCause::Poll => {
+                self.update();
+            }
+            _ => {}
         }
     }
 }
@@ -136,7 +168,7 @@ struct AppPlugin;
 impl Plugin for AppPlugin {
     fn setup(&self, builder: &mut WorldBuilder) -> Result<(), Error> {
         builder
-            .register_message::<WindowEvent>()
+            .add_message::<WindowEvent>()
             .insert_resource(AppState::Suspended)
             .insert_resource(WindowIdMap::default());
         Ok(())
@@ -173,7 +205,7 @@ fn handle_event(
         In<winit::event::WindowEvent>,
     ),
     mut params: ParamSet<(CreateWindows, HandleEvents)>,
-) -> bool {
+) {
     params.p0().create_windows(event_loop);
     params.p1().handle_event(event_loop, window_id, event)
 }
@@ -227,7 +259,7 @@ impl<'w, 's> HandleEvents<'w, 's> {
         event_loop: &ActiveEventLoop,
         window_id: WindowId,
         event: winit::event::WindowEvent,
-    ) -> bool {
+    ) {
         use winit::event::WindowEvent::*;
 
         if let Some(window_entity) = self.window_id_map.id_map.get(&window_id) {
@@ -304,13 +336,11 @@ impl<'w, 's> HandleEvents<'w, 's> {
                     // todo
                 }
                 RedrawRequested => {
-                    return true;
+                    // todo
                 }
                 _ => {}
             }
         }
-
-        false
     }
 }
 
@@ -341,13 +371,57 @@ pub enum WindowEvent {
 }
 
 fn init_world(mut commands: Commands) {
-    let camera_entity = commands.spawn((CameraProjection::default(),)).id();
+    let chunk_side_length = CHUNK_SIDE_LENGTH as f32;
+    let chunk_center = Point3::from(Vector3::repeat(0.5 * chunk_side_length));
+
+    commands.spawn((
+        {
+            /*let noise = Perlin::new(1312);
+            let scaling = 1.0 / chunk_side_length;
+
+            FlatChunk::from_fn(move |point| {
+                let value = noise.get((point.cast::<f32>() * scaling).cast::<f64>().into());
+
+                if value > 0.0 {
+                    TestVoxel::Dirt
+                }
+                else {
+                    TestVoxel::Air
+                }
+            })*/
+            FlatChunk::from_fn(|_point| TestVoxel::Dirt)
+        },
+        LocalTransform::from(Point3::origin()),
+    ));
+
+    let camera_entity = commands
+        .spawn((
+            CameraProjection::default(),
+            LocalTransform::look_at(
+                &(chunk_center - chunk_side_length * Vector3::z()),
+                &chunk_center,
+                &Vector3::y(),
+            ),
+        ))
+        .id();
 
     commands.spawn((
         Window {
             title: "SandVox".to_owned(),
         },
-        ClearColor(palette::named::PURPLE.into_format().with_alpha(1.0)),
+        ClearColor::default(),
         AttachedCamera(camera_entity),
     ));
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TestVoxel {
+    Air,
+    Dirt,
+}
+
+impl IsOpaque for TestVoxel {
+    fn is_opaque(&self) -> bool {
+        matches!(self, Self::Dirt)
+    }
 }

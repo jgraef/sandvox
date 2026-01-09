@@ -431,19 +431,19 @@ impl StagingBufferProvider for OneShotStaging {
 
 #[derive(Clone, Debug)]
 pub struct StagingPool {
-    inner: Arc<ChunkPoolInner>,
+    inner: Arc<StagingPoolInner>,
 }
 
 #[derive(Debug)]
-struct ChunkPoolInner {
+struct StagingPoolInner {
     /// Minimum size of an individual chunk
     chunk_size: wgpu::BufferSize,
     chunk_label: Cow<'static, str>,
-    state: RwLock<ChunkPoolState>,
+    state: RwLock<StagingPoolState>,
 }
 
 #[derive(Debug, Default)]
-struct ChunkPoolState {
+struct StagingPoolState {
     /// Chunks that are back from the GPU and ready to be mapped for write and
     /// put into `active_chunks`.
     free_chunks: Vec<Chunk>,
@@ -462,7 +462,7 @@ impl Default for StagingPool {
 impl StagingPool {
     pub fn new(chunk_size: wgpu::BufferSize, chunk_label: impl Into<Cow<'static, str>>) -> Self {
         Self {
-            inner: Arc::new(ChunkPoolInner {
+            inner: Arc::new(StagingPoolInner {
                 chunk_size,
                 chunk_label: chunk_label.into(),
                 state: RwLock::new(Default::default()),

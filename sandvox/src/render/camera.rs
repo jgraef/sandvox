@@ -1,14 +1,73 @@
 use std::f32::consts::FRAC_PI_4;
 
-use bevy_ecs::component::Component;
+use bevy_ecs::{
+    component::Component,
+    entity::Entity,
+    lifecycle::HookContext,
+    message::{
+        Message,
+        MessageReader,
+    },
+    query::{
+        Changed,
+        Or,
+    },
+    schedule::IntoScheduleConfigs,
+    system::{
+        Commands,
+        Query,
+        Res,
+    },
+    world::DeferredWorld,
+};
+use bytemuck::{
+    Pod,
+    Zeroable,
+    bytes_of,
+};
+use color_eyre::eyre::Error;
 use nalgebra::{
+    Isometry3,
+    Matrix4,
     Perspective3,
     Point2,
     Point3,
     Vector2,
 };
+use wgpu::util::DeviceExt;
+
+use crate::{
+    ecs::{
+        plugin::{
+            Plugin,
+            WorldBuilder,
+        },
+        schedule,
+        transform::GlobalTransform,
+    },
+    render::{
+        RenderPipelineContext,
+        RenderSystems,
+    },
+    wgpu::WgpuContext,
+};
+
+pub struct CameraPlugin;
+
+impl Plugin for CameraPlugin {
+    fn setup(&self, builder: &mut WorldBuilder) -> Result<(), Error> {
+        builder.add_message::<CameraAdded>().add_systems(
+            schedule::Render,
+            (create_camera_bind_groups, update_camera_bind_groups)
+                .before(RenderSystems::BeginFrame),
+        );
+
+        Ok(())
+    }
+}
 
 #[derive(Clone, Copy, Debug, Component)]
+#[component(on_add = camera_added)]
 pub struct CameraProjection {
     // note: not public because nalgebra seems to have the z-axis inverted relative to our
     // coordinate systems
@@ -20,7 +79,7 @@ impl CameraProjection {
     ///
     /// - `fovy`: Field of view along (camera-local) Y-axis (vertical angle).
     pub fn new(fovy: f32) -> Self {
-        let projection = Perspective3::new(1.0, fovy, 0.1, 100.0);
+        let projection = Perspective3::new(1.0, fovy, 0.1, 1000.0);
         Self { projection }
     }
 
@@ -67,5 +126,108 @@ impl Default for CameraProjection {
         let fovy = FRAC_PI_4;
 
         Self::new(fovy)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+#[repr(C)]
+struct CameraData {
+    matrix: Matrix4<f32>,
+}
+
+impl CameraData {
+    fn new(projection: &CameraProjection, transform: &Isometry3<f32>) -> Self {
+        let transform = transform.inverse().to_homogeneous();
+
+        let projection = {
+            let mut projection = projection.projection.to_homogeneous();
+            // nalgebra assumes we're using a right-handed world coordinate system and a
+            // left-handed NDC and thus flips the z-axis. Undo this here.
+            projection[(2, 2)] *= -1.0;
+            projection[(3, 2)] = 1.0;
+            projection
+        };
+
+        let matrix = projection * transform;
+        // let mut matrix = Matrix4::identity();
+        //let matrix = projection;
+
+        Self { matrix }
+    }
+}
+
+#[derive(Clone, Debug, Component)]
+pub struct CameraBindGroup {
+    pub buffer: wgpu::Buffer,
+    pub bind_group: wgpu::BindGroup,
+}
+
+impl CameraBindGroup {
+    fn new(
+        wgpu: &WgpuContext,
+        camera_bind_group_layout: &wgpu::BindGroupLayout,
+        data: &CameraData,
+    ) -> Self {
+        let buffer = wgpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("camera"),
+                contents: bytemuck::bytes_of(data),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
+
+        let bind_group = wgpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("camera"),
+            layout: camera_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: buffer.as_entire_binding(),
+            }],
+        });
+
+        Self { buffer, bind_group }
+    }
+
+    fn update(&self, wgpu: &WgpuContext, data: &CameraData) {
+        wgpu.queue.write_buffer(&self.buffer, 0, bytes_of(data));
+    }
+}
+
+fn camera_added(mut world: DeferredWorld, context: HookContext) {
+    world.write_message(CameraAdded(context.entity));
+}
+
+#[derive(Clone, Copy, Debug, Message)]
+struct CameraAdded(Entity);
+
+fn create_camera_bind_groups(
+    wgpu: Res<WgpuContext>,
+    pipeline_context: Res<RenderPipelineContext>,
+    mut added: MessageReader<CameraAdded>,
+    cameras: Query<(&CameraProjection, Option<&GlobalTransform>)>,
+    mut commands: Commands,
+) {
+    for &CameraAdded(entity) in added.read() {
+        if let Ok((projection, transform)) = cameras.get(entity) {
+            let transform =
+                transform.map_or_else(|| Isometry3::identity(), |transform| *transform.isometry());
+            let data = CameraData::new(projection, &transform);
+            let bind_group =
+                CameraBindGroup::new(&wgpu, &pipeline_context.camera_bind_group_layout, &data);
+            commands.entity(entity).insert(bind_group);
+        }
+    }
+}
+
+fn update_camera_bind_groups(
+    wgpu: Res<WgpuContext>,
+    changed: Query<
+        (&mut CameraBindGroup, &CameraProjection, &GlobalTransform),
+        Or<(Changed<CameraProjection>, Changed<GlobalTransform>)>,
+    >,
+) {
+    for (bind_group, projection, transform) in changed {
+        let data = CameraData::new(projection, transform.isometry());
+        bind_group.update(&wgpu, &data);
     }
 }

@@ -66,18 +66,18 @@ impl Default for WorldBuilder {
 }
 
 impl WorldBuilder {
-    pub fn build(mut self) -> World {
+    pub fn build(&mut self) -> World {
         self.world.run_schedule(schedule::Startup);
         self.world.run_schedule(schedule::PostStartup);
 
-        self.world
+        std::mem::take(&mut self.world)
     }
 
-    pub fn register_plugin(&mut self, plugin: impl Plugin) -> Result<(), Error> {
+    pub fn add_plugin(&mut self, plugin: impl Plugin) -> Result<&mut Self, Error> {
         if self.registered_plugins.insert(plugin.type_id()) {
             plugin.setup(self)?;
         }
-        Ok(())
+        Ok(self)
     }
 
     pub fn insert_resource(&mut self, resource: impl Resource) -> &mut Self {
@@ -95,7 +95,7 @@ impl WorldBuilder {
         self
     }
 
-    pub fn register_message<M>(&mut self) -> &mut Self
+    pub fn add_message<M>(&mut self) -> &mut Self
     where
         M: Message,
     {
