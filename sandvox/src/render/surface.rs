@@ -73,6 +73,7 @@ pub fn handle_window_events(
                     // events first
                 }
             }
+            _ => {}
         }
     }
 }

@@ -1,5 +1,6 @@
 pub mod app;
 pub mod ecs;
+pub mod input;
 pub mod render;
 pub mod util;
 pub mod voxel;

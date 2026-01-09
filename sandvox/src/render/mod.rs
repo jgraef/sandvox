@@ -1,4 +1,5 @@
 pub mod camera;
+pub mod camera_controller;
 pub mod frame;
 pub mod surface;
 

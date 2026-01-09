@@ -133,6 +133,20 @@ where
                 let point = Point3::from(morton_decode::<u16, 3>(i.try_into().unwrap()));
 
                 for face in BlockFace::ALL {
+                    let mut point = point;
+                    match face {
+                        BlockFace::Right => {
+                            point.x += 1;
+                        }
+                        BlockFace::Up => {
+                            point.y += 1;
+                        }
+                        BlockFace::Back => {
+                            point.z += 1;
+                        }
+                        _ => {}
+                    }
+
                     mesh_builder.push_quad(point, Vector2::repeat(1), face);
                 }
             }
@@ -276,7 +290,7 @@ impl RenderPipelinePerSurface {
                     topology: wgpu::PrimitiveTopology::TriangleList,
                     strip_index_format: None,
                     front_face: wgpu::FrontFace::Ccw,
-                    cull_mode: None, // todo
+                    cull_mode: Some(wgpu::Face::Back),
                     unclipped_depth: false,
                     polygon_mode: wgpu::PolygonMode::Fill,
                     conservative: false,
@@ -284,7 +298,7 @@ impl RenderPipelinePerSurface {
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: surface.depth_texture_format(),
                     depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::Always,
+                    depth_compare: wgpu::CompareFunction::Less,
                     stencil: Default::default(),
                     bias: Default::default(),
                 }),
@@ -369,7 +383,7 @@ fn create_render_pipelines_for_surfaces(
     mut commands: Commands,
 ) {
     for (entity, name, surface) in surfaces {
-        tracing::debug!(surface = %name, "creating voxel::flat render pipeline for surface");
+        tracing::trace!(surface = %name, "creating voxel::flat render pipeline for surface");
 
         commands
             .entity(entity)
@@ -399,6 +413,6 @@ fn render_chunks(
             }
         }
 
-        tracing::debug!("rendering {count} chunk meshes");
+        tracing::trace!("rendered {count} chunk meshes");
     }
 }

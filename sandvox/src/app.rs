@@ -6,33 +6,37 @@ use std::{
 use bevy_ecs::{
     component::Component,
     entity::Entity,
+    lifecycle::HookContext,
     message::{
         Message,
         MessageWriter,
     },
-    query::Without,
+    query::{
+        With,
+        Without,
+    },
     resource::Resource,
     system::{
         Commands,
         In,
         InRef,
-        ParamSet,
         Query,
         Res,
         ResMut,
+        Single,
         SystemParam,
     },
-    world::World,
+    world::{
+        DeferredWorld,
+        World,
+    },
 };
 use color_eyre::eyre::Error;
 use nalgebra::{
+    Point2,
     Point3,
     Vector2,
     Vector3,
-};
-use noise::{
-    NoiseFn,
-    Perlin,
 };
 use winit::{
     application::ApplicationHandler,
@@ -42,9 +46,10 @@ use winit::{
         ControlFlow,
         EventLoop,
     },
+    keyboard::PhysicalKey,
     window::{
+        CursorGrabMode,
         WindowAttributes,
-        WindowId,
     },
 };
 
@@ -60,11 +65,16 @@ use crate::{
             TransformHierarchyPlugin,
         },
     },
+    input::InputPlugin,
     render::{
         RenderPlugin,
         camera::{
             CameraPlugin,
             CameraProjection,
+        },
+        camera_controller::{
+            CameraController,
+            CameraControllerPlugin,
         },
         surface::{
             AttachedCamera,
@@ -90,9 +100,11 @@ impl App {
         let world = WorldBuilder::default()
             .add_plugin(AppPlugin::default())?
             .add_plugin(TransformHierarchyPlugin)?
+            .add_plugin(InputPlugin)?
             .add_plugin(WgpuPlugin::default())?
             .add_plugin(RenderPlugin::default())?
             .add_plugin(CameraPlugin)?
+            .add_plugin(CameraControllerPlugin)?
             .add_plugin(FlatChunkPlugin::<TestVoxel>::default())?
             .add_systems(schedule::PostStartup, init_world)
             .build();
@@ -101,7 +113,11 @@ impl App {
     }
 
     pub fn run(mut self) -> Result<(), Error> {
-        let event_loop = EventLoop::new()?;
+        let event_loop = EventLoop::with_user_event().build()?;
+
+        let proxy = event_loop.create_proxy();
+        self.world.insert_resource(EventLoopProxy(proxy));
+
         event_loop.run_app(&mut self)?;
         Ok(())
     }
@@ -115,7 +131,7 @@ impl App {
     }
 }
 
-impl ApplicationHandler for App {
+impl ApplicationHandler<AppEvent> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         self.world
             .run_system_cached_with(resume_app, event_loop)
@@ -131,11 +147,22 @@ impl ApplicationHandler for App {
     fn window_event(
         &mut self,
         event_loop: &ActiveEventLoop,
-        window_id: WindowId,
+        window_id: winit::window::WindowId,
         event: winit::event::WindowEvent,
     ) {
         self.world
-            .run_system_cached_with(handle_event, (event_loop, window_id, event))
+            .run_system_cached_with(handle_window_event, (event_loop, window_id, event))
+            .unwrap();
+    }
+
+    fn device_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        device_id: winit::event::DeviceId,
+        event: winit::event::DeviceEvent,
+    ) {
+        self.world
+            .run_system_cached_with(handle_device_event, (event_loop, device_id, event))
             .unwrap();
     }
 
@@ -151,6 +178,62 @@ impl ApplicationHandler for App {
                 self.update();
             }
             _ => {}
+        }
+    }
+
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: AppEvent) {
+        let _ = event_loop;
+
+        match event {
+            AppEvent::GrabCursor { window } => {
+                self.world
+                    .run_system_cached_with(
+                        |In(window), windows: Query<&WindowHandle>| {
+                            if let Ok(window) = windows.get(window) {
+                                tracing::debug!("grabbing cursor");
+
+                                // todo: make this more platform-independent
+
+                                window
+                                    .window
+                                    .set_cursor_grab(CursorGrabMode::Locked)
+                                    .unwrap();
+
+                                window.window.set_cursor_visible(false);
+
+                                // this panics even though we just locked the
+                                // cursor (wayland)
+                                /*
+                                let window_size = window.window.inner_size();
+                                window
+                                    .window
+                                    .set_cursor_position(PhysicalPosition {
+                                        x: i32::try_from(window_size.width).unwrap() / 2,
+                                        y: i32::try_from(window_size.height).unwrap() / 2,
+                                    })
+                                    .unwrap();
+                                */
+                            }
+                        },
+                        window,
+                    )
+                    .unwrap();
+            }
+            AppEvent::UngrabCursor { window } => {
+                self.world
+                    .run_system_cached_with(
+                        |In(window), windows: Query<&WindowHandle>| {
+                            if let Ok(window) = windows.get(window) {
+                                tracing::debug!("ungrabbing cursor");
+
+                                window.window.set_cursor_grab(CursorGrabMode::None).unwrap();
+                                window.window.set_cursor_visible(true);
+                            }
+                        },
+                        window,
+                    )
+                    .unwrap();
+            }
         }
     }
 }
@@ -198,16 +281,163 @@ fn suspend_app(InRef(_event_loop): InRef<ActiveEventLoop>, mut state: ResMut<App
     }
 }
 
-fn handle_event(
+fn handle_window_event(
     (InRef(event_loop), In(window_id), In(event)): (
         InRef<ActiveEventLoop>,
-        In<WindowId>,
+        In<winit::window::WindowId>,
         In<winit::event::WindowEvent>,
     ),
-    mut params: ParamSet<(CreateWindows, HandleEvents)>,
+    mut state: ResMut<AppState>,
+    window_id_map: Res<WindowIdMap>,
+    mut window_events: MessageWriter<WindowEvent>,
+    mut window_sizes: Query<&mut WindowSize>,
+    mut commands: Commands,
 ) {
-    params.p0().create_windows(event_loop);
-    params.p1().handle_event(event_loop, window_id, event)
+    if let Some(window_entity) = window_id_map.id_map.get(&window_id) {
+        match event {
+            winit::event::WindowEvent::Resized(physical_size) => {
+                let size = Vector2::new(physical_size.width, physical_size.height);
+
+                if let Ok(mut window_size) = window_sizes.get_mut(*window_entity) {
+                    window_size.size = size;
+                }
+                else {
+                    commands.entity(*window_entity).insert(WindowSize { size });
+                }
+
+                window_events.write(WindowEvent::Resized {
+                    window: *window_entity,
+                    size,
+                });
+            }
+            winit::event::WindowEvent::CloseRequested => {
+                tracing::debug!("close requested");
+                *state = AppState::Exiting;
+                event_loop.exit();
+            }
+            winit::event::WindowEvent::Destroyed => {
+                // todo: instead just tell rendering system to destroy that surface
+                tracing::debug!("window destroyed");
+                *state = AppState::Exiting;
+                event_loop.exit();
+            }
+            winit::event::WindowEvent::KeyboardInput {
+                device_id: _,
+                event,
+                is_synthetic,
+            } => {
+                if !is_synthetic {
+                    match event.state {
+                        winit::event::ElementState::Pressed => {
+                            window_events.write(WindowEvent::KeyPressed {
+                                window: *window_entity,
+                                key: event.physical_key,
+                            });
+                        }
+                        winit::event::ElementState::Released => {
+                            window_events.write(WindowEvent::KeyReleased {
+                                window: *window_entity,
+                                key: event.physical_key,
+                            });
+                        }
+                    }
+                }
+
+                // todo
+            }
+            winit::event::WindowEvent::ModifiersChanged(_modifiers) => {
+                // todo
+            }
+            winit::event::WindowEvent::CursorMoved {
+                device_id: _,
+                position,
+            } => {
+                window_events.write(WindowEvent::MouseMoved {
+                    window: *window_entity,
+                    position: Point2::new(position.x, position.y).cast(),
+                });
+            }
+            winit::event::WindowEvent::CursorEntered { device_id: _ } => {
+                window_events.write(WindowEvent::MouseEntered {
+                    window: *window_entity,
+                });
+            }
+            winit::event::WindowEvent::CursorLeft { device_id: _ } => {
+                window_events.write(WindowEvent::MouseLeft {
+                    window: *window_entity,
+                });
+            }
+            winit::event::WindowEvent::MouseWheel {
+                device_id: _,
+                delta: _,
+                phase: _,
+            } => {
+                // todo
+            }
+            winit::event::WindowEvent::MouseInput {
+                device_id: _,
+                state: _,
+                button: _,
+            } => todo!(),
+            winit::event::WindowEvent::ScaleFactorChanged {
+                scale_factor: _,
+                inner_size_writer: _,
+            } => {
+                // todo
+            }
+            winit::event::WindowEvent::ThemeChanged(_theme) => {
+                // todo
+            }
+            winit::event::WindowEvent::RedrawRequested => {
+                // todo
+            }
+            winit::event::WindowEvent::Focused(focused) => {
+                if focused {
+                    tracing::debug!(window = ?window_entity, "window gained focus");
+
+                    window_events.write(WindowEvent::GainedFocus {
+                        window: *window_entity,
+                    });
+                    commands.entity(*window_entity).insert(Focused);
+                }
+                else {
+                    tracing::debug!(window = ?window_entity, "window lost focus");
+
+                    window_events.write(WindowEvent::LostFocus {
+                        window: *window_entity,
+                    });
+                    commands.entity(*window_entity).try_remove::<Focused>();
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn handle_device_event(
+    (InRef(event_loop), In(device_id), In(event)): (
+        InRef<ActiveEventLoop>,
+        In<winit::event::DeviceId>,
+        In<winit::event::DeviceEvent>,
+    ),
+    focused_window: Option<Single<Entity, With<Focused>>>,
+    mut window_events: MessageWriter<WindowEvent>,
+) {
+    use winit::event::DeviceEvent::*;
+
+    let _ = (event_loop, device_id);
+
+    match event {
+        MouseMotion { delta } => {
+            if let Some(focused_window) = focused_window {
+                window_events.write(WindowEvent::MouseMovedDelta {
+                    window: *focused_window,
+                    delta: Vector2::new(delta.0 as f32, delta.1 as f32),
+                });
+            }
+        }
+        _ => {}
+    }
 }
 
 #[derive(SystemParam)]
@@ -244,106 +474,6 @@ impl<'world, 'state> CreateWindows<'world, 'state> {
     }
 }
 
-#[derive(SystemParam)]
-struct HandleEvents<'w, 's> {
-    state: ResMut<'w, AppState>,
-    window_id_map: Res<'w, WindowIdMap>,
-    window_events: MessageWriter<'w, WindowEvent>,
-    window_sizes: Query<'w, 's, &'static mut WindowSize>,
-    commands: Commands<'w, 's>,
-}
-
-impl<'w, 's> HandleEvents<'w, 's> {
-    fn handle_event(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        window_id: WindowId,
-        event: winit::event::WindowEvent,
-    ) {
-        use winit::event::WindowEvent::*;
-
-        if let Some(window_entity) = self.window_id_map.id_map.get(&window_id) {
-            match event {
-                Resized(physical_size) => {
-                    let size = Vector2::new(physical_size.width, physical_size.height);
-
-                    if let Ok(mut window_size) = self.window_sizes.get_mut(*window_entity) {
-                        window_size.size = size;
-                    }
-                    else {
-                        self.commands
-                            .entity(*window_entity)
-                            .insert(WindowSize { size });
-                    }
-
-                    self.window_events.write(WindowEvent::Resized {
-                        window: *window_entity,
-                        size,
-                    });
-                }
-                CloseRequested => {
-                    tracing::debug!("close requested");
-                    *self.state = AppState::Exiting;
-                    event_loop.exit();
-                }
-                Destroyed => {
-                    // todo: instead just tell rendering system to destroy that surface
-                    tracing::debug!("window destroyed");
-                    *self.state = AppState::Exiting;
-                    event_loop.exit();
-                }
-                KeyboardInput {
-                    device_id: _,
-                    event: _,
-                    is_synthetic: _,
-                } => {
-                    // todo
-                }
-                ModifiersChanged(_modifiers) => {
-                    // todo
-                }
-                CursorMoved {
-                    device_id: _,
-                    position: _,
-                } => {
-                    // todo
-                }
-                CursorEntered { device_id: _ } => {
-                    // todo
-                }
-                CursorLeft { device_id: _ } => {
-                    // todo
-                }
-                MouseWheel {
-                    device_id: _,
-                    delta: _,
-                    phase: _,
-                } => {
-                    // todo
-                }
-                MouseInput {
-                    device_id: _,
-                    state: _,
-                    button: _,
-                } => todo!(),
-                ScaleFactorChanged {
-                    scale_factor: _,
-                    inner_size_writer: _,
-                } => {
-                    // todo
-                }
-                ThemeChanged(_theme) => {
-                    // todo
-                }
-                RedrawRequested => {
-                    // todo
-                }
-                _ => {}
-            }
-        }
-    }
-}
-
 #[derive(Clone, Debug, Component)]
 pub struct Window {
     pub title: String,
@@ -359,15 +489,84 @@ pub struct WindowSize {
     pub size: Vector2<u32>,
 }
 
+#[derive(Clone, Copy, Debug, Default, Component)]
+pub struct Focused;
+
 #[derive(Debug, Default, Resource)]
 struct WindowIdMap {
-    id_map: HashMap<WindowId, Entity>,
+    id_map: HashMap<winit::window::WindowId, Entity>,
 }
 
 #[derive(Clone, Debug, Message)]
 pub enum WindowEvent {
-    Created { window: Entity },
-    Resized { window: Entity, size: Vector2<u32> },
+    Created {
+        window: Entity,
+    },
+    Resized {
+        window: Entity,
+        size: Vector2<u32>,
+    },
+    MouseMoved {
+        window: Entity,
+        position: Point2<f32>,
+    },
+    MouseMovedDelta {
+        window: Entity,
+        delta: Vector2<f32>,
+    },
+    MouseEntered {
+        window: Entity,
+    },
+    MouseLeft {
+        window: Entity,
+    },
+    GainedFocus {
+        window: Entity,
+    },
+    LostFocus {
+        window: Entity,
+    },
+    KeyPressed {
+        window: Entity,
+        key: PhysicalKey,
+    },
+    KeyReleased {
+        window: Entity,
+        key: PhysicalKey,
+    },
+}
+
+#[derive(Clone, Copy, Debug)]
+enum AppEvent {
+    GrabCursor { window: Entity },
+    UngrabCursor { window: Entity },
+}
+
+#[derive(Clone, Debug, Resource)]
+struct EventLoopProxy(winit::event_loop::EventLoopProxy<AppEvent>);
+
+#[derive(Clone, Copy, Debug, Default, Component)]
+#[component(on_add = grab_cursor, on_remove = ungrab_cursor)]
+pub struct GrabCursor;
+
+fn grab_cursor(world: DeferredWorld, context: HookContext) {
+    let proxy = world.resource::<EventLoopProxy>();
+    proxy
+        .0
+        .send_event(AppEvent::GrabCursor {
+            window: context.entity,
+        })
+        .unwrap();
+}
+
+fn ungrab_cursor(world: DeferredWorld, context: HookContext) {
+    let proxy = world.resource::<EventLoopProxy>();
+    proxy
+        .0
+        .send_event(AppEvent::UngrabCursor {
+            window: context.entity,
+        })
+        .unwrap();
 }
 
 fn init_world(mut commands: Commands) {
@@ -402,6 +601,7 @@ fn init_world(mut commands: Commands) {
                 &chunk_center,
                 &Vector3::y(),
             ),
+            CameraController::default(),
         ))
         .id();
 
