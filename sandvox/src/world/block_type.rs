@@ -52,7 +52,15 @@ impl BlockTypes {
                 .transpose()?;
 
             by_name.insert(name.clone(), i);
-            blocks.push(BlockTypeData { name, texture_id });
+            blocks.push(BlockTypeData {
+                name,
+                texture_id,
+                is_opaque: block_def.is_opaque,
+            });
+        }
+
+        for (i, data) in blocks.iter().enumerate() {
+            tracing::debug!("block_type: {i} => {}", data.name);
         }
 
         Ok(Self { blocks, by_name })
@@ -75,14 +83,13 @@ impl Index<BlockType> for BlockTypes {
 pub struct BlockTypeData {
     pub name: String,
     pub texture_id: Option<AtlasId>,
+    pub is_opaque: bool,
 }
 
 mod config {
-    use std::{
-        collections::HashMap,
-        path::PathBuf,
-    };
+    use std::path::PathBuf;
 
+    use indexmap::IndexMap;
     use serde::{
         Deserialize,
         Serialize,
@@ -91,11 +98,18 @@ mod config {
     #[derive(Clone, Debug, Serialize, Deserialize)]
     #[serde(transparent)]
     pub struct BlockDefs {
-        pub block_defs: HashMap<String, BlockDef>,
+        pub block_defs: IndexMap<String, BlockDef>,
     }
 
     #[derive(Clone, Debug, Serialize, Deserialize)]
     pub struct BlockDef {
         pub texture: Option<PathBuf>,
+
+        #[serde(default = "default_true")]
+        pub is_opaque: bool,
+    }
+
+    fn default_true() -> bool {
+        true
     }
 }

@@ -31,6 +31,11 @@ struct VertexOutput {
     texture_id: u32,
 }
 
+struct VertexOutputWireframe {
+    @builtin(position)
+    fragment_position: vec4f,
+}
+
 struct Camera {
     matrix: mat4x4f,
 }
@@ -73,18 +78,39 @@ fn vertex_main(input: VertexInput) -> VertexOutput {
 }
 
 @fragment
-fn fragment_main(input: VertexOutput) -> @location(0) vec4f {
-    let normal = normalize(input.normal.xyz);
-    let light_dir = -normalize(vec3f(0.5, 1, 0.5));
-    //let attenuation = mix(0.5, 1.0, max(0, dot(normal, light_dir)));
-    let attenuation = mix(0.6, 1.0, dot(normal, light_dir));
+fn fragment_main(input: VertexOutput, @builtin(front_facing) front_face: bool) -> @location(0) vec4f {
+    var color: vec4f;
 
-    let uv = atlas_map_uv(input.texture_id, input.uv);
-    var color = textureSample(texture_albedo, sampler_albedo, uv);
-    //let color = vec4f(1, 0, 1, 1);
+    if front_face {
+        let normal = normalize(input.normal.xyz);
+        let light_dir = -normalize(vec3f(0.5, 1, 0.5));
+        let attenuation = mix(0.6, 1.0, dot(normal, light_dir));
 
-    return vec4f(color.rgb * attenuation, 1.0);
-    //return vec4f(0.0, 1.0, 0.0, 1.0);
+        let uv = atlas_map_uv(input.texture_id, input.uv);
+        color = textureSample(texture_albedo, sampler_albedo, uv);
+        color = vec4f(color.rgb * attenuation, 1);
+    }
+    else {
+        color = vec4f(1, 0, 1, 1);
+    }
+
+    return color;
+}
+
+
+@vertex
+fn vertex_main_wireframe(input: VertexInput) -> VertexOutputWireframe {
+    let world_position = input.position;
+    let fragment_position = camera.matrix * world_position;
+
+    return VertexOutputWireframe(
+        fragment_position,
+    );
+}
+
+@fragment
+fn fragment_main_wireframe(input: VertexOutputWireframe) -> @location(0) vec4f {
+    return vec4f(0, 0, 0, 1);
 }
 
 

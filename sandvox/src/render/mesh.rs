@@ -6,11 +6,15 @@ use bevy_ecs::{
     name::NameOrEntity,
     query::Without,
     resource::Resource,
-    schedule::IntoScheduleConfigs,
+    schedule::{
+        IntoScheduleConfigs,
+        common_conditions::resource_exists,
+    },
     system::{
         Commands,
         Populated,
         Res,
+        ResMut,
     },
 };
 use bytemuck::{
@@ -46,7 +50,11 @@ use crate::{
         },
     },
     voxel::block_face::BlockFace,
-    wgpu::WgpuContext,
+    wgpu::{
+        WgpuContext,
+        WgpuContextBuilder,
+        WgpuSystems,
+    },
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -57,6 +65,10 @@ impl Plugin for MeshPlugin {
         builder
             .add_systems(
                 schedule::Startup,
+                request_wgpu_features.in_set(WgpuSystems::RequestFeatures),
+            )
+            .add_systems(
+                schedule::Startup,
                 create_mesh_render_pipeline_shared
                     .after(RenderSystems::Setup)
                     .after(AtlasSystems::BuildAtlas),
@@ -65,12 +77,23 @@ impl Plugin for MeshPlugin {
                 schedule::Render,
                 (
                     create_mesh_render_pipeline_for_surfaces.in_set(RenderSystems::BeginFrame),
-                    render_chunks.after(RenderSystems::BeginFrame),
+                    render_meshes.in_set(RenderSystems::RenderFrame),
+                    render_wireframes
+                        .in_set(RenderSystems::RenderFrame)
+                        .run_if(resource_exists::<RenderWireframes>)
+                        .after(render_meshes),
                 ),
             );
         Ok(())
     }
 }
+
+fn request_wgpu_features(mut builder: ResMut<WgpuContextBuilder>) {
+    builder.request_features(wgpu::Features::POLYGON_MODE_LINE);
+}
+
+#[derive(Clone, Copy, Debug, Default, Resource)]
+pub struct RenderWireframes;
 
 #[derive(Clone, Debug, Default)]
 pub struct MeshBuilder {
@@ -165,10 +188,10 @@ impl MeshBuilder {
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 #[repr(C)]
 pub struct Vertex {
-    position: Vector4<f32>,
-    normal: Vector4<f32>,
-    uv: Point2<f32>,
-    texture_id: u32,
+    pub position: Vector4<f32>,
+    pub normal: Vector4<f32>,
+    pub uv: Point2<f32>,
+    pub texture_id: u32,
 }
 
 impl Vertex {
@@ -238,6 +261,7 @@ impl MeshRenderPipelineShared {
 #[derive(Debug, Component)]
 struct MeshRenderPipelinePerSurface {
     pipeline: wgpu::RenderPipeline,
+    wireframe_pipeline: wgpu::RenderPipeline,
 }
 
 impl MeshRenderPipelinePerSurface {
@@ -258,6 +282,7 @@ impl MeshRenderPipelinePerSurface {
                     strip_index_format: None,
                     front_face: wgpu::FrontFace::Ccw,
                     cull_mode: Some(wgpu::Face::Back),
+                    //cull_mode: None,
                     unclipped_depth: false,
                     polygon_mode: wgpu::PolygonMode::Fill,
                     conservative: false,
@@ -284,7 +309,52 @@ impl MeshRenderPipelinePerSurface {
                 cache: None,
             });
 
-        Self { pipeline }
+        let wireframe_pipeline =
+            wgpu.device
+                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("wireframe mesh"),
+                    layout: Some(&shared.layout),
+                    vertex: wgpu::VertexState {
+                        module: &shared.shader,
+                        entry_point: Some("vertex_main_wireframe"),
+                        compilation_options: Default::default(),
+                        buffers: &[Vertex::LAYOUT],
+                    },
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        strip_index_format: None,
+                        front_face: wgpu::FrontFace::Ccw,
+                        cull_mode: None,
+                        unclipped_depth: false,
+                        polygon_mode: wgpu::PolygonMode::Line,
+                        conservative: false,
+                    },
+                    depth_stencil: Some(wgpu::DepthStencilState {
+                        format: surface.depth_texture_format(),
+                        depth_write_enabled: false,
+                        depth_compare: wgpu::CompareFunction::LessEqual,
+                        stencil: Default::default(),
+                        bias: Default::default(),
+                    }),
+                    multisample: Default::default(),
+                    fragment: Some(wgpu::FragmentState {
+                        module: &shared.shader,
+                        entry_point: Some("fragment_main_wireframe"),
+                        compilation_options: Default::default(),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: surface.surface_texture_format(),
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                    }),
+                    multiview_mask: None,
+                    cache: None,
+                });
+
+        Self {
+            pipeline,
+            wireframe_pipeline,
+        }
     }
 }
 
@@ -316,7 +386,7 @@ fn create_mesh_render_pipeline_for_surfaces(
     }
 }
 
-fn render_chunks(
+fn render_meshes(
     atlas: Res<Atlas>,
     frames: Populated<(&mut Frame, &MeshRenderPipelinePerSurface)>,
     chunk_meshes: Populated<(&Mesh, &GlobalTransform)>,
@@ -325,6 +395,30 @@ fn render_chunks(
         let mut render_pass = frame.render_pass_mut();
 
         render_pass.set_pipeline(&pipeline.pipeline);
+        render_pass.set_bind_group(1, Some(atlas.bind_group()), &[]);
+
+        let mut count = 0;
+        for (mesh, transform) in &chunk_meshes {
+            // todo: bind transform
+            let _ = transform;
+
+            mesh.draw(&mut render_pass, 0, 0..1);
+            count += 1;
+        }
+
+        tracing::trace!("rendered {count} meshes");
+    }
+}
+
+fn render_wireframes(
+    atlas: Res<Atlas>,
+    frames: Populated<(&mut Frame, &MeshRenderPipelinePerSurface)>,
+    chunk_meshes: Populated<(&Mesh, &GlobalTransform)>,
+) {
+    for (mut frame, pipeline) in frames {
+        let mut render_pass = frame.render_pass_mut();
+
+        render_pass.set_pipeline(&pipeline.wireframe_pipeline);
         render_pass.set_bind_group(1, Some(atlas.bind_group()), &[]);
 
         let mut count = 0;

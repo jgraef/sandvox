@@ -36,14 +36,24 @@ impl Plugin for RenderPlugin {
                 (
                     handle_window_events.before(RenderSystems::BeginFrame),
                     frame::begin_frame.in_set(RenderSystems::BeginFrame),
-                    frame::end_frame
-                        .in_set(RenderSystems::EndFrame)
-                        .after(RenderSystems::BeginFrame),
+                    frame::end_frame.in_set(RenderSystems::EndFrame),
                 ),
             )
             .configure_system_sets(
                 schedule::Startup,
                 RenderSystems::Setup.after(WgpuSystems::CreateContext),
+            )
+            .configure_system_sets(
+                schedule::Render,
+                RenderSystems::RenderFrame.after(RenderSystems::BeginFrame),
+            )
+            .configure_system_sets(
+                schedule::Render,
+                RenderSystems::RenderFrame.before(RenderSystems::EndFrame),
+            )
+            .configure_system_sets(
+                schedule::Render,
+                RenderSystems::EndFrame.after(RenderSystems::BeginFrame),
             );
 
         Ok(())
@@ -54,5 +64,6 @@ impl Plugin for RenderPlugin {
 pub enum RenderSystems {
     Setup,
     BeginFrame,
+    RenderFrame,
     EndFrame,
 }

@@ -1,4 +1,7 @@
-use std::marker::PhantomData;
+use std::{
+    marker::PhantomData,
+    time::Instant,
+};
 
 use bevy_ecs::{
     component::Component,
@@ -43,6 +46,7 @@ use crate::{
     voxel::{
         Voxel,
         block_face::BlockFace,
+        greedy_quads::GreedyMesher,
     },
     wgpu::WgpuContext,
 };
@@ -65,7 +69,8 @@ impl<V> Default for FlatChunkPlugin<V> {
 
 impl<V> Plugin for FlatChunkPlugin<V>
 where
-    V: Voxel + Send + Sync + 'static,
+    //V: VoxelTexture + Send + Sync + 'static,
+    V: Voxel,
 {
     fn setup(&self, builder: &mut WorldBuilder) -> Result<(), Error> {
         builder
@@ -79,7 +84,7 @@ where
 #[derive(Clone, Component)]
 #[component(on_add = chunk_added, on_remove = chunk_removed)]
 pub struct FlatChunk<V> {
-    voxels: Box<[V; CHUNK_NUM_VOXELS]>,
+    pub voxels: Box<[V; CHUNK_NUM_VOXELS]>,
 }
 
 impl<V> FlatChunk<V> {
@@ -161,9 +166,10 @@ fn mesh_chunks<V>(
     chunk_data: Populated<&FlatChunk<V>>,
     mut commands: Commands,
     mut mesh_builder: Local<MeshBuilder>,
-    mut voxel_param: StaticSystemParam<V::SystemParam>,
+    voxel_param: StaticSystemParam<V::Data>,
+    mut greedy_mesher: Local<GreedyMesher<V>>,
 ) where
-    V: Voxel + Send + Sync + 'static,
+    V: Voxel,
 {
     for request in requests.read() {
         tracing::debug!(entity = ?request.entity, "meshing chunk");
@@ -171,7 +177,11 @@ fn mesh_chunks<V>(
         if let Ok(chunk) = chunk_data.get(request.entity) {
             let mut entity = commands.entity(request.entity);
 
-            chunk.naive_mesh(&mut mesh_builder, |voxel| voxel.texture(&mut *voxel_param));
+            let t_start = Instant::now();
+            //chunk.naive_mesh(&mut mesh_builder, |voxel| voxel.texture(&voxel_param));
+            greedy_mesher.mesh(&chunk.voxels, &mut mesh_builder, &voxel_param);
+            let time = t_start.elapsed();
+            tracing::debug!(?time, "meshed chunk");
 
             entity.insert(ChunkMeshed);
             if let Some(mesh) = mesh_builder.finish(&wgpu, "chunk") {

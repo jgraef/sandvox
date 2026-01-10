@@ -32,6 +32,7 @@ use crate::{
     render::{
         camera::CameraProjection,
         camera_controller::CameraController,
+        mesh::RenderWireframes,
         surface::{
             AttachedCamera,
             ClearColor,
@@ -44,6 +45,7 @@ use crate::{
     },
     voxel::{
         Voxel,
+        block_face::BlockFace,
         flat::{
             CHUNK_SIDE_LENGTH,
             FlatChunk,
@@ -69,7 +71,8 @@ impl Plugin for WorldPlugin {
                     load_block_types.in_set(AtlasSystems::InsertTextures),
                     init_world.after(load_block_types),
                 ),
-            );
+            )
+            .insert_resource(RenderWireframes);
 
         Ok(())
     }
@@ -81,11 +84,23 @@ pub struct TerrainVoxel {
 }
 
 impl Voxel for TerrainVoxel {
-    type SystemParam = Res<'static, BlockTypes>;
+    type Data = Res<'static, BlockTypes>;
 
-    fn texture(&self, block_types: &mut Res<BlockTypes>) -> Option<AtlasId> {
+    fn texture<'w, 's>(&self, face: BlockFace, block_types: &Res<BlockTypes>) -> Option<AtlasId> {
+        let _ = face;
         let block_type_data = &block_types[self.block_type];
         block_type_data.texture_id
+    }
+
+    fn is_opaque<'w, 's>(&self, block_types: &Res<BlockTypes>) -> bool {
+        let block_type_data = &block_types[self.block_type];
+        block_type_data.is_opaque
+    }
+
+    fn can_merge<'w, 's>(&self, other: &Self, block_types: &Res<BlockTypes>) -> bool {
+        let _ = block_types;
+        // todo: proper check (e.g. for log textures). this needs to know the face.
+        self.block_type == other.block_type
     }
 }
 
@@ -105,15 +120,24 @@ fn init_world(block_types: Res<BlockTypes>, mut commands: Commands) {
         {
             let dirt = block_types.lookup("dirt").unwrap();
             let stone = block_types.lookup("stone").unwrap();
+            let sand = block_types.lookup("sand").unwrap();
 
             let noise = Perlin::new(1312);
             let scaling = 1.0 / chunk_side_length;
 
-            FlatChunk::from_fn(move |point| {
-                let value = noise.get((point.cast::<f32>() * scaling).cast::<f64>().into());
-                let block_type = if value > 0.0 { dirt } else { stone };
+            let chunk: FlatChunk<TerrainVoxel> = FlatChunk::from_fn(move |point| {
+                let block_type = if point == Point3::origin() {
+                    sand
+                }
+                else {
+                    let value = noise.get((point.cast::<f32>() * scaling).cast::<f64>().into());
+                    if value > 0.0 { dirt } else { stone }
+                };
+
                 TerrainVoxel { block_type }
-            })
+            });
+
+            chunk
         },
         LocalTransform::from(Point3::origin()),
     ));

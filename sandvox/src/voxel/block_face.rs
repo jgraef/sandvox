@@ -7,21 +7,22 @@ use nalgebra::{
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
 pub enum BlockFace {
-    Left,
-    Right,
-    Up,
-    Down,
-    Front,
-    Back,
+    Left = 0,
+    Right = 1,
+    Down = 2,
+    Up = 3,
+    Front = 4,
+    Back = 5,
 }
 
 impl BlockFace {
     pub const ALL: [Self; 6] = [
         Self::Left,
         Self::Right,
-        Self::Up,
         Self::Down,
+        Self::Up,
         Self::Front,
         Self::Back,
     ];
@@ -30,8 +31,8 @@ impl BlockFace {
         match self {
             BlockFace::Left => -Vector3::x_axis(),
             BlockFace::Right => Vector3::x_axis(),
-            BlockFace::Up => -Vector3::y_axis(),
-            BlockFace::Down => Vector3::y_axis(),
+            BlockFace::Down => -Vector3::y_axis(),
+            BlockFace::Up => Vector3::y_axis(),
             BlockFace::Front => -Vector3::z_axis(),
             BlockFace::Back => Vector3::z_axis(),
         }
@@ -47,7 +48,7 @@ impl BlockFace {
                     [0, 0, size.y],
                 ]
             }
-            BlockFace::Up | BlockFace::Down => {
+            BlockFace::Down | BlockFace::Up => {
                 [
                     [0, 0, 0],
                     [size.x, 0, 0],
@@ -72,9 +73,11 @@ impl BlockFace {
     }
 
     pub fn faces(&self) -> [[u8; 3]; 2] {
+        // note: up/down flipped here because the permutations we do in `vertices()`
+        // flips tri orientation
         match self {
             BlockFace::Left | BlockFace::Up | BlockFace::Front => [[0, 1, 2], [0, 2, 3]],
-            BlockFace::Down | BlockFace::Right | BlockFace::Back => [[2, 1, 0], [3, 2, 0]],
+            BlockFace::Right | BlockFace::Down | BlockFace::Back => [[2, 1, 0], [3, 2, 0]],
         }
     }
 }

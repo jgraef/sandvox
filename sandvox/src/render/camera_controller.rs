@@ -24,6 +24,7 @@ use nalgebra::{
     UnitQuaternion,
     Vector3,
 };
+use num_traits::identities::Zero;
 use winit::keyboard::KeyCode;
 
 use crate::{
@@ -177,16 +178,19 @@ fn update_camera(
 
         // mouse
         if let Some(mouse_position) = mouse_position {
-            let delta = dt * config.mouse_sensitivity * mouse_position.frame_delta;
-            tracing::trace!(?delta, ?mouse_position.frame_delta, "mouse movement");
+            if !mouse_position.frame_delta.is_zero() {
+                let delta = dt * config.mouse_sensitivity * mouse_position.frame_delta;
+                tracing::trace!(?delta, ?mouse_position.frame_delta, "mouse movement");
 
-            state.yaw += delta.x;
-            state.pitch += delta.y;
+                state.yaw += delta.x;
+                state.pitch += delta.y;
 
-            let yaw_quaternion = UnitQuaternion::from_axis_angle(&Vector3::y_axis(), state.yaw);
-            let pitch_quaternion = UnitQuaternion::from_axis_angle(&Vector3::x_axis(), state.pitch);
+                let yaw_quaternion = UnitQuaternion::from_axis_angle(&Vector3::y_axis(), state.yaw);
+                let pitch_quaternion =
+                    UnitQuaternion::from_axis_angle(&Vector3::x_axis(), state.pitch);
 
-            transform.isometry.rotation = yaw_quaternion * pitch_quaternion;
+                transform.isometry.rotation = yaw_quaternion * pitch_quaternion;
+            }
         }
 
         // keyboard

@@ -153,8 +153,6 @@ impl CameraData {
         };
 
         let matrix = projection * transform;
-        // let mut matrix = Matrix4::identity();
-        //let matrix = projection;
 
         Self { matrix }
     }
@@ -256,7 +254,7 @@ fn update_camera_bind_groups(
     >,
 ) {
     for (bind_group, projection, transform) in changed {
-        let data = CameraData::new(projection, transform.isometry());
+        let data = CameraData::new(&projection, transform.isometry());
         bind_group.update(&wgpu, &data);
     }
 }
