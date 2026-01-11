@@ -282,127 +282,136 @@ fn handle_window_event(
     mut state: ResMut<AppState>,
     window_id_map: Res<WindowIdMap>,
     mut window_events: MessageWriter<WindowEvent>,
-    mut window_sizes: Query<&mut WindowSize>,
+    mut windows: Query<(&WindowHandle, Option<&mut WindowSize>)>,
     mut commands: Commands,
 ) {
-    if let Some(window_entity) = window_id_map.id_map.get(&window_id) {
-        match event {
-            winit::event::WindowEvent::Resized(physical_size) => {
-                let size = Vector2::new(physical_size.width, physical_size.height);
+    let window_entity = window_id_map
+        .id_map
+        .get(&window_id)
+        .unwrap_or_else(|| panic!("Window not in map: {window_id:?}"));
 
-                if let Ok(mut window_size) = window_sizes.get_mut(*window_entity) {
-                    window_size.size = size;
-                }
-                else {
-                    commands.entity(*window_entity).insert(WindowSize { size });
-                }
+    match event {
+        winit::event::WindowEvent::Resized(physical_size) => {
+            let (window, mut window_size) = windows.get_mut(*window_entity).unwrap();
 
-                window_events.write(WindowEvent::Resized {
-                    window: *window_entity,
-                    size,
-                });
+            let new_size = Vector2::new(physical_size.width, physical_size.height);
+
+            if let Some(window_size) = &mut window_size {
+                window_size.size = new_size;
             }
-            winit::event::WindowEvent::CloseRequested => {
-                tracing::debug!("close requested");
-                *state = AppState::Exiting;
-                event_loop.exit();
+            else {
+                commands
+                    .entity(*window_entity)
+                    .insert(WindowSize { size: new_size });
             }
-            winit::event::WindowEvent::Destroyed => {
-                // todo: instead just tell rendering system to destroy that surface
-                tracing::debug!("window destroyed");
-                *state = AppState::Exiting;
-                event_loop.exit();
-            }
-            winit::event::WindowEvent::KeyboardInput {
-                device_id: _,
-                event,
-                is_synthetic,
-            } => {
-                if !is_synthetic {
-                    match event.state {
-                        winit::event::ElementState::Pressed => {
-                            window_events.write(WindowEvent::KeyPressed {
-                                window: *window_entity,
-                                key: event.physical_key,
-                            });
-                        }
-                        winit::event::ElementState::Released => {
-                            window_events.write(WindowEvent::KeyReleased {
-                                window: *window_entity,
-                                key: event.physical_key,
-                            });
-                        }
+
+            window_events.write(WindowEvent::Resized {
+                window: *window_entity,
+                size: new_size,
+            });
+
+            window.window.request_redraw();
+        }
+        winit::event::WindowEvent::CloseRequested => {
+            tracing::debug!("close requested");
+            *state = AppState::Exiting;
+            event_loop.exit();
+        }
+        winit::event::WindowEvent::Destroyed => {
+            // todo: instead just tell rendering system to destroy that surface
+            tracing::debug!("window destroyed");
+            *state = AppState::Exiting;
+            event_loop.exit();
+        }
+        winit::event::WindowEvent::KeyboardInput {
+            device_id: _,
+            event,
+            is_synthetic,
+        } => {
+            if !is_synthetic {
+                match event.state {
+                    winit::event::ElementState::Pressed => {
+                        window_events.write(WindowEvent::KeyPressed {
+                            window: *window_entity,
+                            key: event.physical_key,
+                        });
+                    }
+                    winit::event::ElementState::Released => {
+                        window_events.write(WindowEvent::KeyReleased {
+                            window: *window_entity,
+                            key: event.physical_key,
+                        });
                     }
                 }
+            }
 
-                // todo
-            }
-            winit::event::WindowEvent::ModifiersChanged(_modifiers) => {
-                // todo
-            }
-            winit::event::WindowEvent::CursorMoved {
-                device_id: _,
-                position,
-            } => {
-                window_events.write(WindowEvent::MouseMoved {
-                    window: *window_entity,
-                    position: Point2::new(position.x, position.y).cast(),
-                });
-            }
-            winit::event::WindowEvent::CursorEntered { device_id: _ } => {
-                window_events.write(WindowEvent::MouseEntered {
-                    window: *window_entity,
-                });
-            }
-            winit::event::WindowEvent::CursorLeft { device_id: _ } => {
-                window_events.write(WindowEvent::MouseLeft {
-                    window: *window_entity,
-                });
-            }
-            winit::event::WindowEvent::MouseWheel {
-                device_id: _,
-                delta: _,
-                phase: _,
-            } => {
-                // todo
-            }
-            winit::event::WindowEvent::MouseInput {
-                device_id: _,
-                state: _,
-                button: _,
-            } => todo!(),
-            winit::event::WindowEvent::ScaleFactorChanged {
-                scale_factor: _,
-                inner_size_writer: _,
-            } => {
-                // todo
-            }
-            winit::event::WindowEvent::ThemeChanged(_theme) => {
-                // todo
-            }
-            winit::event::WindowEvent::RedrawRequested => {
-                // todo
-            }
-            winit::event::WindowEvent::Focused(focused) => {
-                if focused {
-                    tracing::debug!(window = ?window_entity, "window gained focus");
-
-                    window_events.write(WindowEvent::GainedFocus {
-                        window: *window_entity,
-                    });
-                    commands.entity(*window_entity).insert(Focused);
-                }
-                else {
-                    tracing::debug!(window = ?window_entity, "window lost focus");
-
-                    window_events.write(WindowEvent::LostFocus {
-                        window: *window_entity,
-                    });
-                    commands.entity(*window_entity).try_remove::<Focused>();
-                }
-            }
-            _ => {}
+            // todo
         }
+        winit::event::WindowEvent::ModifiersChanged(_modifiers) => {
+            // todo
+        }
+        winit::event::WindowEvent::CursorMoved {
+            device_id: _,
+            position,
+        } => {
+            window_events.write(WindowEvent::MouseMoved {
+                window: *window_entity,
+                position: Point2::new(position.x, position.y).cast(),
+            });
+        }
+        winit::event::WindowEvent::CursorEntered { device_id: _ } => {
+            window_events.write(WindowEvent::MouseEntered {
+                window: *window_entity,
+            });
+        }
+        winit::event::WindowEvent::CursorLeft { device_id: _ } => {
+            window_events.write(WindowEvent::MouseLeft {
+                window: *window_entity,
+            });
+        }
+        winit::event::WindowEvent::MouseWheel {
+            device_id: _,
+            delta: _,
+            phase: _,
+        } => {
+            // todo
+        }
+        winit::event::WindowEvent::MouseInput {
+            device_id: _,
+            state: _,
+            button: _,
+        } => todo!(),
+        winit::event::WindowEvent::ScaleFactorChanged {
+            scale_factor: _,
+            inner_size_writer: _,
+        } => {
+            // todo
+        }
+        winit::event::WindowEvent::ThemeChanged(_theme) => {
+            // todo
+        }
+        winit::event::WindowEvent::RedrawRequested => {
+            // todo
+        }
+        winit::event::WindowEvent::Focused(focused) => {
+            if focused {
+                tracing::debug!(window = ?window_entity, "window gained focus");
+
+                window_events.write(WindowEvent::GainedFocus {
+                    window: *window_entity,
+                });
+                commands.entity(*window_entity).insert(Focused);
+            }
+            else {
+                tracing::debug!(window = ?window_entity, "window lost focus");
+
+                window_events.write(WindowEvent::LostFocus {
+                    window: *window_entity,
+                });
+                commands.entity(*window_entity).try_remove::<Focused>();
+            }
+        }
+        _ => {}
     }
 }
 

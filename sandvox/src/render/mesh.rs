@@ -24,8 +24,6 @@ use bytemuck::{
 use color_eyre::eyre::Error;
 use nalgebra::{
     Point2,
-    Point3,
-    Vector2,
     Vector4,
 };
 use wgpu::util::DeviceExt;
@@ -49,7 +47,6 @@ use crate::{
             AtlasSystems,
         },
     },
-    voxel::block_face::BlockFace,
     wgpu::{
         WgpuContext,
         WgpuContextBuilder,
@@ -120,34 +117,6 @@ impl MeshBuilder {
                 .into_iter()
                 .map(|face| face.map(|index| index + base_index)),
         );
-    }
-
-    pub fn push_block_face(
-        &mut self,
-        anchor: Point3<u16>,
-        size: Vector2<u16>,
-        face: BlockFace,
-        texture_id: u32,
-    ) {
-        let normal = face.normal().cast::<f32>().to_homogeneous();
-        let positions = face.vertices(size);
-        let uvs = face.uvs(size);
-        let faces = face.faces();
-
-        let vertices = (0..4).map(|i| {
-            Vertex {
-                position: (anchor + positions[i].coords)
-                    .cast::<f32>()
-                    .to_homogeneous(),
-                normal,
-                uv: uvs[i].coords.cast::<f32>().into(),
-                texture_id,
-            }
-        });
-
-        let faces = faces.map(|face| face.map(u32::from));
-
-        self.push(vertices, faces);
     }
 
     pub fn finish(&self, wgpu: &WgpuContext, label: &str) -> Option<Mesh> {

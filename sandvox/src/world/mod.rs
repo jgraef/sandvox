@@ -18,6 +18,10 @@ use noise::{
     NoiseFn,
     Perlin,
 };
+use palette::{
+    Srgba,
+    WithAlpha,
+};
 
 use crate::{
     app::Window,
@@ -44,13 +48,14 @@ use crate::{
         },
     },
     voxel::{
+        BlockFace,
         Voxel,
-        block_face::BlockFace,
         flat::{
             CHUNK_SIDE_LENGTH,
             FlatChunk,
             FlatChunkPlugin,
         },
+        mesh::greedy_quads::GreedyMesher,
     },
     world::block_type::{
         BlockType,
@@ -64,7 +69,7 @@ pub struct WorldPlugin;
 impl Plugin for WorldPlugin {
     fn setup(&self, builder: &mut WorldBuilder) -> Result<(), Error> {
         builder
-            .add_plugin(FlatChunkPlugin::<TerrainVoxel>::default())?
+            .add_plugin(FlatChunkPlugin::<TerrainVoxel, GreedyMesher<TerrainVoxel>>::default())?
             .add_systems(
                 schedule::Startup,
                 (
@@ -148,7 +153,7 @@ fn init_world(block_types: Res<BlockTypes>, mut commands: Commands) {
             Name::new("main_camera"),
             CameraProjection::default(),
             LocalTransform::look_at(
-                &(chunk_center - chunk_side_length * Vector3::z()),
+                &(chunk_center - (0.5 * chunk_side_length + 5.0) * Vector3::z()),
                 &chunk_center,
                 &Vector3::y(),
             ),
@@ -162,7 +167,7 @@ fn init_world(block_types: Res<BlockTypes>, mut commands: Commands) {
         Window {
             title: "SandVox".to_owned(),
         },
-        ClearColor::default(),
+        ClearColor(palette::named::LIGHTSKYBLUE.into_format().with_alpha(1.0)),
         AttachedCamera(camera_entity),
     ));
 }

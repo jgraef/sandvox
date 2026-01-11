@@ -22,10 +22,7 @@ use bevy_ecs::{
 };
 use color_eyre::eyre::Error;
 use morton_encoding::morton_decode;
-use nalgebra::{
-    Point3,
-    Vector2,
-};
+use nalgebra::Point3;
 
 use crate::{
     ecs::{
@@ -35,31 +32,27 @@ use crate::{
         },
         schedule,
     },
-    render::{
-        mesh::{
-            Mesh,
-            MeshBuilder,
-            MeshPlugin,
-        },
-        texture_atlas::AtlasId,
+    render::mesh::{
+        Mesh,
+        MeshBuilder,
+        MeshPlugin,
     },
     voxel::{
         Voxel,
-        block_face::BlockFace,
-        greedy_quads::GreedyMesher,
+        mesh::ChunkMesher,
     },
     wgpu::WgpuContext,
 };
 
-pub const CHUNK_SIDE_LENGTH_LOG2: u8 = 2;
+pub const CHUNK_SIDE_LENGTH_LOG2: u8 = 4;
 pub const CHUNK_SIDE_LENGTH: u16 = 1 << CHUNK_SIDE_LENGTH_LOG2;
 pub const CHUNK_NUM_VOXELS: usize = 1 << (3 * CHUNK_SIDE_LENGTH_LOG2);
 
-pub struct FlatChunkPlugin<V> {
-    _phantom: PhantomData<fn() -> V>,
+pub struct FlatChunkPlugin<V, M> {
+    _phantom: PhantomData<(V, M)>,
 }
 
-impl<V> Default for FlatChunkPlugin<V> {
+impl<V, M> Default for FlatChunkPlugin<V, M> {
     fn default() -> Self {
         Self {
             _phantom: PhantomData,
@@ -67,16 +60,16 @@ impl<V> Default for FlatChunkPlugin<V> {
     }
 }
 
-impl<V> Plugin for FlatChunkPlugin<V>
+impl<V, M> Plugin for FlatChunkPlugin<V, M>
 where
-    //V: VoxelTexture + Send + Sync + 'static,
     V: Voxel,
+    M: ChunkMesher<V>,
 {
     fn setup(&self, builder: &mut WorldBuilder) -> Result<(), Error> {
         builder
             .add_plugin(MeshPlugin)?
             .add_message::<MeshChunkRequest>()
-            .add_systems(schedule::PostUpdate, mesh_chunks::<V>);
+            .add_systems(schedule::PostUpdate, mesh_chunks::<V, M>);
         Ok(())
     }
 }
@@ -105,38 +98,6 @@ impl<V> FlatChunk<V> {
     }
 }
 
-impl<V> FlatChunk<V> {
-    pub fn naive_mesh(
-        &self,
-        mesh_builder: &mut MeshBuilder,
-        mut texture: impl FnMut(&V) -> Option<AtlasId>,
-    ) {
-        for (i, voxel) in self.voxels.iter().enumerate() {
-            if let Some(texture) = texture(voxel) {
-                let point = Point3::from(morton_decode::<u16, 3>(i.try_into().unwrap()));
-
-                for face in BlockFace::ALL {
-                    let mut point = point;
-                    match face {
-                        BlockFace::Right => {
-                            point.x += 1;
-                        }
-                        BlockFace::Up => {
-                            point.y += 1;
-                        }
-                        BlockFace::Back => {
-                            point.z += 1;
-                        }
-                        _ => {}
-                    }
-
-                    mesh_builder.push_block_face(point, Vector2::repeat(1), face, texture.into());
-                }
-            }
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Message)]
 struct MeshChunkRequest {
     entity: Entity,
@@ -160,16 +121,17 @@ fn chunk_removed(mut world: DeferredWorld, context: HookContext) {
     entity.try_remove::<Mesh>();
 }
 
-fn mesh_chunks<V>(
+fn mesh_chunks<V, M>(
     wgpu: Res<WgpuContext>,
     mut requests: MessageReader<MeshChunkRequest>,
     chunk_data: Populated<&FlatChunk<V>>,
     mut commands: Commands,
     mut mesh_builder: Local<MeshBuilder>,
-    voxel_param: StaticSystemParam<V::Data>,
-    mut greedy_mesher: Local<GreedyMesher<V>>,
+    voxel_data: StaticSystemParam<V::Data>,
+    mut chunk_mesher: Local<M>,
 ) where
     V: Voxel,
+    M: ChunkMesher<V>,
 {
     for request in requests.read() {
         tracing::debug!(entity = ?request.entity, "meshing chunk");
@@ -178,8 +140,7 @@ fn mesh_chunks<V>(
             let mut entity = commands.entity(request.entity);
 
             let t_start = Instant::now();
-            //chunk.naive_mesh(&mut mesh_builder, |voxel| voxel.texture(&voxel_param));
-            greedy_mesher.mesh(&chunk.voxels, &mut mesh_builder, &voxel_param);
+            chunk_mesher.mesh_chunk(&chunk, &mut mesh_builder, &voxel_data);
             let time = t_start.elapsed();
             tracing::debug!(?time, "meshed chunk");
 

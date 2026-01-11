@@ -78,22 +78,15 @@ fn vertex_main(input: VertexInput) -> VertexOutput {
 }
 
 @fragment
-fn fragment_main(input: VertexOutput, @builtin(front_facing) front_face: bool) -> @location(0) vec4f {
-    var color: vec4f;
+fn fragment_main(input: VertexOutput) -> @location(0) vec4f {
+    let normal = normalize(input.normal.xyz);
+    let light_dir = -normalize(vec3f(0.5, 1, 0.5));
+    let attenuation = mix(0.6, 1.0, dot(normal, light_dir));
 
-    if front_face {
-        let normal = normalize(input.normal.xyz);
-        let light_dir = -normalize(vec3f(0.5, 1, 0.5));
-        let attenuation = mix(0.6, 1.0, dot(normal, light_dir));
+    let uv = atlas_map_uv(input.texture_id, input.uv);
+    var color = textureSample(texture_albedo, sampler_albedo, uv);
 
-        let uv = atlas_map_uv(input.texture_id, input.uv);
-        color = textureSample(texture_albedo, sampler_albedo, uv);
-        color = vec4f(color.rgb * attenuation, 1);
-    }
-    else {
-        color = vec4f(1, 0, 1, 1);
-    }
-
+    color = vec4f(color.rgb * attenuation, 1);
     return color;
 }
 
