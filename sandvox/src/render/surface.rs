@@ -18,12 +18,16 @@ use crate::{
         WindowHandle,
         WindowSize,
     },
-    render::camera::CameraProjection,
+    render::{
+        RenderConfig,
+        camera::CameraProjection,
+    },
     wgpu::WgpuContext,
 };
 
 pub fn handle_window_events(
     wgpu: Res<WgpuContext>,
+    config: Res<RenderConfig>,
     mut messages: MessageReader<WindowEvent>,
     mut params: ParamSet<(
         (
@@ -45,7 +49,7 @@ pub fn handle_window_events(
 
                 let (window, window_size, camera) = windows.get(entity).unwrap();
 
-                let surface = Surface::new(&wgpu, window, window_size.size);
+                let surface = Surface::new(&wgpu, window, window_size.size, &config);
                 commands.entity(entity).insert(surface);
 
                 if let Some(camera) = camera
@@ -87,7 +91,12 @@ pub struct Surface {
 }
 
 impl Surface {
-    pub fn new(wgpu: &WgpuContext, window: &WindowHandle, size: Vector2<u32>) -> Self {
+    pub fn new(
+        wgpu: &WgpuContext,
+        window: &WindowHandle,
+        size: Vector2<u32>,
+        config: &RenderConfig,
+    ) -> Self {
         tracing::debug!(?size, "creating surface");
 
         let surface = wgpu.instance.create_surface(window.window.clone()).unwrap();
@@ -110,7 +119,12 @@ impl Surface {
             format: surface_texture_format,
             width: size.x,
             height: size.y,
-            present_mode: wgpu::PresentMode::AutoVsync,
+            present_mode: if config.vsync {
+                wgpu::PresentMode::AutoVsync
+            }
+            else {
+                wgpu::PresentMode::AutoNoVsync
+            },
             desired_maximum_frame_latency: 2,
             alpha_mode: wgpu::CompositeAlphaMode::Auto,
             view_formats: vec![],

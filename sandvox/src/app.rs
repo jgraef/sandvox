@@ -16,6 +16,7 @@ use bevy_ecs::{
         MessageWriter,
     },
     query::{
+        Changed,
         With,
         Without,
     },
@@ -56,6 +57,7 @@ use winit::{
 };
 
 use crate::{
+    config::Config,
     ecs::{
         plugin::{
             Plugin,
@@ -82,19 +84,27 @@ pub struct App {
 
 impl App {
     pub fn new() -> Result<Self, Error> {
+        // todo: load from proper location
+        let config = Config::load("config.toml")?;
+
         let world = WorldBuilder::default()
             .insert_resource(DeltaTime {
                 delta: Duration::ZERO,
             })
-            .add_plugin(AppPlugin::default())?
+            .add_plugin(AppPlugin)?
             .add_plugin(TransformHierarchyPlugin)?
             .add_plugin(InputPlugin)?
-            .add_plugin(WgpuPlugin::default())?
-            .add_plugin(RenderPlugin::default())?
+            .add_plugin(WgpuPlugin {
+                config: config.graphics.wgpu,
+            })?
+            .add_plugin(RenderPlugin {
+                config: config.graphics.render,
+            })?
             .add_plugin(CameraPlugin)?
             .add_plugin(CameraControllerPlugin)?
             .add_plugin(AtlasPlugin)?
             .add_plugin(WorldPlugin)?
+            .add_systems(schedule::PostUpdate, update_window_config)
             .build();
 
         Ok(Self { world })
@@ -443,7 +453,7 @@ fn handle_device_event(
 
 #[derive(SystemParam)]
 struct CreateWindows<'w, 's> {
-    requests: Query<'w, 's, (Entity, &'static Window), Without<WindowHandle>>,
+    requests: Query<'w, 's, (Entity, &'static WindowConfig), Without<WindowHandle>>,
     window_id_map: ResMut<'w, WindowIdMap>,
     commands: Commands<'w, 's>,
     window_events: MessageWriter<'w, WindowEvent>,
@@ -451,14 +461,14 @@ struct CreateWindows<'w, 's> {
 
 impl<'world, 'state> CreateWindows<'world, 'state> {
     pub fn create_windows(&mut self, event_loop: &ActiveEventLoop) {
-        for (entity, request) in self.requests {
+        for (entity, config) in self.requests {
             let window = event_loop
-                .create_window(WindowAttributes::default().with_title(request.title.clone()))
+                .create_window(WindowAttributes::default().with_title(config.title.clone()))
                 .unwrap();
             let size = window.inner_size();
             let size = Vector2::new(size.width, size.height);
 
-            tracing::debug!(title = request.title, ?size, "created window");
+            tracing::debug!(title = config.title, ?size, "created window");
 
             self.window_id_map.id_map.insert(window.id(), entity);
 
@@ -475,8 +485,14 @@ impl<'world, 'state> CreateWindows<'world, 'state> {
     }
 }
 
+fn update_window_config(windows: Query<(&WindowConfig, &WindowHandle), Changed<WindowConfig>>) {
+    for (config, handle) in windows {
+        handle.window.set_title(&config.title);
+    }
+}
+
 #[derive(Clone, Debug, Component)]
-pub struct Window {
+pub struct WindowConfig {
     pub title: String,
 }
 

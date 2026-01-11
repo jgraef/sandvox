@@ -1,0 +1,8 @@
+# This file will be modified by the game. Any manual changes might be lost.
+
+[graphics]
+backends = ["VULKAN"]
+power_preference = "none"
+staging_chunk_size = 16384
+memory_hints = "Performance"
+vsync = false

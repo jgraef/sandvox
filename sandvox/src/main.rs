@@ -1,4 +1,5 @@
 pub mod app;
+pub mod config;
 pub mod ecs;
 pub mod input;
 pub mod render;

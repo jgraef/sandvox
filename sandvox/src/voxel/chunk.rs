@@ -1,5 +1,6 @@
 use std::{
     marker::PhantomData,
+    ops::Index,
     time::Instant,
 };
 
@@ -21,7 +22,10 @@ use bevy_ecs::{
     world::DeferredWorld,
 };
 use color_eyre::eyre::Error;
-use morton_encoding::morton_decode;
+use morton_encoding::{
+    morton_decode,
+    morton_encode,
+};
 use nalgebra::Point3;
 
 use crate::{
@@ -44,45 +48,45 @@ use crate::{
     wgpu::WgpuContext,
 };
 
-pub const CHUNK_SIDE_LENGTH_LOG2: u8 = 4;
-pub const CHUNK_SIDE_LENGTH: u16 = 1 << CHUNK_SIDE_LENGTH_LOG2;
-pub const CHUNK_NUM_VOXELS: usize = 1 << (3 * CHUNK_SIDE_LENGTH_LOG2);
-
-pub struct FlatChunkPlugin<V, M> {
+pub struct VoxelChunkPlugin<V, M, const CHUNK_SIZE: usize> {
     _phantom: PhantomData<(V, M)>,
 }
 
-impl<V, M> Default for FlatChunkPlugin<V, M> {
+impl<V, M, const CHUNK_SIZE: usize> Default for VoxelChunkPlugin<V, M, CHUNK_SIZE> {
     fn default() -> Self {
+        assert!(CHUNK_SIZE.is_power_of_two());
+
         Self {
             _phantom: PhantomData,
         }
     }
 }
 
-impl<V, M> Plugin for FlatChunkPlugin<V, M>
+impl<V, M, const CHUNK_SIZE: usize> Plugin for VoxelChunkPlugin<V, M, CHUNK_SIZE>
 where
     V: Voxel,
-    M: ChunkMesher<V>,
+    M: ChunkMesher<V, CHUNK_SIZE>,
 {
     fn setup(&self, builder: &mut WorldBuilder) -> Result<(), Error> {
         builder
             .add_plugin(MeshPlugin)?
             .add_message::<MeshChunkRequest>()
-            .add_systems(schedule::PostUpdate, mesh_chunks::<V, M>);
+            .add_systems(schedule::PostUpdate, mesh_chunks::<V, M, CHUNK_SIZE>);
+
         Ok(())
     }
 }
 
 #[derive(Clone, Component)]
 #[component(on_add = chunk_added, on_remove = chunk_removed)]
-pub struct FlatChunk<V> {
-    pub voxels: Box<[V; CHUNK_NUM_VOXELS]>,
+pub struct Chunk<V, const CHUNK_SIZE: usize> {
+    pub voxels: Box<[V]>,
 }
 
-impl<V> FlatChunk<V> {
+impl<V, const CHUNK_SIZE: usize> Chunk<V, CHUNK_SIZE> {
     pub fn from_fn(mut f: impl FnMut(Point3<u16>) -> V) -> Self {
-        let mut voxels = Box::new_uninit_slice(CHUNK_NUM_VOXELS);
+        let num_voxels = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE;
+        let mut voxels = Box::new_uninit_slice(num_voxels);
 
         // fixme: memory leak when f panics
         for (i, voxel) in voxels.iter_mut().enumerate() {
@@ -91,10 +95,16 @@ impl<V> FlatChunk<V> {
         }
 
         let voxels = unsafe { voxels.assume_init() };
-        let voxels: Box<[V; CHUNK_NUM_VOXELS]> =
-            voxels.try_into().unwrap_or_else(|_| unreachable!());
 
         Self { voxels }
+    }
+}
+
+impl<V, const CHUNK_SIZE: usize> Index<Point3<u16>> for Chunk<V, CHUNK_SIZE> {
+    type Output = V;
+
+    fn index(&self, index: Point3<u16>) -> &V {
+        &self.voxels[morton_encode(index.into()) as usize]
     }
 }
 
@@ -121,17 +131,17 @@ fn chunk_removed(mut world: DeferredWorld, context: HookContext) {
     entity.try_remove::<Mesh>();
 }
 
-fn mesh_chunks<V, M>(
+fn mesh_chunks<V, M, const CHUNK_SIZE: usize>(
     wgpu: Res<WgpuContext>,
     mut requests: MessageReader<MeshChunkRequest>,
-    chunk_data: Populated<&FlatChunk<V>>,
+    chunk_data: Populated<&Chunk<V, CHUNK_SIZE>>,
     mut commands: Commands,
-    mut mesh_builder: Local<MeshBuilder>,
     voxel_data: StaticSystemParam<V::Data>,
+    mut mesh_builder: Local<MeshBuilder>,
     mut chunk_mesher: Local<M>,
 ) where
     V: Voxel,
-    M: ChunkMesher<V>,
+    M: ChunkMesher<V, CHUNK_SIZE>,
 {
     for request in requests.read() {
         tracing::debug!(entity = ?request.entity, "meshing chunk");

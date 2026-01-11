@@ -1,5 +1,4 @@
-pub mod block_face;
-pub mod flat;
+pub mod chunk;
 pub mod mesh;
 pub mod svo;
 

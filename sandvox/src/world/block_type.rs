@@ -95,6 +95,8 @@ mod config {
         Serialize,
     };
 
+    use crate::util::serde::default_true;
+
     #[derive(Clone, Debug, Serialize, Deserialize)]
     #[serde(transparent)]
     pub struct BlockDefs {
@@ -107,9 +109,5 @@ mod config {
 
         #[serde(default = "default_true")]
         pub is_opaque: bool,
-    }
-
-    fn default_true() -> bool {
-        true
     }
 }

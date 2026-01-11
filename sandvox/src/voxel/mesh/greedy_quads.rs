@@ -3,18 +3,17 @@ use morton_encoding::{
     morton_decode,
     morton_encode,
 };
-use nalgebra::Point2;
+use nalgebra::{
+    Point2,
+    Point3,
+};
 
 use crate::{
     render::mesh::MeshBuilder,
     voxel::{
         BlockFace,
         Voxel,
-        flat::{
-            CHUNK_NUM_VOXELS,
-            CHUNK_SIDE_LENGTH,
-            FlatChunk,
-        },
+        chunk::Chunk,
         mesh::{
             ChunkMesher,
             UnorientedQuad,
@@ -28,49 +27,28 @@ use crate::{
     },
 };
 
-const LAYER_SIZE: usize = (CHUNK_SIDE_LENGTH * CHUNK_SIDE_LENGTH) as usize;
-
 #[derive(Debug)]
-pub struct GreedyMesher<V> {
-    opacity: OpacityMasks,
-
-    /// Quads that can still grow
-    ///
-    /// This is used while greedy meshing faces to keep track of quads that can
-    /// still grow.
-    active_quads: Vec<GreedyQuad<V>>,
+pub struct GreedyMesher<V, const CHUNK_SIZE: usize> {
+    opacity: OpacityMasks<CHUNK_SIZE>,
+    mesh_face_buffer: MeshFaceBuffer<V, CHUNK_SIZE>,
 }
 
-impl<V> Default for GreedyMesher<V> {
+impl<V, const CHUNK_SIZE: usize> Default for GreedyMesher<V, CHUNK_SIZE> {
     fn default() -> Self {
         Self {
             opacity: Default::default(),
-            active_quads: Default::default(),
+            mesh_face_buffer: Default::default(),
         }
     }
 }
 
-impl<V> ChunkMesher<V> for GreedyMesher<V>
+impl<V, const CHUNK_SIZE: usize> ChunkMesher<V, CHUNK_SIZE> for GreedyMesher<V, CHUNK_SIZE>
 where
     V: Voxel,
 {
     fn mesh_chunk<'w, 's>(
         &mut self,
-        chunk: &FlatChunk<V>,
-        mesh_builder: &mut MeshBuilder,
-        data: &<V::Data as SystemParam>::Item<'w, 's>,
-    ) {
-        self.mesh(&chunk.voxels, mesh_builder, data);
-    }
-}
-
-impl<V> GreedyMesher<V>
-where
-    V: Voxel,
-{
-    pub fn mesh<'w, 's>(
-        &mut self,
-        chunk: &[V; CHUNK_NUM_VOXELS],
+        chunk: &Chunk<V, CHUNK_SIZE>,
         mesh_builder: &mut MeshBuilder,
         data: &<V::Data as SystemParam>::Item<'w, 's>,
     ) {
@@ -83,191 +61,206 @@ where
             }
         };
 
-        let xy_voxel = |xyz| &chunk[morton_encode(xyz) as usize];
-        let zy_voxel = |[z, y, x]: [u16; 3]| &chunk[morton_encode([x, y, z]) as usize];
-        let xz_voxel = |[x, z, y]: [u16; 3]| &chunk[morton_encode([x, y, z]) as usize];
+        let xy_voxel = |xyz: Point3<u16>| &chunk[xyz];
+        let zy_voxel = |zyx: Point3<u16>| &chunk[zyx.zyx()];
+        let xz_voxel = |xzy: Point3<u16>| &chunk[xzy.xzy()];
 
         // XY front
-        mesh_faces(
+        self.mesh_face_buffer.mesh_faces(
             xy_voxel,
             |xy| front_face_mask(self.opacity.opacity_xy(xy)),
-            &mut self.active_quads,
             |quad| mesh_quad(&quad, BlockFace::Front),
             data,
         );
 
         // XY back
-        mesh_faces(
+        self.mesh_face_buffer.mesh_faces(
             xy_voxel,
             |xy| back_face_mask(self.opacity.opacity_xy(xy)),
-            &mut self.active_quads,
             |quad| mesh_quad(&quad, BlockFace::Back),
             data,
         );
 
         // ZY front (left)
-        mesh_faces(
+        self.mesh_face_buffer.mesh_faces(
             zy_voxel,
             |zy| front_face_mask(self.opacity.opacity_zy(zy)),
-            &mut self.active_quads,
             |quad| mesh_quad(&quad, BlockFace::Left),
             data,
         );
 
         // ZY back (right)
-        mesh_faces(
+        self.mesh_face_buffer.mesh_faces(
             zy_voxel,
             |zy| back_face_mask(self.opacity.opacity_zy(zy)),
-            &mut self.active_quads,
             |quad| mesh_quad(&quad, BlockFace::Right),
             data,
         );
 
         // XZ front (down)
-        mesh_faces(
+        self.mesh_face_buffer.mesh_faces(
             xz_voxel,
             |xz| front_face_mask(self.opacity.opacity_xz(xz)),
-            &mut self.active_quads,
             |quad| mesh_quad(&quad, BlockFace::Down),
             data,
         );
 
         // XY back (up)
-        mesh_faces(
+        self.mesh_face_buffer.mesh_faces(
             xz_voxel,
             |xz| back_face_mask(self.opacity.opacity_xz(xz)),
-            &mut self.active_quads,
             |quad| mesh_quad(&quad, BlockFace::Up),
             data,
         );
     }
 }
 
-/// Documentation and variable names are for XY faces, but are representative
-/// for other directions as well.
-fn mesh_faces<'w, 's, 'v, V>(
-    get_voxel: impl Fn([u16; 3]) -> &'v V,
-    face_mask: impl Fn([u16; 2]) -> u64,
-    active_quads: &mut Vec<GreedyQuad<V>>,
-    mut emit_quad: impl FnMut(GreedyQuad<V>),
-    data: &<V::Data as SystemParam>::Item<'w, 's>,
-) where
-    V: Voxel,
-{
-    for y in 0..CHUNK_SIDE_LENGTH {
-        // get XZ faces
-        let mut face_masks = [0u64; CHUNK_SIDE_LENGTH as usize];
-        //let mut back_faces = [0u64; CHUNK_SIDE_LENGTH as usize];
+#[derive(Debug)]
+struct MeshFaceBuffer<V, const CHUNK_SIZE: usize> {
+    face_masks: Box<[u64]>,
 
-        for x in 0..CHUNK_SIDE_LENGTH {
-            face_masks[x as usize] = face_mask([x, y]);
+    /// Quads that can still grow
+    ///
+    /// This is used while greedy meshing faces to keep track of quads that can
+    /// still grow.
+    active_quads: Vec<GreedyQuad<V>>,
+}
+
+impl<V, const CHUNK_SIZE: usize> Default for MeshFaceBuffer<V, CHUNK_SIZE> {
+    fn default() -> Self {
+        Self {
+            face_masks: vec![0; CHUNK_SIZE].into_boxed_slice(),
+            active_quads: Vec::with_capacity(CHUNK_SIZE),
         }
+    }
+}
 
-        // transpose to ZX
-        face_masks.as_mut_slice().transpose();
-
-        // try to grow quads
-        let mut quad_index = 0;
-        while let Some(quad) = active_quads.get_mut(quad_index) {
-            debug_assert_eq!(quad.inner.ij1.y, y);
-
-            let face_mask = &mut face_masks[quad.inner.k as usize];
-            let mut quad_grown = false;
-
-            // check if this quad can grow vertically to the current row.
-            // this doesn't yet take into account different block types, only if there are
-            // faces to be generated.
-            if quad.mask & *face_mask == quad.mask {
-                // check if we can actually merge these voxels
-                let can_merge = (quad.inner.ij0.x..quad.inner.ij1.x)
-                    .all(|x| quad.voxel.can_merge(get_voxel([x, y, quad.inner.k]), data));
-
-                if can_merge {
-                    // mark faces as meshed
-                    *face_mask &= !quad.mask;
-
-                    // grow quad
-                    quad.inner.ij1.y += 1;
-                    quad_grown = true;
-                }
+impl<V, const CHUNK_SIZE: usize> MeshFaceBuffer<V, CHUNK_SIZE> {
+    /// Documentation and variable names are for XY faces, but are
+    /// representative for other directions as well.
+    fn mesh_faces<'w, 's, 'v>(
+        &mut self,
+        get_voxel: impl Fn(Point3<u16>) -> &'v V,
+        face_mask: impl Fn(Point2<u16>) -> u64,
+        mut emit_quad: impl FnMut(GreedyQuad<V>),
+        data: &<V::Data as SystemParam>::Item<'w, 's>,
+    ) where
+        V: Voxel,
+    {
+        for y in 0..CHUNK_SIZE as u16 {
+            // get XZ faces
+            for x in 0..CHUNK_SIZE as u16 {
+                self.face_masks[x as usize] = face_mask(Point2::new(x, y));
             }
 
-            if quad_grown {
-                // quad was grown, continue to next active quad
-                quad_index += 1;
-            }
-            else {
-                // the quad wasn't grown to contain voxels in this row, so it can't ever grow
-                // again. thus we remove it from the active quads list and mesh it.
-                //
-                // note: don't increment quad_index here, as we just swapped another active quad
-                // in this place.
-                let quad = active_quads.swap_remove(quad_index);
-                emit_quad(quad);
-            }
-        }
+            // transpose to ZX
+            (*self.face_masks).transpose();
 
-        // create active quads for any faces that hasn't been meshed yet
-        for z in 0..CHUNK_SIDE_LENGTH {
-            let mut face_mask = face_masks[z as usize];
+            // try to grow quads
+            let mut quad_index = 0;
+            while let Some(quad) = self.active_quads.get_mut(quad_index) {
+                debug_assert_eq!(quad.inner.ij1.y, y);
 
-            // keeps track of how many voxels in the row have already been processed. the
-            // face mask has also been shifted by this amount.
-            let mut x0 = 0;
+                let face_mask = &mut self.face_masks[quad.inner.k as usize];
+                let mut quad_grown = false;
 
-            while face_mask != 0 {
-                let first_face = face_mask.trailing_zeros() as u16;
-                face_mask >>= first_face;
-                x0 += first_face;
+                // check if this quad can grow vertically to the current row.
+                // this doesn't yet take into account different block types, only if there are
+                // faces to be generated.
+                if quad.mask & *face_mask == quad.mask {
+                    // check if we can actually merge these voxels
+                    let can_merge = (quad.inner.ij0.x..quad.inner.ij1.x).all(|x| {
+                        quad.voxel
+                            .can_merge(get_voxel(Point3::new(x, y, quad.inner.k)), data)
+                    });
 
-                let mut num_faces = face_mask.trailing_ones() as u16;
+                    if can_merge {
+                        // mark faces as meshed
+                        *face_mask &= !quad.mask;
 
-                // there are `num_faces` faces starting at `x0`, but they might not
-                // all be mergable.
-
-                // get first voxel in this range
-                let voxel = get_voxel([x0, y, z]).clone();
-
-                // find first voxel in this range that can't be merged (relative to x0).
-                // if we find one, this relative position is the actual number of faces we
-                // can merge
-                for x in 1..num_faces {
-                    if !voxel.can_merge(get_voxel([x0 + x, y, z]), data) {
-                        num_faces = x;
-                        break;
+                        // grow quad
+                        quad.inner.ij1.y += 1;
+                        quad_grown = true;
                     }
                 }
 
-                face_mask >>= num_faces;
-                let x1 = x0 + num_faces;
+                if quad_grown {
+                    // quad was grown, continue to next active quad
+                    quad_index += 1;
+                }
+                else {
+                    // the quad wasn't grown to contain voxels in this row, so it can't ever grow
+                    // again. thus we remove it from the active quads list and mesh it.
+                    //
+                    // note: don't increment quad_index here, as we just swapped another active quad
+                    // in this place.
+                    let quad = self.active_quads.swap_remove(quad_index);
+                    emit_quad(quad);
+                }
+            }
 
-                // make mask
-                //          n    x1   x0   0
-                //          |    |     |   |
-                // a     =  0---01---------1
-                // b     =  0---------01---1
-                // a ^ b =  0---01----10---0
-                let mask = bitmask(x1 as usize) ^ bitmask(x0 as usize);
+            // create active quads for any faces that hasn't been meshed yet
+            for z in 0..CHUNK_SIZE as u16 {
+                let mut face_mask = self.face_masks[z as usize];
 
-                let quad = GreedyQuad {
-                    voxel,
-                    inner: UnorientedQuad {
-                        ij0: Point2::new(x0, y),
-                        ij1: Point2::new(x1, y + 1),
-                        k: z,
-                    },
-                    mask,
-                };
-                active_quads.push(quad);
+                // keeps track of how many voxels in the row have already been processed. the
+                // face mask has also been shifted by this amount.
+                let mut x0 = 0;
 
-                x0 = x1;
+                while face_mask != 0 {
+                    let first_face = face_mask.trailing_zeros() as u16;
+                    face_mask >>= first_face;
+                    x0 += first_face;
+
+                    let mut num_faces = face_mask.trailing_ones() as u16;
+
+                    // there are `num_faces` faces starting at `x0`, but they might not
+                    // all be mergable.
+
+                    // get first voxel in this range
+                    let voxel = get_voxel(Point3::new(x0, y, z)).clone();
+
+                    // find first voxel in this range that can't be merged (relative to x0).
+                    // if we find one, this relative position is the actual number of faces we
+                    // can merge
+                    for x in 1..num_faces {
+                        if !voxel.can_merge(get_voxel(Point3::new(x0 + x, y, z)), data) {
+                            num_faces = x;
+                            break;
+                        }
+                    }
+
+                    face_mask >>= num_faces;
+                    let x1 = x0 + num_faces;
+
+                    // make mask
+                    //          n    x1   x0   0
+                    //          |    |     |   |
+                    // a     =  0---01---------1
+                    // b     =  0---------01---1
+                    // a ^ b =  0---01----10---0
+                    let mask = bitmask(x1 as usize) ^ bitmask(x0 as usize);
+
+                    let quad = GreedyQuad {
+                        voxel,
+                        inner: UnorientedQuad {
+                            ij0: Point2::new(x0, y),
+                            ij1: Point2::new(x1, y + 1),
+                            k: z,
+                        },
+                        mask,
+                    };
+                    self.active_quads.push(quad);
+
+                    x0 = x1;
+                }
             }
         }
-    }
 
-    // we're done here, emit all quads that are active.
-    for quad in active_quads.drain(..) {
-        emit_quad(quad);
+        // we're done here, emit all quads that are active.
+        for quad in self.active_quads.drain(..) {
+            emit_quad(quad);
+        }
     }
 }
 
@@ -285,7 +278,7 @@ struct GreedyQuad<V> {
 
 /// Opacity masks for 3 axis: XY, ZY, XZ
 #[derive(Debug)]
-struct OpacityMasks {
+struct OpacityMasks<const CHUNK_SIZE: usize> {
     /// The outer array has one element per direction. They contain the same
     /// data (if a voxel is opaque or not), but a different axis is stored in
     /// the bits.
@@ -296,65 +289,71 @@ struct OpacityMasks {
     /// Each inner array is in morton-order. Two axis (e.g. XY) are mapped to
     /// array elements. The third axis (e.g. Z) is represented by individual
     /// bits in the array entries.
-    masks: Box<[[u64; LAYER_SIZE]; 3]>,
+    xy: Box<[u64]>,
+    zy: Box<[u64]>,
+    xz: Box<[u64]>,
 }
 
-impl Default for OpacityMasks {
-    /// This is rather large (288 KiB for 64^3 chunks) so it is heap-allocated.
-    ///
-    /// The implementation of [`Default` for `Box`][1] seems to not construct
-    /// the value on the stack and then move it, but initialize it on the heap
-    /// directly - which is desired.
-    ///
-    /// Unfortunately for some reason `Default` is not implemented for large
-    /// arrays, so we can't use that. Let's just hope this is optimized.
-    ///
-    /// [1]: https://doc.rust-lang.org/src/alloc/boxed.rs.html#1694
+impl<const CHUNK_SIZE: usize> Default for OpacityMasks<CHUNK_SIZE> {
     fn default() -> Self {
+        // This is rather large (288 KiB for 64^3 chunks) so it is
+        // heap-allocated.
+        //
+        // The implementation of [`Default` for `Box`][1] seems to not
+        // construct the value on the stack and then move it, but
+        // initialize it on the heap directly - which is desired.
+        //
+        // Unfortunately for some reason `Default` is not implemented for large
+        // arrays, so we can't use that. Let's just hope this is optimized.
+        //
+        // [1]: https://doc.rust-lang.org/src/alloc/boxed.rs.html#1694
+
         Self {
-            masks: Box::new(std::array::from_fn(|_| std::array::from_fn(|_| 0))),
+            xy: vec![0; CHUNK_SIZE * CHUNK_SIZE].into_boxed_slice(),
+            zy: vec![0; CHUNK_SIZE * CHUNK_SIZE].into_boxed_slice(),
+            xz: vec![0; CHUNK_SIZE * CHUNK_SIZE].into_boxed_slice(),
         }
     }
 }
 
-impl OpacityMasks {
+impl<const CHUNK_SIZE: usize> OpacityMasks<CHUNK_SIZE> {
     fn fill<'w, 's, V>(
         &mut self,
-        chunk: &[V; CHUNK_NUM_VOXELS],
+        chunk: &Chunk<V, CHUNK_SIZE>,
         data: &<V::Data as SystemParam>::Item<'w, 's>,
     ) where
         V: Voxel,
     {
-        let [opacity_xy, opacity_zy, opacity_xz] = &mut *self.masks;
-
         // fill XY opacity matrix
-        for i in 0..LAYER_SIZE {
+        for i in 0..(CHUNK_SIZE * CHUNK_SIZE) {
             let [x, y] = morton_decode::<u16, 2>(i.try_into().unwrap());
             let mut mask_i = 0;
-            for z in 0..CHUNK_SIDE_LENGTH {
+            for z in 0..CHUNK_SIZE as u16 {
                 let j = morton_encode([x, y, z]);
-                if chunk[j as usize].is_opaque(data) {
+                if chunk.voxels[j as usize].is_opaque(data) {
                     mask_i |= 1 << z;
                 }
             }
-            opacity_xy[i] = mask_i;
+            self.xy[i] = mask_i;
         }
 
         // flip X and Z
-        opacity_zy.copy_from_slice(opacity_xy.as_slice());
-        for y in 0..CHUNK_SIDE_LENGTH {
+        self.zy.copy_from_slice(&self.xy);
+        for y in 0..CHUNK_SIZE as u16 {
             OpacityMaskView {
-                mask: opacity_zy,
+                mask: &mut self.zy,
+                side_length: CHUNK_SIZE,
                 view: RowView { y },
             }
             .transpose();
         }
 
         // flip Y and Z
-        opacity_xz.copy_from_slice(opacity_xy.as_slice());
-        for x in 0..CHUNK_SIDE_LENGTH {
+        self.xz.copy_from_slice(&self.xy);
+        for x in 0..CHUNK_SIZE as u16 {
             OpacityMaskView {
-                mask: opacity_xz,
+                mask: &mut self.xz,
+                side_length: CHUNK_SIZE,
                 view: ColumnView { x },
             }
             .transpose();
@@ -362,21 +361,21 @@ impl OpacityMasks {
     }
 
     #[inline(always)]
-    fn opacity_xy(&self, xy: [u16; 2]) -> u64 {
-        let i: usize = morton_encode(xy).try_into().unwrap();
-        self.masks[0][i]
+    fn opacity_xy(&self, xy: Point2<u16>) -> u64 {
+        let i: usize = morton_encode(xy.into()).try_into().unwrap();
+        self.xy[i]
     }
 
     #[inline(always)]
-    fn opacity_zy(&self, zy: [u16; 2]) -> u64 {
-        let i: usize = morton_encode(zy).try_into().unwrap();
-        self.masks[1][i]
+    fn opacity_zy(&self, zy: Point2<u16>) -> u64 {
+        let i: usize = morton_encode(zy.into()).try_into().unwrap();
+        self.zy[i]
     }
 
     #[inline(always)]
-    fn opacity_xz(&self, xz: [u16; 2]) -> u64 {
-        let i: usize = morton_encode(xz).try_into().unwrap();
-        self.masks[2][i]
+    fn opacity_xz(&self, xz: Point2<u16>) -> u64 {
+        let i: usize = morton_encode(xz.into()).try_into().unwrap();
+        self.xz[i]
     }
 }
 
@@ -395,13 +394,7 @@ mod tranpose {
 
     use morton_encoding::morton_encode;
 
-    use crate::voxel::{
-        flat::CHUNK_SIDE_LENGTH,
-        mesh::greedy_quads::{
-            LAYER_SIZE,
-            bitmask,
-        },
-    };
+    use crate::voxel::mesh::greedy_quads::bitmask;
 
     pub trait View {
         fn index(&self, index: usize) -> usize;
@@ -431,7 +424,8 @@ mod tranpose {
 
     #[derive(Debug)]
     pub struct OpacityMaskView<'a, V> {
-        pub mask: &'a mut [u64; LAYER_SIZE],
+        pub mask: &'a mut [u64],
+        pub side_length: usize,
         pub view: V,
     }
 
@@ -440,12 +434,12 @@ mod tranpose {
         V: View,
     {
         fn len(&self) -> usize {
-            CHUNK_SIDE_LENGTH as usize
+            self.side_length
         }
 
         fn get_mut_2(&mut self, rows: [usize; 2]) -> [&mut u64; 2] {
             let indices = rows.map(|row| self.view.index(row));
-            slice_get_mut_2(self.mask.as_mut_slice(), indices)
+            slice_get_mut_2(self.mask, indices)
         }
     }
 
@@ -488,7 +482,7 @@ mod tranpose {
         }
     }
 
-    impl BitMatrix for &mut [u64] {
+    impl BitMatrix for [u64] {
         fn len(&self) -> usize {
             <[_]>::len(self)
         }

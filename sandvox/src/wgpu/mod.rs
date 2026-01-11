@@ -18,6 +18,10 @@ use bevy_ecs::{
 use color_eyre::eyre::Error;
 use nalgebra::Vector2;
 use palette::LinSrgba;
+use serde::{
+    Deserialize,
+    Serialize,
+};
 
 use crate::{
     ecs::{
@@ -66,9 +70,11 @@ pub enum WgpuSystems {
     RequestFeatures,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct WgpuConfig {
+    #[serde(with = "crate::util::serde::backends")]
     pub backends: wgpu::Backends,
+    #[serde(with = "crate::util::serde::power_preference")]
     pub power_preference: wgpu::PowerPreference,
     pub staging_chunk_size: wgpu::BufferSize,
     pub memory_hints: MemoryHints,
@@ -199,7 +205,7 @@ pub struct WgpuInfo {
     pub limits: wgpu::Limits,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub enum MemoryHints {
     #[default]
     Performance,

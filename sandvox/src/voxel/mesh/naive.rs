@@ -11,10 +11,7 @@ use crate::{
     voxel::{
         BlockFace,
         Voxel,
-        flat::{
-            CHUNK_NUM_VOXELS,
-            FlatChunk,
-        },
+        chunk::Chunk,
         mesh::{
             ChunkMesher,
             UnorientedQuad,
@@ -25,13 +22,13 @@ use crate::{
 #[derive(Clone, Copy, Debug, Default)]
 pub struct NaiveMesher;
 
-impl<V> ChunkMesher<V> for NaiveMesher
+impl<V, const CHUNK_SIZE: usize> ChunkMesher<V, CHUNK_SIZE> for NaiveMesher
 where
     V: Voxel,
 {
     fn mesh_chunk<'w, 's>(
         &mut self,
-        chunk: &FlatChunk<V>,
+        chunk: &Chunk<V, CHUNK_SIZE>,
         mesh_builder: &mut MeshBuilder,
         data: &<V::Data as SystemParam>::Item<'w, 's>,
     ) {
@@ -40,7 +37,7 @@ where
 }
 
 pub fn naive_mesh<'w, 's, V>(
-    voxels: &[V; CHUNK_NUM_VOXELS],
+    voxels: &[V],
     mesh_builder: &mut MeshBuilder,
     data: &<V::Data as SystemParam>::Item<'w, 's>,
 ) where

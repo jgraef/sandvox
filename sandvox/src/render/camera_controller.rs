@@ -72,7 +72,7 @@ pub struct CameraControllerState {
 
 #[derive(Clone, Copy, Debug, Component)]
 pub struct CameraControllerConfig {
-    // rad / (pixel * second)
+    // rad / pixel
     pub mouse_sensitivity: f32,
 
     pub keybindings: CameraControllerKeybindings,
@@ -84,7 +84,7 @@ pub struct CameraControllerConfig {
 impl Default for CameraControllerConfig {
     fn default() -> Self {
         Self {
-            mouse_sensitivity: 0.3,
+            mouse_sensitivity: 0.01,
             keybindings: Default::default(),
             movement_speed: 8.0,
         }
@@ -179,7 +179,10 @@ fn update_camera(
         // mouse
         if let Some(mouse_position) = mouse_position {
             if !mouse_position.frame_delta.is_zero() {
-                let delta = dt * config.mouse_sensitivity * mouse_position.frame_delta;
+                // note: don't multiply by delta-time, since the mouse delta is already
+                // naturally scaled by that.
+                let delta = config.mouse_sensitivity * mouse_position.frame_delta;
+
                 tracing::trace!(?delta, ?mouse_position.frame_delta, "mouse movement");
 
                 state.yaw += delta.x;

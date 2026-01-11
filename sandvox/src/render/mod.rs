@@ -1,15 +1,23 @@
 pub mod camera;
 pub mod camera_controller;
+pub mod fps_counter;
 pub mod frame;
 pub mod mesh;
 pub mod surface;
 pub mod texture_atlas;
 
-use bevy_ecs::schedule::{
-    IntoScheduleConfigs,
-    SystemSet,
+use bevy_ecs::{
+    resource::Resource,
+    schedule::{
+        IntoScheduleConfigs,
+        SystemSet,
+    },
 };
 use color_eyre::eyre::Error;
+use serde::{
+    Deserialize,
+    Serialize,
+};
 
 use crate::{
     ecs::{
@@ -20,12 +28,13 @@ use crate::{
         schedule,
     },
     render::surface::handle_window_events,
+    util::serde::default_true,
     wgpu::WgpuSystems,
 };
 
 #[derive(Clone, Debug, Default)]
 pub struct RenderPlugin {
-    // todo config
+    pub config: RenderConfig,
 }
 
 impl Plugin for RenderPlugin {
@@ -54,7 +63,8 @@ impl Plugin for RenderPlugin {
             .configure_system_sets(
                 schedule::Render,
                 RenderSystems::EndFrame.after(RenderSystems::BeginFrame),
-            );
+            )
+            .insert_resource(self.config.clone());
 
         Ok(())
     }
@@ -66,4 +76,16 @@ pub enum RenderSystems {
     BeginFrame,
     RenderFrame,
     EndFrame,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, Resource)]
+pub struct RenderConfig {
+    #[serde(default = "default_true")]
+    pub vsync: bool,
+}
+
+impl Default for RenderConfig {
+    fn default() -> Self {
+        Self { vsync: true }
+    }
 }

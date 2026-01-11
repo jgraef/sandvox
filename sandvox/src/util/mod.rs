@@ -1,5 +1,6 @@
 pub mod image;
 pub mod oneshot;
+pub mod serde;
 
 use std::ops::{
     Add,

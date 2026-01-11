@@ -116,7 +116,8 @@ pub fn end_frame(wgpu: Res<WgpuContext>, frames: Query<(NameOrEntity, &mut Frame
             let command_buffer = frame.command_encoder.finish();
             wgpu.queue.submit([command_buffer]);
 
-            let time = frame.start_time.elapsed();
+            let end_time = Instant::now();
+            let time = end_time - frame.start_time;
             tracing::trace!(surface = %name, ?time, "rendered frame");
 
             frame.surface_texture.present();

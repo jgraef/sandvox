@@ -1,10 +1,16 @@
 pub mod block_type;
 
 use bevy_ecs::{
+    entity::Entity,
     name::Name,
-    schedule::IntoScheduleConfigs,
+    resource::Resource,
+    schedule::{
+        IntoScheduleConfigs,
+        common_conditions::resource_changed,
+    },
     system::{
         Commands,
+        Query,
         Res,
         ResMut,
     },
@@ -18,13 +24,10 @@ use noise::{
     NoiseFn,
     Perlin,
 };
-use palette::{
-    Srgba,
-    WithAlpha,
-};
+use palette::WithAlpha;
 
 use crate::{
-    app::Window,
+    app::WindowConfig,
     ecs::{
         plugin::{
             Plugin,
@@ -36,6 +39,10 @@ use crate::{
     render::{
         camera::CameraProjection,
         camera_controller::CameraController,
+        fps_counter::{
+            FpsCounter,
+            FpsCounterPlugin,
+        },
         mesh::RenderWireframes,
         surface::{
             AttachedCamera,
@@ -50,10 +57,9 @@ use crate::{
     voxel::{
         BlockFace,
         Voxel,
-        flat::{
-            CHUNK_SIDE_LENGTH,
-            FlatChunk,
-            FlatChunkPlugin,
+        chunk::{
+            Chunk,
+            VoxelChunkPlugin,
         },
         mesh::greedy_quads::GreedyMesher,
     },
@@ -63,19 +69,30 @@ use crate::{
     },
 };
 
+const CHUNK_SIZE: usize = 64;
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct WorldPlugin;
 
 impl Plugin for WorldPlugin {
     fn setup(&self, builder: &mut WorldBuilder) -> Result<(), Error> {
         builder
-            .add_plugin(FlatChunkPlugin::<TerrainVoxel, GreedyMesher<TerrainVoxel>>::default())?
+            .add_plugin(VoxelChunkPlugin::<
+                TerrainVoxel,
+                GreedyMesher<TerrainVoxel, CHUNK_SIZE>,
+                CHUNK_SIZE,
+            >::default())?
+            .add_plugin(FpsCounterPlugin::default())?
             .add_systems(
                 schedule::Startup,
                 (
                     load_block_types.in_set(AtlasSystems::InsertTextures),
                     init_world.after(load_block_types),
                 ),
+            )
+            .add_systems(
+                schedule::Update,
+                show_fps_in_window_title.run_if(resource_changed::<FpsCounter>),
             )
             .insert_resource(RenderWireframes);
 
@@ -117,7 +134,7 @@ fn load_block_types(mut atlas_builder: ResMut<AtlasBuilder>, mut commands: Comma
 fn init_world(block_types: Res<BlockTypes>, mut commands: Commands) {
     tracing::debug!("initializing world");
 
-    let chunk_side_length = CHUNK_SIDE_LENGTH as f32;
+    let chunk_side_length = CHUNK_SIZE as f32;
     let chunk_center = Point3::from(Vector3::repeat(0.5 * chunk_side_length));
 
     // spawn chunk
@@ -130,7 +147,7 @@ fn init_world(block_types: Res<BlockTypes>, mut commands: Commands) {
             let noise = Perlin::new(1312);
             let scaling = 1.0 / chunk_side_length;
 
-            let chunk: FlatChunk<TerrainVoxel> = FlatChunk::from_fn(move |point| {
+            let chunk: Chunk<TerrainVoxel, CHUNK_SIZE> = Chunk::from_fn(move |point| {
                 let block_type = if point == Point3::origin() {
                     sand
                 }
@@ -162,12 +179,28 @@ fn init_world(block_types: Res<BlockTypes>, mut commands: Commands) {
         .id();
 
     // spawn window
-    commands.spawn((
-        Name::new("main_window"),
-        Window {
-            title: "SandVox".to_owned(),
-        },
-        ClearColor(palette::named::LIGHTSKYBLUE.into_format().with_alpha(1.0)),
-        AttachedCamera(camera_entity),
-    ));
+    let window = commands
+        .spawn((
+            Name::new("main_window"),
+            WindowConfig {
+                title: "SandVox".to_owned(),
+            },
+            ClearColor(palette::named::LIGHTSKYBLUE.into_format().with_alpha(1.0)),
+            AttachedCamera(camera_entity),
+        ))
+        .id();
+
+    commands.insert_resource(MainWindow(window));
+}
+
+#[derive(Clone, Copy, Debug, Resource)]
+struct MainWindow(Entity);
+
+fn show_fps_in_window_title(
+    fps_counter: Res<FpsCounter>,
+    main_window: Res<MainWindow>,
+    mut windows: Query<&mut WindowConfig>,
+) {
+    let mut config = windows.get_mut(main_window.0).unwrap();
+    config.title = format!("SandVox ({:.2} fps)", fps_counter.fps);
 }

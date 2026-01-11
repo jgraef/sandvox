@@ -17,17 +17,17 @@ use crate::{
     voxel::{
         BlockFace,
         Voxel,
-        flat::FlatChunk,
+        chunk::Chunk,
     },
 };
 
-pub trait ChunkMesher<V>: Send + Sync + Default + 'static
+pub trait ChunkMesher<V, const CHUNK_SIZE: usize>: Send + Sync + Default + 'static
 where
     V: Voxel,
 {
     fn mesh_chunk<'w, 's>(
         &mut self,
-        chunk: &FlatChunk<V>,
+        chunk: &Chunk<V, CHUNK_SIZE>,
         mesh_builder: &mut MeshBuilder,
         data: &<V::Data as SystemParam>::Item<'w, 's>,
     );
