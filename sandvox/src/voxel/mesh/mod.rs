@@ -102,6 +102,12 @@ fn mesh_chunks<V, M, const CHUNK_SIZE: usize>(
     V: Voxel,
     M: ChunkMesher<V, CHUNK_SIZE>,
 {
+    // todo: do this in a background thread, just like chunk generation works
+    // for now we'll just limit how many we do per frame
+    const MAX_CHUNKS_MESHED_PER_FRAME: usize = 64;
+
+    let mut num_meshed = 0;
+
     for (entity, chunk) in &chunks {
         tracing::debug!(?entity, "meshing chunk");
 
@@ -115,9 +121,14 @@ fn mesh_chunks<V, M, const CHUNK_SIZE: usize>(
         entity.insert(ChunkMeshed);
         if let Some(mesh) = mesh_builder.finish(&wgpu, "chunk") {
             entity.insert(mesh);
+            num_meshed += 1;
         }
 
         mesh_builder.clear();
+
+        if num_meshed >= MAX_CHUNKS_MESHED_PER_FRAME {
+            break;
+        }
     }
 }
 

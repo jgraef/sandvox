@@ -2,3 +2,5 @@
 resolver = "2"
 members = ["sandvox"]
 
+#[profile.dev.package.sandvox]
+#opt-level = 1

@@ -430,8 +430,6 @@ fn update_instance_buffer(
     for (entity, transform, instance_id) in meshes {
         let id = instance_data.len().try_into().unwrap();
 
-        tracing::debug!(?entity, position = ?transform.isometry().translation.vector, ?id);
-
         instance_data.push(Instance {
             model_matrix: transform.isometry().to_homogeneous(),
         });

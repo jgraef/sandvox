@@ -149,6 +149,9 @@ impl<'w, 's, const CHUNK_SIZE: usize> LoadChunks<'w, 's, CHUNK_SIZE> {
             if !self.chunk_map.contains(position) {
                 // note: creating an entity with a ChunkPosition will cause this entity to be
                 // inserted into the chunk map
+                //
+                // though on second thought it might be a good idea to make sure this can't
+                // endlessly create entities if e.g. the chunk map system doesn't work.
 
                 let transform: LocalTransform = (CHUNK_SIZE as i32 * position).cast::<f32>().into();
 

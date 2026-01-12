@@ -101,7 +101,8 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4f {
 
 @vertex
 fn vertex_main_wireframe(input: VertexInput) -> VertexOutputWireframe {
-    let world_position = input.position;
+    let model_matrix = mat4x4f(input.model0, input.model1, input.model2, input.model3);
+    let world_position = model_matrix * input.position;
     let fragment_position = camera.matrix * world_position;
 
     return VertexOutputWireframe(

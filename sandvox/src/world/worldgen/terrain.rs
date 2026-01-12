@@ -1,9 +1,7 @@
+use std::time::Instant;
+
 use bevy_ecs::resource::Resource;
 use nalgebra::Point3;
-use noise::{
-    NoiseFn,
-    Perlin,
-};
 use rand::{
     Rng,
     SeedableRng,
@@ -21,6 +19,12 @@ use crate::{
         block_type::{
             BlockType,
             BlockTypes,
+        },
+        worldgen::noise::{
+            FractalNoise,
+            NoiseFn,
+            NoiseFnExt,
+            PerlinNoise,
         },
     },
 };
@@ -56,7 +60,7 @@ impl ChunkGenerator<TerrainVoxel, CHUNK_SIZE> for TerrainGenerator {
     }
 
     fn filter(&self, position: Point3<i32>) -> bool {
-        position.x >= -1 && position.x <= 1 && position.y == 0 && position.z == 0
+        position.y == 0 && position.x.abs() <= 4 && position.z.abs() <= 4
     }
 
     fn generate_chunk(
@@ -64,24 +68,26 @@ impl ChunkGenerator<TerrainVoxel, CHUNK_SIZE> for TerrainGenerator {
         _workspace: &mut Self::Workspace,
         chunk_position: Point3<i32>,
     ) -> Option<Chunk<TerrainVoxel, CHUNK_SIZE>> {
-        tracing::debug!(?chunk_position, "generating chunk");
+        let start_time = Instant::now();
 
         let chunk_side_length = CHUNK_SIZE as f32;
         let chunk_position = chunk_position.cast::<f32>();
 
         let mut rng = Xoroshiro128PlusPlus::seed_from_u64(self.seed);
 
-        let noise = Perlin::new(rng.random());
-        let frequency = 1.0 / chunk_side_length;
-        let amplitude = 10.0;
-        let offset = 15.0;
+        /*let noise = rng
+        .random::<PerlinNoise>()
+        .with_frequency(1.0 / 16.0)
+        */
+
+        let noise = FractalNoise::<PerlinNoise, 6>::new(|| rng.random(), 1.0 / 128.0, 2.0, 0.5);
+
+        let height = noise.with_amplitude(16.0).with_bias(16.0);
 
         let chunk = Chunk::from_fn(move |point| {
             let point = point.cast::<f32>() + chunk_side_length * chunk_position.coords;
 
-            let height = amplitude
-                * noise.get((point.xz() * frequency).cast::<f64>().into()) as f32
-                + offset;
+            let height = height.evaluate_at(point);
 
             let block_type = if point.y <= height {
                 self.stone
@@ -92,6 +98,9 @@ impl ChunkGenerator<TerrainVoxel, CHUNK_SIZE> for TerrainGenerator {
 
             TerrainVoxel { block_type }
         });
+
+        let elapsed = start_time.elapsed();
+        tracing::debug!(?chunk_position, ?elapsed, "generated chunk");
 
         Some(chunk)
     }
@@ -105,4 +114,12 @@ impl Default for WorldSeed {
         // chosen with a fair dice
         Self(0xc481ec1f222d0691)
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct TerrainNoiseParameters {
+    temperature: f32,
+    humidity: f32,
+    continentalness: f32,
+    erosion: f32,
 }

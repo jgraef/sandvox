@@ -175,46 +175,18 @@ fn init_player(mut commands: Commands) {
     let chunk_side_length = CHUNK_SIZE as f32;
     let chunk_center = Point3::from(Vector3::repeat(0.5 * chunk_side_length));
 
-    /*
-    // spawn chunk
-    commands.spawn((
-        {
-            let dirt = block_types.lookup("dirt").unwrap();
-            let stone = block_types.lookup("stone").unwrap();
-            let sand = block_types.lookup("sand").unwrap();
-
-            let noise = Perlin::new(1312);
-            let scaling = 1.0 / chunk_side_length;
-
-            let chunk: Chunk<TerrainVoxel, CHUNK_SIZE> = Chunk::from_fn(move |point| {
-                let block_type = if point == Point3::origin() {
-                    sand
-                }
-                else {
-                    let value = noise.get((point.cast::<f32>() * scaling).cast::<f64>().into());
-                    if value > 0.0 { dirt } else { stone }
-                };
-
-                TerrainVoxel { block_type }
-            });
-
-            chunk
-        },
-        LocalTransform::from(Point3::origin()),
-    ));*/
-
     // spawn camera
     let camera_entity = commands
         .spawn((
             Name::new("main_camera"),
             CameraProjection::default(),
             LocalTransform::look_at(
-                &(chunk_center - (0.5 * chunk_side_length + 5.0) * Vector3::z()),
+                &(chunk_center + chunk_side_length * Vector3::y()),
                 &chunk_center,
                 &Vector3::y(),
             ),
             CameraController::default(),
-            ChunkLoader { radius: 1 },
+            ChunkLoader { radius: 8 },
         ))
         .id();
 

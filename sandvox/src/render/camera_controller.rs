@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use bevy_ecs::{
     bundle::Bundle,
     component::Component,
@@ -70,12 +72,12 @@ pub struct CameraControllerState {
     pub pitch: f32,
 }
 
-#[derive(Clone, Copy, Debug, Component)]
+#[derive(Clone, Debug, Component)]
 pub struct CameraControllerConfig {
     // rad / pixel
     pub mouse_sensitivity: f32,
 
-    pub keybindings: CameraControllerKeybindings,
+    pub keybindings: HashMap<KeyCode, Movement>,
 
     // block / second
     pub movement_speed: f32,
@@ -83,38 +85,23 @@ pub struct CameraControllerConfig {
 
 impl Default for CameraControllerConfig {
     fn default() -> Self {
+        let mut keybindings = HashMap::with_capacity(6);
+        keybindings.insert(KeyCode::KeyW, Movement::Local(Vector3::z()));
+        keybindings.insert(KeyCode::KeyA, Movement::Local(-Vector3::x()));
+        keybindings.insert(KeyCode::KeyS, Movement::Local(-Vector3::z()));
+        keybindings.insert(KeyCode::KeyD, Movement::Local(Vector3::x()));
+        keybindings.insert(KeyCode::ShiftLeft, Movement::Global(-Vector3::y()));
+        keybindings.insert(KeyCode::Space, Movement::Global(Vector3::y()));
+
         Self {
             mouse_sensitivity: 0.01,
-            keybindings: Default::default(),
+            keybindings,
             movement_speed: 8.0,
         }
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-pub struct CameraControllerKeybindings {
-    left: KeyCode,
-    right: KeyCode,
-    down: KeyCode,
-    up: KeyCode,
-    backward: KeyCode,
-    forward: KeyCode,
-}
-
-impl Default for CameraControllerKeybindings {
-    fn default() -> Self {
-        Self {
-            left: KeyCode::KeyA,
-            right: KeyCode::KeyD,
-            down: KeyCode::ShiftLeft,
-            up: KeyCode::Space,
-            backward: KeyCode::KeyS,
-            forward: KeyCode::KeyW,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, Bundle)]
+#[derive(Clone, Debug, Default, Bundle)]
 pub struct CameraController {
     pub state: CameraControllerState,
     pub config: CameraControllerConfig,
@@ -197,20 +184,33 @@ fn update_camera(
         }
 
         // keyboard
-
-        tracing::trace!(?keys.pressed, "keys pressed");
-        let mut check_key = |key_code, direction| {
-            if keys.pressed.contains(&key_code) {
-                transform
-                    .translate_local(&Translation3::from(dt * config.movement_speed * direction));
+        if !keys.pressed.is_empty() {
+            tracing::trace!(?keys.pressed, "keys pressed");
+            let speed = dt * config.movement_speed;
+            for (key_code, action) in &config.keybindings {
+                if keys.pressed.contains(key_code) {
+                    action.apply(&mut transform, speed);
+                }
             }
-        };
+        }
+    }
+}
 
-        check_key(config.keybindings.left, -Vector3::x());
-        check_key(config.keybindings.right, Vector3::x());
-        check_key(config.keybindings.down, -Vector3::y());
-        check_key(config.keybindings.up, Vector3::y());
-        check_key(config.keybindings.backward, -Vector3::z());
-        check_key(config.keybindings.forward, Vector3::z());
+#[derive(Clone, Copy, Debug)]
+pub enum Movement {
+    Local(Vector3<f32>),
+    Global(Vector3<f32>),
+}
+
+impl Movement {
+    fn apply(&self, transform: &mut LocalTransform, speed: f32) {
+        match self {
+            Movement::Local(direction) => {
+                transform.translate_local(&Translation3::from(speed * direction));
+            }
+            Movement::Global(direction) => {
+                transform.translate_global(&Translation3::from(speed * direction));
+            }
+        }
     }
 }
