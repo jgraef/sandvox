@@ -11,6 +11,11 @@ struct VertexInput {
 
     @location(3)
     texture_id: u32,
+
+    @location(4) model0: vec4f,
+    @location(5) model1: vec4f,
+    @location(6) model2: vec4f,
+    @location(7) model3: vec4f,
 }
 
 struct VertexOutput {
@@ -61,10 +66,13 @@ struct AtlasSlot {
 @binding(2)
 var<storage, read> atlas_data: array<AtlasSlot>;
 
+
 @vertex
 fn vertex_main(input: VertexInput) -> VertexOutput {
-    let world_position = input.position;
-    let normal = input.normal;
+    let model_matrix = mat4x4f(input.model0, input.model1, input.model2, input.model3);
+
+    let world_position = model_matrix * input.position;
+    let normal = model_matrix * input.normal;
 
     let fragment_position = camera.matrix * world_position;
 

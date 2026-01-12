@@ -1,5 +1,6 @@
 [air]
 # no texture
+is_opaque = false
 
 [dirt]
 texture = "blocks/dirt.png"

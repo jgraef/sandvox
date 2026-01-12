@@ -4,14 +4,25 @@ use bevy_ecs::{
     component::Component,
     entity::Entity,
     name::NameOrEntity,
-    query::Without,
+    query::{
+        Added,
+        Changed,
+        Or,
+        With,
+        Without,
+    },
     resource::Resource,
     schedule::{
         IntoScheduleConfigs,
-        common_conditions::resource_exists,
+        SystemCondition,
+        common_conditions::{
+            any_match_filter,
+            resource_exists,
+        },
     },
     system::{
         Commands,
+        Local,
         Populated,
         Res,
         ResMut,
@@ -23,6 +34,7 @@ use bytemuck::{
 };
 use color_eyre::eyre::Error;
 use nalgebra::{
+    Matrix4,
     Point2,
     Vector4,
 };
@@ -51,6 +63,11 @@ use crate::{
         WgpuContext,
         WgpuContextBuilder,
         WgpuSystems,
+        buffer::{
+            WriteStaging,
+            WriteStagingCommit,
+            WriteStagingTransaction,
+        },
     },
 };
 
@@ -74,10 +91,27 @@ impl Plugin for MeshPlugin {
                 schedule::Render,
                 (
                     create_mesh_render_pipeline_for_surfaces.in_set(RenderSystems::BeginFrame),
-                    render_meshes.in_set(RenderSystems::RenderFrame),
+                    update_instance_buffer
+                        .in_set(RenderSystems::BeginFrame)
+                        .run_if(
+                            any_match_filter::<(
+                                With<Mesh>,
+                                Or<(
+                                    Changed<GlobalTransform>,
+                                    Added<GlobalTransform>,
+                                    Added<Mesh>,
+                                )>,
+                            )>,
+                        ),
+                    render_meshes
+                        .in_set(RenderSystems::RenderFrame)
+                        .run_if(resource_exists::<InstanceBuffer>),
                     render_wireframes
                         .in_set(RenderSystems::RenderFrame)
-                        .run_if(resource_exists::<RenderWireframes>)
+                        .run_if(
+                            resource_exists::<InstanceBuffer>
+                                .and(resource_exists::<RenderWireframes>),
+                        )
                         .after(render_meshes),
                 ),
             );
@@ -156,6 +190,25 @@ impl MeshBuilder {
 
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 #[repr(C)]
+struct Instance {
+    model_matrix: Matrix4<f32>,
+}
+
+impl Instance {
+    pub const LAYOUT: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout {
+        array_stride: size_of::<Self>() as wgpu::BufferAddress,
+        step_mode: wgpu::VertexStepMode::Instance,
+        attributes: &wgpu::vertex_attr_array![
+            4 => Float32x4,
+            5 => Float32x4,
+            6 => Float32x4,
+            7 => Float32x4,
+        ],
+    };
+}
+
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+#[repr(C)]
 pub struct Vertex {
     pub position: Vector4<f32>,
     pub normal: Vector4<f32>,
@@ -198,6 +251,15 @@ impl Mesh {
         render_pass.draw_indexed(self.indices.clone(), self.base_vertex, instances);
     }
 }
+
+#[derive(Debug, Resource)]
+struct InstanceBuffer {
+    buffer: wgpu::Buffer,
+    size: u64,
+}
+
+#[derive(Clone, Copy, Debug, Component)]
+struct InstanceId(u32);
 
 #[derive(Debug, Resource)]
 struct MeshRenderPipelineShared {
@@ -244,14 +306,13 @@ impl MeshRenderPipelinePerSurface {
                     module: &shared.shader,
                     entry_point: Some("vertex_main"),
                     compilation_options: Default::default(),
-                    buffers: &[Vertex::LAYOUT],
+                    buffers: &[Vertex::LAYOUT, Instance::LAYOUT],
                 },
                 primitive: wgpu::PrimitiveState {
                     topology: wgpu::PrimitiveTopology::TriangleList,
                     strip_index_format: None,
                     front_face: wgpu::FrontFace::Ccw,
                     cull_mode: Some(wgpu::Face::Back),
-                    //cull_mode: None,
                     unclipped_depth: false,
                     polygon_mode: wgpu::PolygonMode::Fill,
                     conservative: false,
@@ -287,7 +348,7 @@ impl MeshRenderPipelinePerSurface {
                         module: &shared.shader,
                         entry_point: Some("vertex_main_wireframe"),
                         compilation_options: Default::default(),
-                        buffers: &[Vertex::LAYOUT],
+                        buffers: &[Vertex::LAYOUT, Instance::LAYOUT],
                     },
                     primitive: wgpu::PrimitiveState {
                         topology: wgpu::PrimitiveTopology::TriangleList,
@@ -355,23 +416,118 @@ fn create_mesh_render_pipeline_for_surfaces(
     }
 }
 
+fn update_instance_buffer(
+    wgpu: Res<WgpuContext>,
+    instance_buffer: Option<ResMut<InstanceBuffer>>,
+    meshes: Populated<(Entity, &GlobalTransform, Option<&mut InstanceId>), With<Mesh>>,
+    mut commands: Commands,
+    mut instance_data: Local<Vec<Instance>>,
+) {
+    // I always forget to clear this! keep this assert :3
+    assert!(instance_data.is_empty());
+
+    // create data for instance buffer
+    for (entity, transform, instance_id) in meshes {
+        let id = instance_data.len().try_into().unwrap();
+
+        tracing::debug!(?entity, position = ?transform.isometry().translation.vector, ?id);
+
+        instance_data.push(Instance {
+            model_matrix: transform.isometry().to_homogeneous(),
+        });
+
+        if let Some(mut instance_id) = instance_id {
+            instance_id.0 = id;
+        }
+        else {
+            commands.entity(entity).insert(InstanceId(id));
+        }
+    }
+
+    let instance_data_bytes = bytemuck::cast_slice(&**instance_data);
+    let instance_data_size = instance_data_bytes.len() as wgpu::BufferAddress;
+
+    let create_and_fill_buffer = |allocate_size: u64| {
+        let buffer = wgpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("mesh instance"),
+            size: allocate_size,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: true,
+        });
+
+        let mut view = buffer.get_mapped_range_mut(..instance_data_size);
+        view.copy_from_slice(instance_data_bytes);
+
+        drop(view);
+        buffer.unmap();
+
+        InstanceBuffer {
+            buffer,
+            size: allocate_size,
+        }
+    };
+
+    if let Some(mut instance_buffer) = instance_buffer {
+        // instance buffer already exists. we'll try to reuse it
+
+        if instance_buffer.size < instance_data_size {
+            // new instance data is larger than already existing buffer. allocate a new one
+
+            // double the previous size, but atleast enough for the instance data
+            let allocate_size = instance_data_size.max(2 * instance_buffer.size);
+
+            *instance_buffer = create_and_fill_buffer(allocate_size);
+        }
+        else {
+            // new instance data fits into buffer. use staging pool to upload the data
+
+            let mut command_encoder =
+                wgpu.device
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("upload mesh instance data"),
+                    });
+
+            let mut staging = WriteStagingTransaction::new(
+                wgpu.staging_pool.belt(),
+                &wgpu.device,
+                &mut command_encoder,
+            );
+
+            staging.write_buffer_from_slice(
+                instance_buffer.buffer.slice(..instance_data_size),
+                instance_data_bytes,
+            );
+
+            staging.commit();
+            wgpu.queue.submit([command_encoder.finish()]);
+        }
+    }
+    else {
+        // we don't have a instance buffer yet. create one.
+
+        commands.insert_resource(create_and_fill_buffer(instance_data_size));
+    }
+
+    // don't forget!!!!111
+    instance_data.clear();
+}
+
 fn render_meshes(
     atlas: Res<Atlas>,
     frames: Populated<(&mut Frame, &MeshRenderPipelinePerSurface)>,
-    chunk_meshes: Populated<(&Mesh, &GlobalTransform)>,
+    chunk_meshes: Populated<(&Mesh, &InstanceId)>,
+    instance_buffer: Res<InstanceBuffer>,
 ) {
     for (mut frame, pipeline) in frames {
         let mut render_pass = frame.render_pass_mut();
 
         render_pass.set_pipeline(&pipeline.pipeline);
         render_pass.set_bind_group(1, Some(atlas.bind_group()), &[]);
+        render_pass.set_vertex_buffer(1, instance_buffer.buffer.slice(..));
 
         let mut count = 0;
-        for (mesh, transform) in &chunk_meshes {
-            // todo: bind transform
-            let _ = transform;
-
-            mesh.draw(&mut render_pass, 0, 0..1);
+        for (mesh, instance_id) in &chunk_meshes {
+            mesh.draw(&mut render_pass, 0, instance_id.0..(instance_id.0 + 1));
             count += 1;
         }
 
@@ -382,20 +538,19 @@ fn render_meshes(
 fn render_wireframes(
     atlas: Res<Atlas>,
     frames: Populated<(&mut Frame, &MeshRenderPipelinePerSurface)>,
-    chunk_meshes: Populated<(&Mesh, &GlobalTransform)>,
+    chunk_meshes: Populated<(&Mesh, &InstanceId)>,
+    instance_buffer: Res<InstanceBuffer>,
 ) {
     for (mut frame, pipeline) in frames {
         let mut render_pass = frame.render_pass_mut();
 
         render_pass.set_pipeline(&pipeline.wireframe_pipeline);
         render_pass.set_bind_group(1, Some(atlas.bind_group()), &[]);
+        render_pass.set_vertex_buffer(1, instance_buffer.buffer.slice(..));
 
         let mut count = 0;
-        for (mesh, transform) in &chunk_meshes {
-            // todo: bind transform
-            let _ = transform;
-
-            mesh.draw(&mut render_pass, 0, 0..1);
+        for (mesh, instance_id) in &chunk_meshes {
+            mesh.draw(&mut render_pass, 0, instance_id.0..(instance_id.0 + 1));
             count += 1;
         }
 

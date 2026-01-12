@@ -1,5 +1,7 @@
 pub mod chunk;
+pub mod chunk_generator;
 pub mod chunk_map;
+pub mod loader;
 pub mod mesh;
 pub mod svo;
 

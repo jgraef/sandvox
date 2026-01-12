@@ -11,6 +11,7 @@ use bevy_ecs::{
     },
     system::{
         Commands,
+        IntoSystem,
         Query,
         Res,
         ResMut,
@@ -20,10 +21,6 @@ use color_eyre::eyre::Error;
 use nalgebra::{
     Point3,
     Vector3,
-};
-use noise::{
-    NoiseFn,
-    Perlin,
 };
 use palette::WithAlpha;
 use winit::keyboard::KeyCode;
@@ -63,19 +60,33 @@ use crate::{
     voxel::{
         BlockFace,
         Voxel,
-        chunk::{
-            Chunk,
-            VoxelChunkPlugin,
+        chunk_generator::{
+            ChunkGeneratorPlugin,
+            spawn_chunk_generator_thread,
         },
-        mesh::greedy_quads::GreedyMesher,
+        chunk_map::ChunkMapPlugin,
+        loader::{
+            ChunkLoader,
+            ChunkLoaderPlugin,
+        },
+        mesh::{
+            ChunkMeshPlugin,
+            greedy_quads::GreedyMesher,
+        },
     },
-    world::block_type::{
-        BlockType,
-        BlockTypes,
+    world::{
+        block_type::{
+            BlockType,
+            BlockTypes,
+        },
+        worldgen::terrain::{
+            TerrainGenerator,
+            WorldSeed,
+        },
     },
 };
 
-const CHUNK_SIZE: usize = 32;
+pub const CHUNK_SIZE: usize = 32;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct WorldPlugin;
@@ -83,18 +94,29 @@ pub struct WorldPlugin;
 impl Plugin for WorldPlugin {
     fn setup(&self, builder: &mut WorldBuilder) -> Result<(), Error> {
         builder
-            .add_plugin(VoxelChunkPlugin::<
+            .insert_resource(WorldSeed::default())
+            .add_plugin(ChunkMeshPlugin::<
                 TerrainVoxel,
                 GreedyMesher<TerrainVoxel, CHUNK_SIZE>,
                 //NaiveMesher,
                 CHUNK_SIZE,
             >::default())?
+            .add_plugin(ChunkMapPlugin)?
+            .add_plugin(ChunkLoaderPlugin::<CHUNK_SIZE>)?
             .add_plugin(FpsCounterPlugin::default())?
+            .add_plugin(ChunkGeneratorPlugin::<
+                TerrainVoxel,
+                TerrainGenerator,
+                CHUNK_SIZE,
+            >::default())?
             .add_systems(
                 schedule::Startup,
                 (
                     load_block_types.in_set(AtlasSystems::InsertTextures),
-                    init_world.after(load_block_types),
+                    create_terrain_generator
+                        .pipe(spawn_chunk_generator_thread)
+                        .after(load_block_types),
+                    init_player,
                 ),
             )
             .add_systems(
@@ -140,12 +162,20 @@ fn load_block_types(mut atlas_builder: ResMut<AtlasBuilder>, mut commands: Comma
     commands.insert_resource(block_types);
 }
 
-fn init_world(block_types: Res<BlockTypes>, mut commands: Commands) {
+fn create_terrain_generator(
+    block_types: Res<BlockTypes>,
+    world_seed: Res<WorldSeed>,
+) -> TerrainGenerator {
+    TerrainGenerator::new(world_seed.0, &block_types)
+}
+
+fn init_player(mut commands: Commands) {
     tracing::debug!("initializing world");
 
     let chunk_side_length = CHUNK_SIZE as f32;
     let chunk_center = Point3::from(Vector3::repeat(0.5 * chunk_side_length));
 
+    /*
     // spawn chunk
     commands.spawn((
         {
@@ -171,7 +201,7 @@ fn init_world(block_types: Res<BlockTypes>, mut commands: Commands) {
             chunk
         },
         LocalTransform::from(Point3::origin()),
-    ));
+    ));*/
 
     // spawn camera
     let camera_entity = commands
@@ -184,6 +214,7 @@ fn init_world(block_types: Res<BlockTypes>, mut commands: Commands) {
                 &Vector3::y(),
             ),
             CameraController::default(),
+            ChunkLoader { radius: 1 },
         ))
         .id();
 

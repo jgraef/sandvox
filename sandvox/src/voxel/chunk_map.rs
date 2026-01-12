@@ -10,7 +10,6 @@ use bevy_ecs::{
     },
     resource::Resource,
     system::{
-        Commands,
         Query,
         ResMut,
     },
@@ -25,7 +24,6 @@ use crate::ecs::{
         WorldBuilder,
     },
     schedule,
-    transform::LocalTransform,
 };
 
 pub struct ChunkMapPlugin;
@@ -44,6 +42,16 @@ impl Plugin for ChunkMapPlugin {
 #[derive(Debug, Default, Resource)]
 pub struct ChunkMap {
     map: HashMap<Point3<i32>, Entity>,
+}
+
+impl ChunkMap {
+    pub fn get(&self, position: Point3<i32>) -> Option<Entity> {
+        self.map.get(&position).copied()
+    }
+
+    pub fn contains(&self, position: Point3<i32>) -> bool {
+        self.map.contains_key(&position)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Component)]
@@ -72,17 +80,11 @@ fn update_chunk_map(
     mut messages: MessageReader<ChunkMapMessage>,
     mut chunk_map: ResMut<ChunkMap>,
     chunks: Query<&mut ChunkPosition>,
-    mut commands: Commands,
 ) {
     for message in messages.read() {
         match message {
             ChunkMapMessage::Added { entity } => {
                 let position = chunks.get(*entity).unwrap().0;
-
-                commands
-                    .entity(*entity)
-                    .insert(LocalTransform::from(position.cast::<f32>()));
-
                 chunk_map.map.insert(position, *entity);
             }
             ChunkMapMessage::Removed { entity } => {

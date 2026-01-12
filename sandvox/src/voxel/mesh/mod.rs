@@ -1,7 +1,30 @@
 pub mod greedy_quads;
 pub mod naive;
 
-use bevy_ecs::system::SystemParam;
+use std::{
+    marker::PhantomData,
+    time::Instant,
+};
+
+use bevy_ecs::{
+    component::Component,
+    entity::Entity,
+    query::{
+        Changed,
+        Or,
+        Without,
+    },
+    schedule::IntoScheduleConfigs,
+    system::{
+        Commands,
+        Local,
+        Populated,
+        Res,
+        StaticSystemParam,
+        SystemParam,
+    },
+};
+use color_eyre::eyre::Error;
 use nalgebra::{
     Point2,
     Point3,
@@ -10,16 +33,93 @@ use nalgebra::{
 };
 
 use crate::{
-    render::mesh::{
-        MeshBuilder,
-        Vertex,
+    ecs::{
+        plugin::{
+            Plugin,
+            WorldBuilder,
+        },
+        schedule,
+    },
+    render::{
+        RenderSystems,
+        mesh::{
+            MeshBuilder,
+            MeshPlugin,
+            Vertex,
+        },
     },
     voxel::{
         BlockFace,
         Voxel,
         chunk::Chunk,
     },
+    wgpu::WgpuContext,
 };
+
+pub struct ChunkMeshPlugin<V, M, const CHUNK_SIZE: usize> {
+    _phantom: PhantomData<(V, M)>,
+}
+
+impl<V, M, const CHUNK_SIZE: usize> Default for ChunkMeshPlugin<V, M, CHUNK_SIZE> {
+    fn default() -> Self {
+        assert!(CHUNK_SIZE.is_power_of_two());
+
+        Self {
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<V, M, const CHUNK_SIZE: usize> Plugin for ChunkMeshPlugin<V, M, CHUNK_SIZE>
+where
+    V: Voxel,
+    M: ChunkMesher<V, CHUNK_SIZE>,
+{
+    fn setup(&self, builder: &mut WorldBuilder) -> Result<(), Error> {
+        builder.add_plugin(MeshPlugin)?.add_systems(
+            schedule::Render,
+            mesh_chunks::<V, M, CHUNK_SIZE>.before(RenderSystems::RenderFrame),
+        );
+
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Component)]
+struct ChunkMeshed;
+
+fn mesh_chunks<V, M, const CHUNK_SIZE: usize>(
+    wgpu: Res<WgpuContext>,
+    chunks: Populated<
+        (Entity, &Chunk<V, CHUNK_SIZE>),
+        Or<(Without<ChunkMeshed>, Changed<Chunk<V, CHUNK_SIZE>>)>,
+    >,
+    voxel_data: StaticSystemParam<V::Data>,
+    mut commands: Commands,
+    mut mesh_builder: Local<MeshBuilder>,
+    mut chunk_mesher: Local<M>,
+) where
+    V: Voxel,
+    M: ChunkMesher<V, CHUNK_SIZE>,
+{
+    for (entity, chunk) in &chunks {
+        tracing::debug!(?entity, "meshing chunk");
+
+        let mut entity = commands.entity(entity);
+
+        let t_start = Instant::now();
+        chunk_mesher.mesh_chunk(&chunk, &mut mesh_builder, &voxel_data);
+        let time = t_start.elapsed();
+        tracing::debug!(?time, "meshed chunk");
+
+        entity.insert(ChunkMeshed);
+        if let Some(mesh) = mesh_builder.finish(&wgpu, "chunk") {
+            entity.insert(mesh);
+        }
+
+        mesh_builder.clear();
+    }
+}
 
 pub trait ChunkMesher<V, const CHUNK_SIZE: usize>: Send + Sync + Default + 'static
 where

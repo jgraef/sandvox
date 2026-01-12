@@ -22,12 +22,12 @@ use crate::{
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct BlockType(usize);
+pub struct BlockType(u32);
 
 #[derive(Clone, Debug, Resource)]
 pub struct BlockTypes {
     blocks: Vec<BlockTypeData>,
-    by_name: HashMap<String, usize>,
+    by_name: HashMap<String, BlockType>,
 }
 
 impl BlockTypes {
@@ -39,7 +39,12 @@ impl BlockTypes {
         let mut blocks = Vec::with_capacity(block_defs.block_defs.len());
         let mut by_name = HashMap::with_capacity(block_defs.block_defs.len());
 
-        for (i, (name, block_def)) in block_defs.block_defs.into_iter().enumerate() {
+        for (i, (name, mut block_def)) in block_defs.block_defs.into_iter().enumerate() {
+            if block_def.texture.is_none() && block_def.is_opaque {
+                tracing::warn!("Block without texture defined as opaque: {name}");
+                block_def.is_opaque = false;
+            }
+
             let texture_id = block_def
                 .texture
                 .map(|path| {
@@ -51,7 +56,10 @@ impl BlockTypes {
                 })
                 .transpose()?;
 
-            by_name.insert(name.clone(), i);
+            by_name.insert(
+                name.clone(),
+                BlockType(i.try_into().expect("block type overflow")),
+            );
             blocks.push(BlockTypeData {
                 name,
                 texture_id,
@@ -67,7 +75,7 @@ impl BlockTypes {
     }
 
     pub fn lookup(&self, name: &str) -> Option<BlockType> {
-        Some(BlockType(*self.by_name.get(name)?))
+        Some(*self.by_name.get(name)?)
     }
 }
 
@@ -75,7 +83,7 @@ impl Index<BlockType> for BlockTypes {
     type Output = BlockTypeData;
 
     fn index(&self, index: BlockType) -> &Self::Output {
-        &self.blocks[index.0]
+        &self.blocks[index.0 as usize]
     }
 }
 
@@ -104,6 +112,7 @@ mod config {
     }
 
     #[derive(Clone, Debug, Serialize, Deserialize)]
+    #[serde(deny_unknown_fields)]
     pub struct BlockDef {
         pub texture: Option<PathBuf>,
 
