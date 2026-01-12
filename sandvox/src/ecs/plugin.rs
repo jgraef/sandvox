@@ -4,7 +4,16 @@ use std::{
         TypeId,
         type_name,
     },
-    collections::HashSet,
+    collections::{
+        HashMap,
+        HashSet,
+    },
+    fs::File,
+    io::{
+        BufWriter,
+        Write,
+    },
+    path::Path,
 };
 
 use bevy_ecs::{
@@ -18,6 +27,7 @@ use bevy_ecs::{
     schedule::{
         InternedSystemSet,
         IntoScheduleConfigs,
+        NodeId,
         Schedule,
         ScheduleLabel,
         Schedules,
@@ -69,6 +79,15 @@ impl Default for WorldBuilder {
 }
 
 impl WorldBuilder {
+    pub fn write_schedule_graphs_to_dot(&self, path: impl AsRef<Path>) -> Result<(), Error> {
+        tracing::debug!(path = %path.as_ref().display(), "writing schedule graphs to file");
+
+        let writer = BufWriter::new(File::create(path)?);
+        let schedules = self.world.resource::<Schedules>();
+        write_schedule_graphs_to_dot(schedules, writer)?;
+        Ok(())
+    }
+
     pub fn build(&mut self) -> World {
         self.world.run_schedule(schedule::Startup);
         self.world.run_schedule(schedule::PostStartup);
@@ -117,4 +136,63 @@ impl WorldBuilder {
         }
         self
     }
+}
+
+fn write_schedule_graphs_to_dot<W>(schedules: &Schedules, mut writer: W) -> Result<(), Error>
+where
+    W: Write,
+{
+    let mut node_id = 0;
+
+    writeln!(&mut writer, "digraph \"schedules\" {{")?;
+    writeln!(&mut writer, "  rankdir=LR;")?;
+
+    for (schedule_id, (_label, schedule)) in schedules.iter().enumerate() {
+        let schedule_graph = schedule.graph();
+        let mut nodes = HashMap::new();
+
+        writeln!(&mut writer, "  subgraph \"cluster_{schedule_id}\" {{",)?;
+        writeln!(&mut writer, "    newrank=true;")?;
+        writeln!(&mut writer, "    rankdir=TB;")?;
+        writeln!(&mut writer, "    label=\"{:?}\";", schedule.label())?;
+        writeln!(&mut writer, "")?;
+
+        for (system_key, system, _) in schedule_graph.systems.iter() {
+            writeln!(
+                &mut writer,
+                "    n{node_id} [label=\"{}\"];",
+                system.name().shortname()
+            )?;
+            nodes.insert(NodeId::System(system_key), node_id);
+            node_id += 1;
+        }
+        writeln!(&mut writer, "")?;
+
+        /*for (system_set_key, _system_set, _) in schedule_graph.system_sets.iter() {
+            writeln!(&mut writer, "    n{node_id} [shape=box];",)?;
+            nodes.insert(NodeId::Set(system_set_key), node_id);
+            node_id += 1;
+        }
+        writeln!(&mut writer, "")?;*/
+
+        for edge in schedule_graph.dependency().graph().all_edges() {
+            if let Some((start, end)) = nodes.get(&edge.0).zip(nodes.get(&edge.1)) {
+                writeln!(&mut writer, "    n{start} -> n{end};")?;
+            }
+        }
+        writeln!(&mut writer, "")?;
+
+        /*for edge in schedule_graph.hierarchy().graph().all_edges() {
+            let start = nodes[&edge.0];
+            let end = nodes[&edge.1];
+            writeln!(&mut writer, "    n{start} -> n{end} [style=dotted];")?;
+        }*/
+
+        writeln!(&mut writer, "  }}")?;
+        writeln!(&mut writer, "")?;
+    }
+
+    writeln!(&mut writer, "}}")?;
+
+    Ok(())
 }

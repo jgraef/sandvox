@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    path::PathBuf,
     sync::Arc,
     time::{
         Duration,
@@ -36,6 +37,7 @@ use bevy_ecs::{
         World,
     },
 };
+use clap::Parser;
 use color_eyre::eyre::Error;
 use nalgebra::{
     Point2,
@@ -77,17 +79,25 @@ use crate::{
     world::WorldPlugin,
 };
 
+#[derive(Clone, Debug, Default, Parser)]
+pub struct Args {
+    #[clap(short = 'G', long)]
+    pub generate_schedule_graphs: Option<PathBuf>,
+}
+
 #[derive(Debug)]
 pub struct App {
     world: World,
 }
 
 impl App {
-    pub fn new() -> Result<Self, Error> {
+    pub fn new(args: Args) -> Result<Self, Error> {
         // todo: load from proper location
         let config = Config::load("config.toml")?;
 
-        let world = WorldBuilder::default()
+        let mut world_builder = WorldBuilder::default();
+
+        world_builder
             .insert_resource(DeltaTime {
                 delta: Duration::ZERO,
             })
@@ -104,8 +114,13 @@ impl App {
             .add_plugin(CameraControllerPlugin)?
             .add_plugin(AtlasPlugin)?
             .add_plugin(WorldPlugin)?
-            .add_systems(schedule::PostUpdate, update_window_config)
-            .build();
+            .add_systems(schedule::PostUpdate, update_window_config);
+
+        if let Some(path) = args.generate_schedule_graphs {
+            world_builder.write_schedule_graphs_to_dot(path)?;
+        }
+
+        let world = world_builder.build();
 
         Ok(Self { world })
     }
@@ -240,7 +255,7 @@ impl ApplicationHandler<AppEvent> for App {
     }
 }
 
-#[derive(Debug, Resource)]
+#[derive(Debug, Resource, PartialEq, Eq)]
 enum AppState {
     Active,
     Suspended,
@@ -325,13 +340,11 @@ fn handle_window_event(
         winit::event::WindowEvent::CloseRequested => {
             tracing::debug!("close requested");
             *state = AppState::Exiting;
-            event_loop.exit();
         }
         winit::event::WindowEvent::Destroyed => {
             // todo: instead just tell rendering system to destroy that surface
             tracing::debug!("window destroyed");
             *state = AppState::Exiting;
-            event_loop.exit();
         }
         winit::event::WindowEvent::KeyboardInput {
             device_id: _,
@@ -422,6 +435,10 @@ fn handle_window_event(
             }
         }
         _ => {}
+    }
+
+    if *state == AppState::Exiting {
+        event_loop.exit();
     }
 }
 
@@ -594,5 +611,16 @@ pub struct DeltaTime {
 impl DeltaTime {
     pub fn seconds(&self) -> f32 {
         self.delta.as_secs_f32()
+    }
+}
+
+#[derive(Debug, SystemParam)]
+pub struct CloseApp<'w> {
+    app_state: ResMut<'w, AppState>,
+}
+
+impl<'w> CloseApp<'w> {
+    pub fn request_close(&mut self) {
+        *self.app_state = AppState::Exiting;
     }
 }

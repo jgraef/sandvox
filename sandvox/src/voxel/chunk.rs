@@ -12,6 +12,7 @@ use bevy_ecs::{
         Message,
         MessageReader,
     },
+    schedule::IntoScheduleConfigs,
     system::{
         Commands,
         Local,
@@ -36,10 +37,13 @@ use crate::{
         },
         schedule,
     },
-    render::mesh::{
-        Mesh,
-        MeshBuilder,
-        MeshPlugin,
+    render::{
+        RenderSystems,
+        mesh::{
+            Mesh,
+            MeshBuilder,
+            MeshPlugin,
+        },
     },
     voxel::{
         Voxel,
@@ -71,7 +75,10 @@ where
         builder
             .add_plugin(MeshPlugin)?
             .add_message::<MeshChunkRequest>()
-            .add_systems(schedule::PostUpdate, mesh_chunks::<V, M, CHUNK_SIZE>);
+            .add_systems(
+                schedule::Render,
+                mesh_chunks::<V, M, CHUNK_SIZE>.before(RenderSystems::RenderFrame),
+            );
 
         Ok(())
     }

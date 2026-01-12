@@ -25,11 +25,16 @@ pub struct Args {
     command: Option<Command>,
 }
 
-#[derive(Debug, Subcommand, Default)]
+#[derive(Debug, Subcommand)]
 enum Command {
-    #[default]
-    Main,
+    Main(crate::app::Args),
     WgpuInfo,
+}
+
+impl Default for Command {
+    fn default() -> Self {
+        Self::Main(Default::default())
+    }
 }
 
 fn main() -> Result<(), Error> {
@@ -40,8 +45,8 @@ fn main() -> Result<(), Error> {
     let args = Args::parse();
 
     match args.command.unwrap_or_default() {
-        Command::Main => {
-            let app = App::new()?;
+        Command::Main(args) => {
+            let app = App::new(args)?;
             app.run()?;
         }
         Command::WgpuInfo => {

@@ -1,4 +1,5 @@
 pub mod block_type;
+pub mod worldgen;
 
 use bevy_ecs::{
     entity::Entity,
@@ -25,9 +26,13 @@ use noise::{
     Perlin,
 };
 use palette::WithAlpha;
+use winit::keyboard::KeyCode;
 
 use crate::{
-    app::WindowConfig,
+    app::{
+        CloseApp,
+        WindowConfig,
+    },
     ecs::{
         plugin::{
             Plugin,
@@ -36,6 +41,7 @@ use crate::{
         schedule,
         transform::LocalTransform,
     },
+    input::Keys,
     render::{
         camera::CameraProjection,
         camera_controller::CameraController,
@@ -69,7 +75,7 @@ use crate::{
     },
 };
 
-const CHUNK_SIZE: usize = 64;
+const CHUNK_SIZE: usize = 32;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct WorldPlugin;
@@ -80,6 +86,7 @@ impl Plugin for WorldPlugin {
             .add_plugin(VoxelChunkPlugin::<
                 TerrainVoxel,
                 GreedyMesher<TerrainVoxel, CHUNK_SIZE>,
+                //NaiveMesher,
                 CHUNK_SIZE,
             >::default())?
             .add_plugin(FpsCounterPlugin::default())?
@@ -92,9 +99,11 @@ impl Plugin for WorldPlugin {
             )
             .add_systems(
                 schedule::Update,
-                show_fps_in_window_title.run_if(resource_changed::<FpsCounter>),
-            )
-            .insert_resource(RenderWireframes);
+                (
+                    show_fps_in_window_title.run_if(resource_changed::<FpsCounter>),
+                    handle_keys.run_if(resource_changed::<Keys>),
+                ),
+            );
 
         Ok(())
     }
@@ -203,4 +212,24 @@ fn show_fps_in_window_title(
 ) {
     let mut config = windows.get_mut(main_window.0).unwrap();
     config.title = format!("SandVox ({:.2} fps)", fps_counter.fps);
+}
+
+fn handle_keys(
+    keys: Res<Keys>,
+    render_wireframes: Option<Res<RenderWireframes>>,
+    mut close_app: CloseApp,
+    mut commands: Commands,
+) {
+    if keys.just_pressed.contains(&KeyCode::F6) {
+        if render_wireframes.is_none() {
+            commands.insert_resource(RenderWireframes);
+        }
+        else {
+            commands.remove_resource::<RenderWireframes>();
+        }
+    }
+
+    if keys.just_pressed.contains(&KeyCode::Escape) {
+        close_app.request_close();
+    }
 }
