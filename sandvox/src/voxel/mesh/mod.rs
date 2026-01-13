@@ -104,7 +104,7 @@ fn mesh_chunks<V, M, const CHUNK_SIZE: usize>(
 {
     // todo: do this in a background thread, just like chunk generation works
     // for now we'll just limit how many we do per frame
-    const MAX_CHUNKS_MESHED_PER_FRAME: usize = 64;
+    const MAX_CHUNKS_MESHED_PER_FRAME: usize = 1;
 
     let mut num_meshed = 0;
 

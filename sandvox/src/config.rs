@@ -4,6 +4,7 @@ use std::{
         BufWriter,
         Write,
     },
+    num::NonZero,
     path::Path,
 };
 
@@ -21,6 +22,9 @@ use crate::{
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Config {
     pub graphics: GraphicsConfig,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub num_threads: Option<NonZero<usize>>,
 }
 
 impl Config {

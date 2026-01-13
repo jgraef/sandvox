@@ -11,7 +11,6 @@ use bevy_ecs::{
     },
     system::{
         Commands,
-        IntoSystem,
         Query,
         Res,
         ResMut,
@@ -60,10 +59,7 @@ use crate::{
     voxel::{
         BlockFace,
         Voxel,
-        chunk_generator::{
-            ChunkGeneratorPlugin,
-            spawn_chunk_generator_thread,
-        },
+        chunk_generator::ChunkGeneratorPlugin,
         chunk_map::ChunkMapPlugin,
         loader::{
             ChunkLoader,
@@ -113,9 +109,7 @@ impl Plugin for WorldPlugin {
                 schedule::Startup,
                 (
                     load_block_types.in_set(AtlasSystems::InsertTextures),
-                    create_terrain_generator
-                        .pipe(spawn_chunk_generator_thread)
-                        .after(load_block_types),
+                    create_terrain_generator.after(load_block_types),
                     init_player,
                 ),
             )
@@ -165,8 +159,9 @@ fn load_block_types(mut atlas_builder: ResMut<AtlasBuilder>, mut commands: Comma
 fn create_terrain_generator(
     block_types: Res<BlockTypes>,
     world_seed: Res<WorldSeed>,
-) -> TerrainGenerator {
-    TerrainGenerator::new(world_seed.0, &block_types)
+    mut commands: Commands,
+) {
+    commands.insert_resource(TerrainGenerator::new(world_seed.0, &block_types));
 }
 
 fn init_player(mut commands: Commands) {

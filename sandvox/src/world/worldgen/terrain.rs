@@ -29,7 +29,7 @@ use crate::{
     },
 };
 
-#[derive(Debug)]
+#[derive(Debug, Resource)]
 pub struct TerrainGenerator {
     seed: u64,
 
@@ -53,19 +53,12 @@ impl TerrainGenerator {
 }
 
 impl ChunkGenerator<TerrainVoxel, CHUNK_SIZE> for TerrainGenerator {
-    type Workspace = ();
-
-    fn create_workspace(&self) -> Self::Workspace {
-        ()
-    }
-
     fn filter(&self, position: Point3<i32>) -> bool {
         position.y == 0 && position.x.abs() <= 4 && position.z.abs() <= 4
     }
 
     fn generate_chunk(
         &self,
-        _workspace: &mut Self::Workspace,
         chunk_position: Point3<i32>,
     ) -> Option<Chunk<TerrainVoxel, CHUNK_SIZE>> {
         let start_time = Instant::now();
@@ -75,14 +68,9 @@ impl ChunkGenerator<TerrainVoxel, CHUNK_SIZE> for TerrainGenerator {
 
         let mut rng = Xoroshiro128PlusPlus::seed_from_u64(self.seed);
 
-        /*let noise = rng
-        .random::<PerlinNoise>()
-        .with_frequency(1.0 / 16.0)
-        */
-
-        let noise = FractalNoise::<PerlinNoise, 6>::new(|| rng.random(), 1.0 / 128.0, 2.0, 0.5);
-
-        let height = noise.with_amplitude(16.0).with_bias(16.0);
+        let height = FractalNoise::<PerlinNoise>::new(|| rng.random(), 6, 1.0 / 128.0, 2.0, 0.5)
+            .with_amplitude(16.0)
+            .with_bias(16.0);
 
         let chunk = Chunk::from_fn(move |point| {
             let point = point.cast::<f32>() + chunk_side_length * chunk_position.coords;

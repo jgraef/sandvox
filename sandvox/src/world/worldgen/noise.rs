@@ -187,14 +187,15 @@ where
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-pub struct FractalNoise<Inner, const OCTAVES: usize> {
-    pub octaves: [Octave<Inner>; OCTAVES],
+#[derive(Clone, Debug)]
+pub struct FractalNoise<Inner> {
+    pub octaves: Box<[Octave<Inner>]>,
 }
 
-impl<Inner, const OCTAVES: usize> FractalNoise<Inner, OCTAVES> {
+impl<Inner> FractalNoise<Inner> {
     pub fn new(
         mut inner: impl FnMut() -> Inner,
+        octaves: usize,
         base_frequency: f32,
         lacunarity: f32,
         persistence: f32,
@@ -203,25 +204,21 @@ impl<Inner, const OCTAVES: usize> FractalNoise<Inner, OCTAVES> {
         let mut amplitude = 1.0;
 
         Self {
-            octaves: std::array::from_fn(|_| {
-                let octave = WithAmplitude {
-                    amplitude,
-                    inner: WithFrequency {
-                        frequency,
-                        inner: inner(),
-                    },
-                };
+            octaves: (0..octaves)
+                .map(|_| {
+                    let octave = inner().with_frequency(frequency).with_amplitude(amplitude);
 
-                frequency *= lacunarity;
-                amplitude *= persistence;
+                    frequency *= lacunarity;
+                    amplitude *= persistence;
 
-                octave
-            }),
+                    octave
+                })
+                .collect(),
         }
     }
 }
 
-impl<Inner, const OCTAVES: usize, Point> NoiseFn<Point> for FractalNoise<Inner, OCTAVES>
+impl<Inner, Point> NoiseFn<Point> for FractalNoise<Inner>
 where
     Point: Copy,
     Inner: NoiseFn<Point>,

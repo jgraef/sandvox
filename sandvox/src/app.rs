@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    num::NonZero,
     path::PathBuf,
     sync::Arc,
     time::{
@@ -61,6 +62,7 @@ use winit::{
 use crate::{
     config::Config,
     ecs::{
+        background_tasks::BackgroundTaskPlugin,
         plugin::{
             Plugin,
             WorldBuilder,
@@ -83,6 +85,9 @@ use crate::{
 pub struct Args {
     #[clap(short = 'G', long)]
     pub generate_schedule_graphs: Option<PathBuf>,
+
+    #[clap(long)]
+    pub num_threads: Option<NonZero<usize>>,
 }
 
 #[derive(Debug)]
@@ -98,6 +103,9 @@ impl App {
         let mut world_builder = WorldBuilder::default();
 
         world_builder
+            .add_plugin(BackgroundTaskPlugin {
+                num_threads: args.num_threads.or(config.num_threads),
+            })?
             .insert_resource(DeltaTime {
                 delta: Duration::ZERO,
             })
@@ -403,7 +411,9 @@ fn handle_window_event(
             device_id: _,
             state: _,
             button: _,
-        } => todo!(),
+        } => {
+            // todo
+        }
         winit::event::WindowEvent::ScaleFactorChanged {
             scale_factor: _,
             inner_size_writer: _,

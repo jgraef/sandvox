@@ -1,4 +1,10 @@
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    f32::consts::{
+        FRAC_PI_2,
+        TAU,
+    },
+};
 
 use bevy_ecs::{
     bundle::Bundle,
@@ -172,8 +178,8 @@ fn update_camera(
 
                 tracing::trace!(?delta, ?mouse_position.frame_delta, "mouse movement");
 
-                state.yaw += delta.x;
-                state.pitch += delta.y;
+                state.yaw = (state.yaw + delta.x).rem_euclid(TAU);
+                state.pitch = (state.pitch + delta.y).clamp(-FRAC_PI_2, FRAC_PI_2);
 
                 let yaw_quaternion = UnitQuaternion::from_axis_angle(&Vector3::y_axis(), state.yaw);
                 let pitch_quaternion =
