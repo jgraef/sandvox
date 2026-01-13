@@ -112,7 +112,7 @@ impl Default for CameraControllerConfig {
         Self {
             mouse_sensitivity: 0.01,
             keybindings,
-            movement_speed: 8.0,
+            movement_speed: 16.0,
         }
     }
 }

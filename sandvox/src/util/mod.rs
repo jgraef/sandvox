@@ -1,4 +1,5 @@
 pub mod image;
+pub mod noise;
 pub mod oneshot;
 pub mod serde;
 

@@ -5,6 +5,11 @@ is_opaque = false
 [dirt]
 texture = "blocks/dirt.png"
 
+[grass.texture]
+bottom = "blocks/dirt.png"
+top = "blocks/grass.png"
+default = "blocks/grass_side.png"
+
 [stone]
 texture = "blocks/stone.png"
 

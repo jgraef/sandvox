@@ -1,0 +1,180 @@
+use std::time::Instant;
+
+use bevy_ecs::{
+    resource::Resource,
+    system::Res,
+};
+use morton_encoding::{
+    morton_decode,
+    morton_encode,
+};
+use nalgebra::{
+    Point3,
+    Vector2,
+};
+use rand::{
+    Rng,
+    SeedableRng,
+};
+use rand_xoshiro::Xoroshiro128PlusPlus;
+
+use crate::{
+    render::texture_atlas::AtlasId,
+    util::noise::{
+        FractalNoise,
+        NoiseFn,
+        NoiseFnExt,
+        PerlinNoise,
+    },
+    voxel::{
+        BlockFace,
+        Voxel,
+        chunk::Chunk,
+        chunk_generator::ChunkGenerator,
+    },
+    world::{
+        CHUNK_SIZE,
+        block_type::{
+            BlockType,
+            BlockTypes,
+        },
+    },
+};
+
+#[derive(Clone, Copy, Debug)]
+pub struct TerrainVoxel {
+    pub block_type: BlockType,
+}
+
+impl Voxel for TerrainVoxel {
+    type FetchData = Res<'static, BlockTypes>;
+    type Data = BlockTypes;
+
+    fn texture<'w, 's>(&self, face: BlockFace, block_types: &BlockTypes) -> Option<AtlasId> {
+        block_types[self.block_type].face_texture(face)
+    }
+
+    fn is_opaque<'w, 's>(&self, block_types: &BlockTypes) -> bool {
+        let block_type_data = &block_types[self.block_type];
+        block_type_data.is_opaque
+    }
+
+    fn can_merge<'w, 's>(&self, other: &Self, block_types: &BlockTypes) -> bool {
+        let _ = block_types;
+        // todo: proper check (e.g. for log textures). this needs to know the face.
+        self.block_type == other.block_type
+    }
+}
+
+#[derive(Debug, Resource)]
+pub struct TerrainGenerator {
+    seed: u64,
+
+    // block types used in generation
+    air: BlockType,
+    dirt: BlockType,
+    grass: BlockType,
+    stone: BlockType,
+    sand: BlockType,
+}
+
+impl TerrainGenerator {
+    pub fn new(seed: u64, block_types: &BlockTypes) -> Self {
+        Self {
+            seed,
+            air: block_types.lookup("air").unwrap(),
+            dirt: block_types.lookup("dirt").unwrap(),
+            grass: block_types.lookup("grass").unwrap(),
+            stone: block_types.lookup("stone").unwrap(),
+            sand: block_types.lookup("sand").unwrap(),
+        }
+    }
+}
+
+impl ChunkGenerator<TerrainVoxel, CHUNK_SIZE> for TerrainGenerator {
+    fn filter(&self, position: Point3<i32>) -> bool {
+        position.y == 0 && position.x.abs() <= 4 && position.z.abs() <= 4
+    }
+
+    fn generate_chunk(
+        &self,
+        chunk_position: Point3<i32>,
+    ) -> Option<Chunk<TerrainVoxel, CHUNK_SIZE>> {
+        let start_time = Instant::now();
+
+        let mut rng = Xoroshiro128PlusPlus::seed_from_u64(self.seed);
+
+        let surface_height =
+            FractalNoise::<PerlinNoise>::new(|| rng.random(), 4, 1.0 / 128.0, 2.0, 0.5)
+                .with_amplitude(16.0)
+                .with_bias(16.0);
+
+        let dirt_depth = FractalNoise::<PerlinNoise>::new(|| rng.random(), 2, 1.0 / 32.0, 2.0, 0.5)
+            .with_amplitude(2.0)
+            .with_bias(2.0);
+
+        #[derive(Debug, Default)]
+        struct Cell {
+            surface_height: i64,
+            dirt_depth: i64,
+        }
+
+        let cells = (0..(CHUNK_SIZE * CHUNK_SIZE))
+            .map(|i| {
+                let chunk_offset = Vector2::from(morton_decode::<u16, 2>(i as u32));
+                let point = chunk_position.xz().cast::<f32>() * CHUNK_SIZE as f32
+                    + chunk_offset.cast::<f32>();
+
+                let surface_height = surface_height.evaluate_at(point) as i64;
+                let dirt_depth = dirt_depth.evaluate_at(point) as i64;
+                Cell {
+                    surface_height,
+                    dirt_depth,
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let chunk = Chunk::from_fn(move |point| {
+            let cell = &cells[morton_encode(point.xz().into()) as usize];
+            let y = chunk_position.y as i64 * CHUNK_SIZE as i64 + point.y as i64;
+
+            let block_type = if y > cell.surface_height {
+                self.air
+            }
+            else if y == cell.surface_height && cell.dirt_depth >= 1 {
+                self.grass
+            }
+            else if y < cell.surface_height && y >= cell.surface_height - cell.dirt_depth {
+                self.dirt
+            }
+            else {
+                self.stone
+            };
+
+            TerrainVoxel { block_type }
+        });
+
+        let elapsed = start_time.elapsed();
+        tracing::debug!(?chunk_position, ?elapsed, "generated chunk");
+
+        Some(chunk)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Resource)]
+pub struct WorldSeed(pub u64);
+
+impl Default for WorldSeed {
+    fn default() -> Self {
+        // chosen with a fair dice
+        Self(0xc481ec1f222d0691)
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct TerrainNoiseParameters {
+    temperature: f32,
+    humidity: f32,
+    continentalness: f32,
+    erosion: f32,
+}

@@ -1,5 +1,5 @@
 pub mod block_type;
-pub mod worldgen;
+pub mod terrain;
 
 use std::f32::consts::FRAC_PI_4;
 
@@ -57,13 +57,10 @@ use crate::{
         },
         texture_atlas::{
             AtlasBuilder,
-            AtlasId,
             AtlasSystems,
         },
     },
     voxel::{
-        BlockFace,
-        Voxel,
         chunk_generator::ChunkGeneratorPlugin,
         chunk_map::ChunkMapPlugin,
         loader::{
@@ -76,12 +73,10 @@ use crate::{
         },
     },
     world::{
-        block_type::{
-            BlockType,
-            BlockTypes,
-        },
-        worldgen::terrain::{
+        block_type::BlockTypes,
+        terrain::{
             TerrainGenerator,
+            TerrainVoxel,
             WorldSeed,
         },
     },
@@ -127,33 +122,6 @@ impl Plugin for WorldPlugin {
             );
 
         Ok(())
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct TerrainVoxel {
-    pub block_type: BlockType,
-}
-
-impl Voxel for TerrainVoxel {
-    type FetchData = Res<'static, BlockTypes>;
-    type Data = BlockTypes;
-
-    fn texture<'w, 's>(&self, face: BlockFace, block_types: &BlockTypes) -> Option<AtlasId> {
-        let _ = face;
-        let block_type_data = &block_types[self.block_type];
-        block_type_data.texture_id
-    }
-
-    fn is_opaque<'w, 's>(&self, block_types: &BlockTypes) -> bool {
-        let block_type_data = &block_types[self.block_type];
-        block_type_data.is_opaque
-    }
-
-    fn can_merge<'w, 's>(&self, other: &Self, block_types: &BlockTypes) -> bool {
-        let _ = block_types;
-        // todo: proper check (e.g. for log textures). this needs to know the face.
-        self.block_type == other.block_type
     }
 }
 

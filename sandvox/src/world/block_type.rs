@@ -7,6 +7,7 @@ use std::{
     sync::Arc,
 };
 
+use arrayvec::ArrayVec;
 use bevy_ecs::{
     resource::Resource,
     system::Res,
@@ -23,6 +24,7 @@ use crate::{
         AtlasId,
     },
     util::image::ImageLoadExt,
+    voxel::BlockFace,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -48,22 +50,41 @@ impl BlockTypes {
         let mut blocks = Vec::with_capacity(block_defs.block_defs.len());
         let mut by_name = HashMap::with_capacity(block_defs.block_defs.len());
 
+        let mut texture_cache = HashMap::new();
+
         for (i, (name, mut block_def)) in block_defs.block_defs.into_iter().enumerate() {
             if block_def.texture.is_none() && block_def.is_opaque {
                 tracing::warn!("Block without texture defined as opaque: {name}");
                 block_def.is_opaque = false;
             }
 
-            let texture_id = block_def
-                .texture
-                .map(|path| {
-                    let path = toml_directory.join(path);
-                    let image =
-                        RgbaImage::from_path(&path).with_note(|| path.display().to_string())?;
-                    let texture_id = atlas_builder.insert(&image)?;
-                    Ok::<_, Error>(texture_id)
-                })
-                .transpose()?;
+            let mut textures = None;
+
+            if let Some(texture_def) = block_def.texture {
+                let mut faces = ArrayVec::new();
+
+                for path in texture_def.faces() {
+                    let texture_id = if let Some(texture_id) = texture_cache.get(path) {
+                        *texture_id
+                    }
+                    else {
+                        let full_path = toml_directory.join(path);
+                        let image = RgbaImage::from_path(&full_path)
+                            .with_note(|| path.display().to_string())?;
+
+                        let texture_id = atlas_builder.insert(&image)?;
+
+                        tracing::debug!(?full_path, ?texture_id, "loaded texture");
+
+                        texture_cache.insert(path.to_owned(), texture_id);
+                        texture_id
+                    };
+
+                    faces.push(texture_id)
+                }
+
+                textures = Some(faces.into_inner().unwrap());
+            }
 
             by_name.insert(
                 name.clone(),
@@ -71,7 +92,7 @@ impl BlockTypes {
             );
             blocks.push(BlockTypeData {
                 name,
-                texture_id,
+                textures,
                 is_opaque: block_def.is_opaque,
             });
         }
@@ -107,12 +128,23 @@ impl<'a, 'w> From<&'a Res<'w, BlockTypes>> for BlockTypes {
 #[derive(Clone, Debug)]
 pub struct BlockTypeData {
     pub name: String,
-    pub texture_id: Option<AtlasId>,
+    pub textures: Option<[AtlasId; 6]>,
     pub is_opaque: bool,
 }
 
+impl BlockTypeData {
+    pub fn face_texture(&self, face: BlockFace) -> Option<AtlasId> {
+        self.textures
+            .as_ref()
+            .map(|faces| faces[usize::from(face as u8)])
+    }
+}
+
 mod config {
-    use std::path::PathBuf;
+    use std::path::{
+        Path,
+        PathBuf,
+    };
 
     use indexmap::IndexMap;
     use serde::{
@@ -131,9 +163,57 @@ mod config {
     #[derive(Clone, Debug, Serialize, Deserialize)]
     #[serde(deny_unknown_fields)]
     pub struct BlockDef {
-        pub texture: Option<PathBuf>,
+        pub texture: Option<TextureDef>,
 
         #[serde(default = "default_true")]
         pub is_opaque: bool,
+    }
+
+    #[derive(Clone, Debug, Serialize, Deserialize)]
+    #[serde(untagged)]
+    pub enum TextureDef {
+        Single(PathBuf),
+        Faces {
+            default: Option<PathBuf>,
+            left: Option<PathBuf>,
+            right: Option<PathBuf>,
+            #[serde(alias = "bottom")]
+            down: Option<PathBuf>,
+            #[serde(alias = "top")]
+            up: Option<PathBuf>,
+            front: Option<PathBuf>,
+            back: Option<PathBuf>,
+        },
+    }
+
+    impl TextureDef {
+        pub fn faces(&self) -> [&Path; 6] {
+            match self {
+                TextureDef::Single(path_buf) => std::array::repeat(&path_buf),
+                TextureDef::Faces {
+                    default,
+                    left,
+                    right,
+                    down,
+                    up,
+                    front,
+                    back,
+                } => {
+                    macro_rules! faces {
+                        ($($face:ident),*) => {
+                            [$($face.as_deref().unwrap_or_else(|| {
+                                default.as_deref().unwrap_or_else(|| {
+                                    panic!(
+                                        "Missing face '{}' and no default specified",
+                                        stringify!($face)
+                                    )
+                                })
+                            })),*]
+                        };
+                    }
+                    faces!(left, right, down, up, front, back)
+                }
+            }
+        }
     }
 }
