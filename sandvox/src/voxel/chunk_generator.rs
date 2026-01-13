@@ -118,7 +118,7 @@ fn dispatch_chunk_generation<V, G, const CHUNK_SIZE: usize>(
     background_tasks.push_tasks(
         chunks
             .iter()
-            .filter(|(_entity, position)| chunk_generator.0.filter(position.0))
+            .filter(|(_entity, position)| !chunk_generator.0.early_discard(position.0))
             .map(|(entity, position)| {
                 commands.entity(entity).remove::<GenerateChunk>();
                 GenerateChunkTask::<V, G, CHUNK_SIZE> {
@@ -154,9 +154,9 @@ where
 }
 
 pub trait ChunkGenerator<V, const CHUNK_SIZE: usize>: Resource + Send + Sync + 'static {
-    fn filter(&self, position: Point3<i32>) -> bool {
+    fn early_discard(&self, position: Point3<i32>) -> bool {
         let _ = position;
-        true
+        false
     }
 
     fn generate_chunk(&self, chunk_position: Point3<i32>) -> Option<Chunk<V, CHUNK_SIZE>>;

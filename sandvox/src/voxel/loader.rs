@@ -65,7 +65,7 @@ impl<const CHUNK_SIZE: usize> Plugin for ChunkLoaderPlugin<CHUNK_SIZE> {
 
 #[derive(Clone, Copy, Debug, Component)]
 pub struct ChunkLoader {
-    pub radius: u32,
+    pub radius: Vector3<u32>,
 }
 
 #[derive(Clone, Copy, Debug, Component)]
@@ -178,19 +178,23 @@ fn chunk_position_from_transform<const CHUNK_SIZE: usize>(
     .into()
 }
 
-fn all_chunks_in_range(position: Point3<i32>, radius: u32) -> impl Iterator<Item = Point3<i32>> {
-    let radius = radius as i32;
+fn all_chunks_in_range(
+    position: Point3<i32>,
+    radius: Vector3<u32>,
+) -> impl Iterator<Item = Point3<i32>> {
+    let radius = radius.cast::<i32>();
 
-    (-radius..=radius).flat_map(move |z| {
-        (-radius..=radius)
-            .flat_map(move |y| (-radius..=radius).map(move |x| position + Vector3::new(x, y, z)))
+    (-radius.z..=radius.z).flat_map(move |z| {
+        (-radius.y..=radius.y).flat_map(move |y| {
+            (-radius.x..=radius.x).map(move |x| position + Vector3::new(x, y, z))
+        })
     })
 }
 
 fn new_chunks_in_range(
     _old: Point3<i32>,
     new: Point3<i32>,
-    radius: u32,
+    radius: Vector3<u32>,
 ) -> impl Iterator<Item = Point3<i32>> {
     // todo: just return chunks that were not in range before
     all_chunks_in_range(new, radius)

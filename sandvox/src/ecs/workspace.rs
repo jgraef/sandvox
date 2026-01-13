@@ -1,4 +1,5 @@
 use std::{
+    any::type_name,
     ops::{
         Deref,
         DerefMut,
@@ -35,7 +36,11 @@ where
 {
     pub fn get(&self) -> WorkspaceGuard<T> {
         let mut inner = self.inner.lock();
-        let inner = inner.pop().unwrap_or_default();
+        let inner = inner.pop().unwrap_or_else(|| {
+            tracing::debug!("allocating workspace: {}", type_name::<T>());
+            T::default()
+        });
+
         WorkspaceGuard {
             inner: Some(inner),
             pool: self.clone(),

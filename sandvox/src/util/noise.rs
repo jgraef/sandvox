@@ -65,6 +65,7 @@ impl<T> NoiseFnExt for T {
 
 macro_rules! impl_wrapper {
     ($name:ident => $inner:ident) => {
+        #[derive(Clone, Copy, Debug)]
         pub struct $name {
             inner: ::noise::$inner,
         }

@@ -42,15 +42,15 @@ use crate::{
             Task,
             WorldBuilderBackgroundTaskExt,
         },
-        parallel_local::{
-            WorkspaceGuard,
-            Workspaces,
-        },
         plugin::{
             Plugin,
             WorldBuilder,
         },
         schedule,
+        workspace::{
+            WorkspaceGuard,
+            Workspaces,
+        },
     },
     render::mesh::{
         MeshBuilder,

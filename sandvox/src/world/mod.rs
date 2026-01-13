@@ -157,7 +157,9 @@ fn init_player(mut commands: Commands) {
                 },
                 config: Default::default(),
             },
-            ChunkLoader { radius: 8 },
+            ChunkLoader {
+                radius: Vector3::repeat(4),
+            },
         ))
         .id();
 
