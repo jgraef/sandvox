@@ -1,7 +1,11 @@
 pub mod block_type;
+pub mod file;
 pub mod terrain;
 
-use std::f32::consts::FRAC_PI_4;
+use std::{
+    f32::consts::FRAC_PI_4,
+    path::PathBuf,
+};
 
 use bevy_ecs::{
     entity::Entity,
@@ -74,6 +78,7 @@ use crate::{
     },
     world::{
         block_type::BlockTypes,
+        file::WorldFile,
         terrain::{
             TerrainGenerator,
             TerrainVoxel,
@@ -84,13 +89,49 @@ use crate::{
 
 pub const CHUNK_SIZE: usize = 32;
 
-#[derive(Clone, Copy, Debug, Default)]
-pub struct WorldPlugin;
+#[derive(Clone, Debug, Default)]
+pub struct WorldPlugin {
+    pub world_seed: WorldSeed,
+    pub world_file: Option<PathBuf>,
+}
+
+impl WorldPlugin {
+    pub fn with_seed(mut self, world_seed: impl Into<WorldSeed>) -> Self {
+        self.world_seed = world_seed.into();
+        self
+    }
+
+    pub fn with_file(mut self, world_file: impl Into<PathBuf>) -> Self {
+        self.world_file = Some(world_file.into());
+        self
+    }
+}
 
 impl Plugin for WorldPlugin {
     fn setup(&self, builder: &mut WorldBuilder) -> Result<(), Error> {
+        let mut world_seed = self.world_seed;
+
+        if let Some(path) = &self.world_file {
+            let world_file = if path.exists() {
+                let world_file = WorldFile::open(path)?;
+                world_seed = world_file.world_seed();
+
+                tracing::info!(path = %path.display(), seed = ?world_seed, "Opened world file");
+
+                world_file
+            }
+            else {
+                let world_file = WorldFile::create(path, self.world_seed)?;
+
+                tracing::info!(path = %path.display(), seed = ?self.world_seed, "Created world file");
+
+                world_file
+            };
+            builder.insert_resource(world_file);
+        }
+
         builder
-            .insert_resource(WorldSeed::default())
+            .insert_resource(world_seed)
             .add_plugin(ChunkMeshPlugin::<
                 TerrainVoxel,
                 GreedyMesher<TerrainVoxel, CHUNK_SIZE>,

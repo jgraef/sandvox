@@ -30,6 +30,13 @@ use crate::{
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BlockType(u32);
 
+impl BlockType {
+    fn from_usize(i: usize) -> Self {
+        let id = u32::try_from(i).expect("block type overflow");
+        Self(id)
+    }
+}
+
 #[derive(Clone, Debug, Resource)]
 pub struct BlockTypes {
     inner: Arc<Inner>,
@@ -86,10 +93,7 @@ impl BlockTypes {
                 textures = Some(faces.into_inner().unwrap());
             }
 
-            by_name.insert(
-                name.clone(),
-                BlockType(i.try_into().expect("block type overflow")),
-            );
+            by_name.insert(name.clone(), BlockType::from_usize(i));
             blocks.push(BlockTypeData {
                 name,
                 textures,

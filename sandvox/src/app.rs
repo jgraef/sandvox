@@ -78,7 +78,10 @@ use crate::{
         texture_atlas::AtlasPlugin,
     },
     wgpu::WgpuPlugin,
-    world::WorldPlugin,
+    world::{
+        WorldPlugin,
+        terrain::WorldSeed,
+    },
 };
 
 #[derive(Clone, Debug, Default, Parser)]
@@ -88,6 +91,12 @@ pub struct Args {
 
     #[clap(long)]
     pub num_threads: Option<NonZero<usize>>,
+
+    #[clap(short = 'w', long = "world")]
+    pub world_file: Option<PathBuf>,
+
+    #[clap(short = 's', long = "seed")]
+    pub world_seed: Option<String>,
 }
 
 #[derive(Debug)]
@@ -121,7 +130,18 @@ impl App {
             .add_plugin(CameraPlugin)?
             .add_plugin(CameraControllerPlugin)?
             .add_plugin(AtlasPlugin)?
-            .add_plugin(WorldPlugin)?
+            .add_plugin({
+                let world_seed = args
+                    .world_seed
+                    .as_deref()
+                    .map(WorldSeed::from_str)
+                    .unwrap_or_default();
+
+                WorldPlugin {
+                    world_seed,
+                    world_file: args.world_file,
+                }
+            })?
             .add_systems(schedule::PostUpdate, update_window_config);
 
         if let Some(path) = args.generate_schedule_graphs {

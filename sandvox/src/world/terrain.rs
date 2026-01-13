@@ -17,6 +17,10 @@ use rand::{
     SeedableRng,
 };
 use rand_xoshiro::Xoroshiro128PlusPlus;
+use serde::{
+    Deserialize,
+    Serialize,
+};
 
 use crate::{
     render::texture_atlas::AtlasId,
@@ -107,9 +111,8 @@ impl TerrainGenerator {
 }
 
 impl ChunkGenerator<TerrainVoxel, CHUNK_SIZE> for TerrainGenerator {
-    fn early_discard(&self, _position: Point3<i32>) -> bool {
-        //position.y == 0 && position.x.abs() <= 4 && position.z.abs() <= 4
-        false
+    fn early_discard(&self, position: Point3<i32>) -> bool {
+        position.y < -4
     }
 
     fn generate_chunk(
@@ -171,20 +174,28 @@ impl ChunkGenerator<TerrainVoxel, CHUNK_SIZE> for TerrainGenerator {
             }));
 
             let elapsed = start_time.elapsed();
-            tracing::debug!(?chunk_position, ?elapsed, "generated chunk");
+            tracing::trace!(?chunk_position, ?elapsed, "generated chunk");
         }
 
         chunk
     }
 }
 
-#[derive(Clone, Copy, Debug, Resource)]
-pub struct WorldSeed(pub u64);
+#[derive(
+    Clone, Copy, derive_more::Debug, PartialEq, Eq, Hash, Resource, Serialize, Deserialize,
+)]
+pub struct WorldSeed(#[debug("0x{:x}", self.0)] pub u64);
 
 impl Default for WorldSeed {
     fn default() -> Self {
         // chosen with a fair dice
         Self(0xc481ec1f222d0691)
+    }
+}
+
+impl WorldSeed {
+    pub fn from_str(seed: &str) -> Self {
+        Self(seahash::hash(seed.as_bytes()))
     }
 }
 
@@ -197,3 +208,16 @@ struct TerrainNoiseParameters {
     erosion: f32,
 }
 */
+
+#[cfg(test)]
+mod tests {
+    use crate::world::terrain::WorldSeed;
+
+    #[test]
+    fn world_seed_hashing_is_stable() {
+        assert_eq!(
+            WorldSeed::from_str("Hello World"),
+            WorldSeed(0xbba0b10a3f32e802)
+        );
+    }
+}

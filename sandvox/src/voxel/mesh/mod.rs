@@ -133,7 +133,7 @@ where
         let t_start = Instant::now();
         chunk_mesher.mesh_chunk(&self.chunk, mesh_builder, &self.voxel_data);
         let time = t_start.elapsed();
-        tracing::debug!(entity = ?self.entity, ?time, "meshed chunk");
+        tracing::trace!(entity = ?self.entity, ?time, "meshed chunk");
 
         let mesh = mesh_builder.finish(&self.wgpu, &format!("chunk {:?}", self.entity));
         mesh_builder.clear();
