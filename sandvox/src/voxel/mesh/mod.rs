@@ -235,14 +235,19 @@ impl UnorientedQuad {
     }
 
     #[inline(always)]
-    fn uvs(&self) -> [Point2<u16>; 4] {
+    fn uvs(&self, face: BlockFace) -> [Point2<u16>; 4] {
         let dx = self.ij1.x - self.ij0.x;
         let dy = self.ij1.y - self.ij0.y;
 
-        //[[0, 0], [dx, 0], [dx, dy], [0, dy]]
-
-        // pretty sure this is the right way. y is flipped
-        [[0, dy], [dx, dy], [dx, 0], [0, 0]].map(Into::into)
+        match face {
+            BlockFace::Left => [[dx, 0], [0, 0], [0, dy], [dx, dy]],
+            BlockFace::Right | BlockFace::Down | BlockFace::Up => {
+                [[0, 0], [dx, 0], [dx, dy], [0, dy]]
+            }
+            BlockFace::Front => [[0, dy], [dx, dy], [dx, 0], [0, 0]],
+            BlockFace::Back => [[dx, dy], [0, dy], [0, 0], [dx, 0]],
+        }
+        .map(Into::into)
     }
 
     pub fn mesh(&self, face: BlockFace, texture_id: u32) -> QuadMesh {
@@ -276,7 +281,7 @@ impl UnorientedQuad {
             BlockFace::Back => (self.xy_vertices(), Vector4::z(), BACK_INDICES, Vector3::z()),
         };
 
-        let uvs = self.uvs();
+        let uvs = self.uvs(face);
 
         let vertices = std::array::from_fn::<_, 4, _>(|i| {
             Vertex {
