@@ -25,7 +25,7 @@ bevy_utils = { version = "0.17.3", default-features = false, features = [
 bytemuck = "1.24.0"
 clap = { version = "4.5.54", features = ["derive"] }
 color-eyre = "0.6.5"
-derive_more = { version = "2.1.1", features = ["debug", "into"] }
+derive_more = { version = "2.1.1", features = ["debug", "deref", "deref_mut", "into"] }
 dotenvy = "0.15.7"
 guillotiere = "0.6.2"
 image = "0.25.9"

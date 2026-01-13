@@ -63,7 +63,8 @@ impl Plugin for BackgroundTaskPlugin {
             condition: Condvar::new(),
             state: Mutex::new(State {
                 active: true,
-                task_queues: HashMap::new(),
+                task_queues: vec![],
+                task_queues_by_type_id: HashMap::new(),
                 world_modifications: CommandQueue::default(),
                 num_threads,
             }),
@@ -93,21 +94,21 @@ fn apply_background_modifications(pool: Res<BackgroundTaskPool>, mut commands: C
     commands.append(&mut state.world_modifications);
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+pub struct BackgroundTaskConfig {
+    pub queue_size: Option<NonZero<usize>>,
+    pub num_threads: Option<NonZero<usize>>,
+}
+
 pub trait WorldBuilderBackgroundTaskExt {
-    fn configure_background_task_queue<T>(
-        &self,
-        queue_size: Option<NonZero<usize>>,
-        num_threads: Option<NonZero<usize>>,
-    ) where
+    fn configure_background_task_queue<T>(&self, config: BackgroundTaskConfig)
+    where
         T: Task;
 }
 
 impl WorldBuilderBackgroundTaskExt for WorldBuilder {
-    fn configure_background_task_queue<T>(
-        &self,
-        queue_size: Option<NonZero<usize>>,
-        num_threads: Option<NonZero<usize>>,
-    ) where
+    fn configure_background_task_queue<T>(&self, config: BackgroundTaskConfig)
+    where
         T: Task,
     {
         let pool = self
@@ -115,7 +116,7 @@ impl WorldBuilderBackgroundTaskExt for WorldBuilder {
             .get_resource::<BackgroundTaskPool>()
             .expect("BackgroundTaskPool not found. Have you added the BackgroundTaskPlugin?");
 
-        pool.configure_queue::<T>(queue_size, num_threads);
+        pool.configure_queue::<T>(config);
     }
 }
 
@@ -125,27 +126,33 @@ pub struct BackgroundTaskPool {
 }
 
 impl BackgroundTaskPool {
-    pub fn configure_queue<T>(
-        &self,
-        queue_size: Option<NonZero<usize>>,
-        num_threads: Option<NonZero<usize>>,
-    ) where
+    pub fn configure_queue<T>(&self, config: BackgroundTaskConfig)
+    where
         T: Task,
     {
         let mut state = self.shared.state.lock();
-        let num_threads = num_threads.map_or(state.num_threads, |num_threads| {
+        let state = &mut *state;
+
+        let num_threads = config.num_threads.map_or(state.num_threads, |num_threads| {
             state.num_threads.min(num_threads)
         });
-        let queue_size = queue_size.unwrap_or_else(|| default_queue_size(num_threads));
 
-        match state.task_queues.entry(TypeId::of::<T>()) {
-            hash_map::Entry::Occupied(mut occupied_entry) => {
-                let task_queue = occupied_entry.get_mut();
+        let queue_size = config
+            .queue_size
+            .unwrap_or_else(|| default_queue_size(num_threads));
+
+        match state.task_queues_by_type_id.entry(TypeId::of::<T>()) {
+            hash_map::Entry::Occupied(occupied_entry) => {
+                let task_queue = &mut state.task_queues[*occupied_entry.get()];
                 task_queue.num_threads = num_threads;
                 task_queue.queue_size = queue_size;
             }
             hash_map::Entry::Vacant(vacant_entry) => {
-                vacant_entry.insert(TaskQueue::new::<T>(queue_size, num_threads));
+                let index = state.task_queues.len();
+                state
+                    .task_queues
+                    .push(TaskQueue::new::<T>(queue_size, num_threads));
+                vacant_entry.insert(index);
             }
         }
     }
@@ -155,14 +162,22 @@ impl BackgroundTaskPool {
         T: Task,
     {
         let mut state = self.shared.state.lock();
-        let num_threads = state.num_threads;
+        let state = &mut *state;
 
-        let task_queue = state
-            .task_queues
-            .entry(TypeId::of::<T>())
-            .or_insert_with(move || {
-                TaskQueue::new::<T>(default_queue_size(num_threads), num_threads)
-            });
+        let task_queue = {
+            let index = state
+                .task_queues_by_type_id
+                .entry(TypeId::of::<T>())
+                .or_insert_with(|| {
+                    let index = state.task_queues.len();
+                    state.task_queues.push(TaskQueue::new::<T>(
+                        default_queue_size(state.num_threads),
+                        state.num_threads,
+                    ));
+                    index
+                });
+            &mut state.task_queues[*index]
+        };
 
         let num_free = task_queue.queue_size.get() - task_queue.num_queued;
 
@@ -208,7 +223,8 @@ struct Shared {
 #[derive(Debug)]
 struct State {
     active: bool,
-    task_queues: HashMap<TypeId, TaskQueue>,
+    task_queues: Vec<TaskQueue>,
+    task_queues_by_type_id: HashMap<TypeId, usize>,
     world_modifications: CommandQueue,
     num_threads: NonZero<usize>,
 }
@@ -270,7 +286,7 @@ fn worker_thread(thread_id: usize, shared: Arc<Shared>) {
     let _guard = span.enter();
 
     let mut world_modifications = CommandQueue::default();
-    let mut current_task = None;
+    let mut active_task: Option<usize> = None;
 
     loop {
         let task = 'get_task: {
@@ -280,10 +296,20 @@ fn worker_thread(thread_id: usize, shared: Arc<Shared>) {
             // state.
             state.world_modifications.append(&mut world_modifications);
 
-            if let Some(task_id) = current_task.take() {
-                let task_queue = state.task_queues.get_mut(&task_id).unwrap();
+            // if we just processed a task, make sure to decrement the active counter.
+            // this also returns from which position in the task_queues array we'll scan for
+            // the next item
+            let cursor = if let Some(task_id) = active_task.take() {
+                let task_queue = &mut state.task_queues[task_id];
                 task_queue.num_active -= 1;
+
+                // scan for next item starting from the next queue
+                let num_task_queues = state.task_queues.len();
+                (task_id + 1) % num_task_queues
             }
+            else {
+                0
+            };
 
             loop {
                 // check if task pool is still active
@@ -294,13 +320,16 @@ fn worker_thread(thread_id: usize, shared: Arc<Shared>) {
                 // note: instead of a linear scan we could keep a hashset in state that tells us
                 // which queues have items, but the number of queues is expected to be very low,
                 // so this might be faster.
-                for (task_id, task_queue) in &mut state.task_queues {
+                let num_task_queues = state.task_queues.len();
+                for task_id in (cursor..num_task_queues).into_iter().chain(0..cursor) {
+                    let task_queue = &mut state.task_queues[task_id];
+
                     if task_queue.num_queued > 0
                         && task_queue.num_active < task_queue.num_threads.get()
                     {
                         task_queue.num_queued -= 1;
                         task_queue.num_active += 1;
-                        current_task = Some(*task_id);
+                        active_task = Some(task_id);
                         break 'get_task task_queue.inner.pop();
                     }
                 }

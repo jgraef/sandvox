@@ -1,4 +1,3 @@
-use bevy_ecs::system::SystemParam;
 use morton_encoding::{
     morton_decode,
     morton_encode,
@@ -50,7 +49,7 @@ where
         &mut self,
         chunk: &Chunk<V, CHUNK_SIZE>,
         mesh_builder: &mut MeshBuilder,
-        data: &<V::Data as SystemParam>::Item<'w, 's>,
+        data: &V::Data,
     ) {
         self.opacity.fill(chunk, data);
 
@@ -138,12 +137,12 @@ impl<V, const CHUNK_SIZE: usize> Default for MeshFaceBuffer<V, CHUNK_SIZE> {
 impl<V, const CHUNK_SIZE: usize> MeshFaceBuffer<V, CHUNK_SIZE> {
     /// Documentation and variable names are for XY faces, but are
     /// representative for other directions as well.
-    fn mesh_faces<'w, 's, 'v>(
+    fn mesh_faces<'v>(
         &mut self,
         get_voxel: impl Fn(Point3<u16>) -> &'v V,
         face_mask: impl Fn(Point2<u16>) -> u64,
         mut emit_quad: impl FnMut(GreedyQuad<V>),
-        data: &<V::Data as SystemParam>::Item<'w, 's>,
+        data: &V::Data,
     ) where
         V: Voxel,
     {
@@ -317,11 +316,8 @@ impl<const CHUNK_SIZE: usize> Default for OpacityMasks<CHUNK_SIZE> {
 }
 
 impl<const CHUNK_SIZE: usize> OpacityMasks<CHUNK_SIZE> {
-    fn fill<'w, 's, V>(
-        &mut self,
-        chunk: &Chunk<V, CHUNK_SIZE>,
-        data: &<V::Data as SystemParam>::Item<'w, 's>,
-    ) where
+    fn fill<V>(&mut self, chunk: &Chunk<V, CHUNK_SIZE>, data: &V::Data)
+    where
         V: Voxel,
     {
         // fill XY opacity matrix
@@ -329,8 +325,7 @@ impl<const CHUNK_SIZE: usize> OpacityMasks<CHUNK_SIZE> {
             let [x, y] = morton_decode::<u16, 2>(i.try_into().unwrap());
             let mut mask_i = 0;
             for z in 0..CHUNK_SIZE as u16 {
-                let j = morton_encode([x, y, z]);
-                if chunk.voxels[j as usize].is_opaque(data) {
+                if chunk[Point3::new(x, y, z)].is_opaque(data) {
                     mask_i |= 1 << z;
                 }
             }

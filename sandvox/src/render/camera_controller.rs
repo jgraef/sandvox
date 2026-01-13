@@ -8,6 +8,7 @@ use std::{
 
 use bevy_ecs::{
     bundle::Bundle,
+    change_detection::DetectChanges,
     component::Component,
     entity::Entity,
     lifecycle::HookContext,
@@ -76,6 +77,15 @@ impl Plugin for CameraControllerPlugin {
 pub struct CameraControllerState {
     pub yaw: f32,
     pub pitch: f32,
+}
+
+impl CameraControllerState {
+    pub fn apply(&self, transform: &mut LocalTransform) {
+        let yaw_quaternion = UnitQuaternion::from_axis_angle(&Vector3::y_axis(), self.yaw);
+        let pitch_quaternion = UnitQuaternion::from_axis_angle(&Vector3::x_axis(), -self.pitch);
+
+        transform.isometry.rotation = yaw_quaternion * pitch_quaternion;
+    }
 }
 
 #[derive(Clone, Debug, Component)]
@@ -167,6 +177,10 @@ fn update_camera(
     )>,
 ) {
     if let Ok((mut transform, mut state, config)) = cameras.get_mut(camera.0) {
+        if state.is_added() {
+            state.apply(&mut transform);
+        }
+
         let dt = delta_time.seconds();
 
         // mouse
@@ -179,13 +193,9 @@ fn update_camera(
                 tracing::trace!(?delta, ?mouse_position.frame_delta, "mouse movement");
 
                 state.yaw = (state.yaw + delta.x).rem_euclid(TAU);
-                state.pitch = (state.pitch + delta.y).clamp(-FRAC_PI_2, FRAC_PI_2);
+                state.pitch = (state.pitch - delta.y).clamp(-FRAC_PI_2, FRAC_PI_2);
 
-                let yaw_quaternion = UnitQuaternion::from_axis_angle(&Vector3::y_axis(), state.yaw);
-                let pitch_quaternion =
-                    UnitQuaternion::from_axis_angle(&Vector3::x_axis(), state.pitch);
-
-                transform.isometry.rotation = yaw_quaternion * pitch_quaternion;
+                state.apply(&mut transform);
             }
         }
 

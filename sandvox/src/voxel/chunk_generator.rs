@@ -1,6 +1,5 @@
 use std::{
     marker::PhantomData,
-    num::NonZero,
     sync::Arc,
 };
 
@@ -29,6 +28,7 @@ use nalgebra::Point3;
 use crate::{
     ecs::{
         background_tasks::{
+            BackgroundTaskConfig,
             BackgroundTaskPool,
             Task,
             WorldBuilderBackgroundTaskExt,
@@ -48,25 +48,22 @@ use crate::{
 
 #[derive(Clone, Debug)]
 pub struct ChunkGeneratorPlugin<V, G, const CHUNK_SIZE: usize> {
-    config: ChunkGeneratorConfig,
+    task_config: BackgroundTaskConfig,
     _phantom: PhantomData<(V, G)>,
 }
 
-impl<V, G, const CHUNK_SIZE: usize> Default for ChunkGeneratorPlugin<V, G, CHUNK_SIZE> {
-    fn default() -> Self {
+impl<V, G, const CHUNK_SIZE: usize> ChunkGeneratorPlugin<V, G, CHUNK_SIZE> {
+    pub fn new(task_config: BackgroundTaskConfig) -> Self {
         Self {
-            config: Default::default(),
+            task_config,
             _phantom: PhantomData,
         }
     }
 }
 
-impl<V, G, const CHUNK_SIZE: usize> ChunkGeneratorPlugin<V, G, CHUNK_SIZE> {
-    pub fn new(config: ChunkGeneratorConfig) -> Self {
-        Self {
-            config,
-            _phantom: PhantomData,
-        }
+impl<V, G, const CHUNK_SIZE: usize> Default for ChunkGeneratorPlugin<V, G, CHUNK_SIZE> {
+    fn default() -> Self {
+        Self::new(Default::default())
     }
 }
 
@@ -77,15 +74,14 @@ where
 {
     fn setup(&self, builder: &mut WorldBuilder) -> Result<(), Error> {
         builder.configure_background_task_queue::<GenerateChunkTask<V, G, CHUNK_SIZE>>(
-            self.config.queue_size,
-            self.config.num_threads,
+            self.task_config,
         );
 
         builder.add_systems(
             schedule::Update,
             (
                 make_chunk_generator_shared::<V, G, CHUNK_SIZE>.run_if(resource_exists::<G>),
-                queue_chunk_generation_requests::<V, G, CHUNK_SIZE>
+                dispatch_chunk_generation::<V, G, CHUNK_SIZE>
                     .run_if(resource_exists::<SharedChunkGenerator<G>>),
             )
                 .chain(),
@@ -93,12 +89,6 @@ where
 
         Ok(())
     }
-}
-
-#[derive(Clone, Debug, Default, Resource)]
-pub struct ChunkGeneratorConfig {
-    pub queue_size: Option<NonZero<usize>>,
-    pub num_threads: Option<NonZero<usize>>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Component)]
@@ -116,7 +106,7 @@ where
     world.insert_resource(SharedChunkGenerator(Arc::new(chunk_generator)));
 }
 
-fn queue_chunk_generation_requests<V, G, const CHUNK_SIZE: usize>(
+fn dispatch_chunk_generation<V, G, const CHUNK_SIZE: usize>(
     background_tasks: Res<BackgroundTaskPool>,
     chunk_generator: Res<SharedChunkGenerator<G>>,
     chunks: Query<(Entity, &ChunkPosition), With<GenerateChunk>>,

@@ -1,8 +1,5 @@
-use bevy_ecs::system::SystemParam;
-use morton_encoding::morton_decode;
 use nalgebra::{
     Point2,
-    Point3,
     Vector2,
 };
 
@@ -30,22 +27,20 @@ where
         &mut self,
         chunk: &Chunk<V, CHUNK_SIZE>,
         mesh_builder: &mut MeshBuilder,
-        data: &<V::Data as SystemParam>::Item<'w, 's>,
+        data: &V::Data,
     ) {
-        naive_mesh(&chunk.voxels, mesh_builder, data);
+        naive_mesh(chunk, mesh_builder, data);
     }
 }
 
-pub fn naive_mesh<'w, 's, V>(
-    voxels: &[V],
+pub fn naive_mesh<'w, 's, V, const CHUNK_SIZE: usize>(
+    voxels: &Chunk<V, CHUNK_SIZE>,
     mesh_builder: &mut MeshBuilder,
-    data: &<V::Data as SystemParam>::Item<'w, 's>,
+    data: &V::Data,
 ) where
     V: Voxel,
 {
-    for (i, voxel) in voxels.iter().enumerate() {
-        let point = Point3::from(morton_decode::<u16, 3>(i.try_into().unwrap()));
-
+    for (point, voxel) in voxels.iter() {
         let mut mesh_face = |face, ij: Point2<u16>, k: u16| {
             if let Some(texture) = voxel.texture(face, data) {
                 let quad = UnorientedQuad {

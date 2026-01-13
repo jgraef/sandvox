@@ -1,6 +1,8 @@
 pub mod block_type;
 pub mod worldgen;
 
+use std::f32::consts::FRAC_PI_4;
+
 use bevy_ecs::{
     entity::Entity,
     name::Name,
@@ -40,7 +42,10 @@ use crate::{
     input::Keys,
     render::{
         camera::CameraProjection,
-        camera_controller::CameraController,
+        camera_controller::{
+            CameraController,
+            CameraControllerState,
+        },
         fps_counter::{
             FpsCounter,
             FpsCounterPlugin,
@@ -131,20 +136,21 @@ pub struct TerrainVoxel {
 }
 
 impl Voxel for TerrainVoxel {
-    type Data = Res<'static, BlockTypes>;
+    type FetchData = Res<'static, BlockTypes>;
+    type Data = BlockTypes;
 
-    fn texture<'w, 's>(&self, face: BlockFace, block_types: &Res<BlockTypes>) -> Option<AtlasId> {
+    fn texture<'w, 's>(&self, face: BlockFace, block_types: &BlockTypes) -> Option<AtlasId> {
         let _ = face;
         let block_type_data = &block_types[self.block_type];
         block_type_data.texture_id
     }
 
-    fn is_opaque<'w, 's>(&self, block_types: &Res<BlockTypes>) -> bool {
+    fn is_opaque<'w, 's>(&self, block_types: &BlockTypes) -> bool {
         let block_type_data = &block_types[self.block_type];
         block_type_data.is_opaque
     }
 
-    fn can_merge<'w, 's>(&self, other: &Self, block_types: &Res<BlockTypes>) -> bool {
+    fn can_merge<'w, 's>(&self, other: &Self, block_types: &BlockTypes) -> bool {
         let _ = block_types;
         // todo: proper check (e.g. for log textures). this needs to know the face.
         self.block_type == other.block_type
@@ -175,12 +181,14 @@ fn init_player(mut commands: Commands) {
         .spawn((
             Name::new("main_camera"),
             CameraProjection::default(),
-            LocalTransform::look_at(
-                &(chunk_center + chunk_side_length * Vector3::y()),
-                &chunk_center,
-                &Vector3::y(),
-            ),
-            CameraController::default(),
+            LocalTransform::from(chunk_center + chunk_side_length * Vector3::y()),
+            CameraController {
+                state: CameraControllerState {
+                    yaw: 0.0,
+                    pitch: -FRAC_PI_4,
+                },
+                config: Default::default(),
+            },
             ChunkLoader { radius: 8 },
         ))
         .id();

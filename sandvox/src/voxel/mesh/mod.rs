@@ -14,14 +14,16 @@ use bevy_ecs::{
         Or,
         Without,
     },
-    schedule::IntoScheduleConfigs,
     system::{
         Commands,
         Local,
         Populated,
         Res,
         StaticSystemParam,
-        SystemParam,
+    },
+    world::{
+        CommandQueue,
+        World,
     },
 };
 use color_eyre::eyre::Error;
@@ -34,19 +36,26 @@ use nalgebra::{
 
 use crate::{
     ecs::{
+        background_tasks::{
+            BackgroundTaskConfig,
+            BackgroundTaskPool,
+            Task,
+            WorldBuilderBackgroundTaskExt,
+        },
+        parallel_local::{
+            WorkspaceGuard,
+            Workspaces,
+        },
         plugin::{
             Plugin,
             WorldBuilder,
         },
         schedule,
     },
-    render::{
-        RenderSystems,
-        mesh::{
-            MeshBuilder,
-            MeshPlugin,
-            Vertex,
-        },
+    render::mesh::{
+        MeshBuilder,
+        MeshPlugin,
+        Vertex,
     },
     voxel::{
         BlockFace,
@@ -57,16 +66,24 @@ use crate::{
 };
 
 pub struct ChunkMeshPlugin<V, M, const CHUNK_SIZE: usize> {
+    task_config: BackgroundTaskConfig,
     _phantom: PhantomData<(V, M)>,
+}
+
+impl<V, M, const CHUNK_SIZE: usize> ChunkMeshPlugin<V, M, CHUNK_SIZE> {
+    pub fn new(task_config: BackgroundTaskConfig) -> Self {
+        assert!(CHUNK_SIZE.is_power_of_two());
+
+        Self {
+            task_config,
+            _phantom: PhantomData,
+        }
+    }
 }
 
 impl<V, M, const CHUNK_SIZE: usize> Default for ChunkMeshPlugin<V, M, CHUNK_SIZE> {
     fn default() -> Self {
-        assert!(CHUNK_SIZE.is_power_of_two());
-
-        Self {
-            _phantom: PhantomData,
-        }
+        Self::new(Default::default())
     }
 }
 
@@ -76,10 +93,12 @@ where
     M: ChunkMesher<V, CHUNK_SIZE>,
 {
     fn setup(&self, builder: &mut WorldBuilder) -> Result<(), Error> {
-        builder.add_plugin(MeshPlugin)?.add_systems(
-            schedule::Render,
-            mesh_chunks::<V, M, CHUNK_SIZE>.before(RenderSystems::RenderFrame),
-        );
+        builder
+            .configure_background_task_queue::<MeshChunkTask<V, M, CHUNK_SIZE>>(self.task_config);
+
+        builder
+            .add_plugin(MeshPlugin)?
+            .add_systems(schedule::Update, dispatch_chunk_meshing::<V, M, CHUNK_SIZE>);
 
         Ok(())
     }
@@ -88,48 +107,78 @@ where
 #[derive(Clone, Copy, Debug, Default, Component)]
 struct ChunkMeshed;
 
-fn mesh_chunks<V, M, const CHUNK_SIZE: usize>(
+#[derive(Clone, Copy, Debug, Default, Component)]
+struct MeshChunkTaskDispatched;
+
+#[derive(Debug)]
+struct MeshChunkTask<V, M, const CHUNK_SIZE: usize>
+where
+    V: Voxel,
+{
+    entity: Entity,
+    chunk: Chunk<V, CHUNK_SIZE>,
+    wgpu: WgpuContext,
+    voxel_data: V::Data,
+    workspace: WorkspaceGuard<(MeshBuilder, M)>,
+}
+
+impl<V, M, const CHUNK_SIZE: usize> Task for MeshChunkTask<V, M, CHUNK_SIZE>
+where
+    V: Voxel,
+    M: ChunkMesher<V, CHUNK_SIZE>,
+{
+    fn run(mut self, world_modifications: &mut CommandQueue) {
+        let (mesh_builder, chunk_mesher) = &mut *self.workspace;
+
+        let t_start = Instant::now();
+        chunk_mesher.mesh_chunk(&self.chunk, mesh_builder, &self.voxel_data);
+        let time = t_start.elapsed();
+        tracing::debug!(entity = ?self.entity, ?time, "meshed chunk");
+
+        let mesh = mesh_builder.finish(&self.wgpu, &format!("chunk {:?}", self.entity));
+        mesh_builder.clear();
+
+        world_modifications.push(move |world: &mut World| {
+            let mut commands = world.commands();
+            let mut entity = commands.entity(self.entity);
+            entity.remove::<MeshChunkTaskDispatched>();
+            entity.insert(ChunkMeshed);
+            if let Some(mesh) = mesh {
+                entity.insert(mesh);
+            }
+        });
+    }
+}
+
+fn dispatch_chunk_meshing<V, M, const CHUNK_SIZE: usize>(
     wgpu: Res<WgpuContext>,
+    background_tasks: Res<BackgroundTaskPool>,
     chunks: Populated<
         (Entity, &Chunk<V, CHUNK_SIZE>),
-        Or<(Without<ChunkMeshed>, Changed<Chunk<V, CHUNK_SIZE>>)>,
+        (
+            Or<(Without<ChunkMeshed>, Changed<Chunk<V, CHUNK_SIZE>>)>,
+            Without<MeshChunkTaskDispatched>,
+        ),
     >,
-    voxel_data: StaticSystemParam<V::Data>,
+    voxel_data: StaticSystemParam<V::FetchData>,
+    workspaces: Local<Workspaces<(MeshBuilder, M)>>,
     mut commands: Commands,
-    mut mesh_builder: Local<MeshBuilder>,
-    mut chunk_mesher: Local<M>,
 ) where
     V: Voxel,
     M: ChunkMesher<V, CHUNK_SIZE>,
 {
-    // todo: do this in a background thread, just like chunk generation works
-    // for now we'll just limit how many we do per frame
-    const MAX_CHUNKS_MESHED_PER_FRAME: usize = 1;
+    let voxel_data: V::Data = (&*voxel_data).into();
+    background_tasks.push_tasks(chunks.iter().map(|(entity, chunk)| {
+        commands.entity(entity).insert(MeshChunkTaskDispatched);
 
-    let mut num_meshed = 0;
-
-    for (entity, chunk) in &chunks {
-        tracing::debug!(?entity, "meshing chunk");
-
-        let mut entity = commands.entity(entity);
-
-        let t_start = Instant::now();
-        chunk_mesher.mesh_chunk(&chunk, &mut mesh_builder, &voxel_data);
-        let time = t_start.elapsed();
-        tracing::debug!(?time, "meshed chunk");
-
-        entity.insert(ChunkMeshed);
-        if let Some(mesh) = mesh_builder.finish(&wgpu, "chunk") {
-            entity.insert(mesh);
-            num_meshed += 1;
+        MeshChunkTask {
+            entity,
+            chunk: chunk.clone(),
+            wgpu: wgpu.clone(),
+            voxel_data: voxel_data.clone(),
+            workspace: workspaces.get(),
         }
-
-        mesh_builder.clear();
-
-        if num_meshed >= MAX_CHUNKS_MESHED_PER_FRAME {
-            break;
-        }
-    }
+    }));
 }
 
 pub trait ChunkMesher<V, const CHUNK_SIZE: usize>: Send + Sync + Default + 'static
@@ -140,7 +189,7 @@ where
         &mut self,
         chunk: &Chunk<V, CHUNK_SIZE>,
         mesh_builder: &mut MeshBuilder,
-        data: &<V::Data as SystemParam>::Item<'w, 's>,
+        data: &V::Data,
     );
 }
 

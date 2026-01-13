@@ -12,21 +12,18 @@ use bevy_ecs::system::SystemParam;
 use crate::render::texture_atlas::AtlasId;
 
 pub trait Voxel: Clone + Debug + Send + Sync + 'static {
-    type Data: SystemParam;
+    type FetchData: SystemParam;
+    type Data: for<'a, 'w, 's> From<&'a <Self::FetchData as SystemParam>::Item<'w, 's>>
+        + Clone
+        + Send
+        + Sync
+        + 'static;
 
-    fn texture<'w, 's>(
-        &self,
-        face: BlockFace,
-        data: &<Self::Data as SystemParam>::Item<'w, 's>,
-    ) -> Option<AtlasId>;
+    fn texture<'w, 's>(&self, face: BlockFace, data: &Self::Data) -> Option<AtlasId>;
 
-    fn is_opaque<'w, 's>(&self, data: &<Self::Data as SystemParam>::Item<'w, 's>) -> bool;
+    fn is_opaque<'w, 's>(&self, data: &Self::Data) -> bool;
 
-    fn can_merge<'w, 's>(
-        &self,
-        other: &Self,
-        data: &<Self::Data as SystemParam>::Item<'w, 's>,
-    ) -> bool;
+    fn can_merge<'w, 's>(&self, other: &Self, data: &Self::Data) -> bool;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

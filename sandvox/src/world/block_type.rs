@@ -4,9 +4,13 @@ use std::{
     collections::HashMap,
     ops::Index,
     path::Path,
+    sync::Arc,
 };
 
-use bevy_ecs::resource::Resource;
+use bevy_ecs::{
+    resource::Resource,
+    system::Res,
+};
 use color_eyre::{
     Section,
     eyre::Error,
@@ -26,6 +30,11 @@ pub struct BlockType(u32);
 
 #[derive(Clone, Debug, Resource)]
 pub struct BlockTypes {
+    inner: Arc<Inner>,
+}
+
+#[derive(Clone, Debug)]
+struct Inner {
     blocks: Vec<BlockTypeData>,
     by_name: HashMap<String, BlockType>,
 }
@@ -71,11 +80,13 @@ impl BlockTypes {
             tracing::debug!("block_type: {i} => {}", data.name);
         }
 
-        Ok(Self { blocks, by_name })
+        Ok(Self {
+            inner: Arc::new(Inner { blocks, by_name }),
+        })
     }
 
     pub fn lookup(&self, name: &str) -> Option<BlockType> {
-        Some(*self.by_name.get(name)?)
+        Some(*self.inner.by_name.get(name)?)
     }
 }
 
@@ -83,7 +94,13 @@ impl Index<BlockType> for BlockTypes {
     type Output = BlockTypeData;
 
     fn index(&self, index: BlockType) -> &Self::Output {
-        &self.blocks[index.0 as usize]
+        &self.inner.blocks[index.0 as usize]
+    }
+}
+
+impl<'a, 'w> From<&'a Res<'w, BlockTypes>> for BlockTypes {
+    fn from(value: &'a Res<'w, BlockTypes>) -> Self {
+        (*value).clone()
     }
 }
 
