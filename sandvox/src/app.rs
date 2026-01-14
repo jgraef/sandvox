@@ -77,6 +77,7 @@ use crate::{
         camera_controller::CameraControllerPlugin,
         texture_atlas::AtlasPlugin,
     },
+    sound::SoundPlugin,
     wgpu::WgpuPlugin,
     world::{
         WorldConfig,
@@ -130,7 +131,15 @@ impl App {
             })?
             .add_plugin(CameraPlugin)?
             .add_plugin(CameraControllerPlugin)?
-            .add_plugin(AtlasPlugin)?
+            .add_plugin(AtlasPlugin)?;
+
+        if !config.sound.disabled {
+            world_builder.add_plugin(SoundPlugin {
+                config: config.sound.inner,
+            })?;
+        }
+
+        world_builder
             .add_plugin({
                 WorldPlugin {
                     config: WorldConfig {

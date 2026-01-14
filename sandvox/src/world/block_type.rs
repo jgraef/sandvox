@@ -77,11 +77,11 @@ impl BlockTypes {
                     else {
                         let full_path = toml_directory.join(path);
                         let image = RgbaImage::from_path(&full_path)
-                            .with_note(|| path.display().to_string())?;
+                            .with_note(|| full_path.display().to_string())?;
 
                         let texture_id = atlas_builder.insert(&image)?;
 
-                        tracing::debug!(?full_path, ?texture_id, "loaded texture");
+                        tracing::debug!(path = ?full_path, ?texture_id, "loaded texture");
 
                         texture_cache.insert(path.to_owned(), texture_id);
                         texture_id
@@ -111,7 +111,7 @@ impl BlockTypes {
     }
 
     pub fn lookup(&self, name: &str) -> Option<BlockType> {
-        Some(*self.inner.by_name.get(name)?)
+        self.inner.by_name.get(name).copied()
     }
 }
 

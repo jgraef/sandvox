@@ -16,14 +16,17 @@ use serde::{
 
 use crate::{
     render::RenderConfig,
+    sound::SoundConfig,
     wgpu::WgpuConfig,
 };
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     pub graphics: GraphicsConfig,
 
-    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sound: WithDisableFlag<SoundConfig>,
+
     pub num_threads: Option<NonZero<usize>>,
 
     #[serde(default = "default_chunk_distance")]
@@ -31,6 +34,21 @@ pub struct Config {
 
     #[serde(default = "default_chunk_distance")]
     pub chunk_render_distance: u32,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            graphics: Default::default(),
+            sound: WithDisableFlag {
+                inner: Default::default(),
+                disabled: false,
+            },
+            num_threads: None,
+            chunk_load_distance: default_chunk_distance(),
+            chunk_render_distance: default_chunk_distance(),
+        }
+    }
 }
 
 impl Config {
@@ -70,6 +88,7 @@ impl Config {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GraphicsConfig {
     #[serde(flatten)]
     pub wgpu: WgpuConfig,
@@ -80,4 +99,14 @@ pub struct GraphicsConfig {
 
 fn default_chunk_distance() -> u32 {
     4
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WithDisableFlag<T> {
+    #[serde(flatten)]
+    pub inner: T,
+
+    #[serde(default = "crate::util::serde::default_true")]
+    pub disabled: bool,
 }

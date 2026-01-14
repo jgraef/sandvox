@@ -9,3 +9,10 @@ power_preference = "none"
 staging_chunk_size = 16384
 memory_hints = "Performance"
 vsync = false
+
+[sound]
+disabled = false
+host = "default"
+device = "default"
+master_volume = 0.2
+

@@ -462,6 +462,8 @@ impl AtlasBuilder {
 
         // dump atlas texture (for debugging)
         if let Some(path) = dump_texture_to {
+            tracing::debug!(path = %path.display(), "dumping texture atlas");
+
             let staging_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("atlas read-back staging"),
                 size: (self.size * self.size * 4) as wgpu::BufferAddress,
@@ -499,14 +501,17 @@ impl AtlasBuilder {
                         .map_async(wgpu::MapMode::Read, .., move |result| {
                             result.unwrap();
                             let mapped_range = staging_buffer.get_mapped_range(..);
-                            tracing::debug!(path = %path.display(), "dumping texture atlas");
+
                             let image = image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(
                                 self.size,
                                 self.size,
                                 &*mapped_range,
                             )
                             .unwrap();
-                            image.save(path).unwrap();
+
+                            if let Err(error) = image.save(path) {
+                                tracing::error!(path = %path.display(), "couldn't save texture atlas: {error}");
+                            }
                         });
                 });
         }

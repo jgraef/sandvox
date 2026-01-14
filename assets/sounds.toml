@@ -1,0 +1,10 @@
+
+[music]
+pause_between = 20
+fade_in = 5
+fade_out = 5
+
+[music.tracks.whispering_woods]
+path = "music/Whispering Woods.ogg"
+# we only have a single track right now, so we might as well preload it
+#preload = false
