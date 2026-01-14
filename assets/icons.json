@@ -1,0 +1,104 @@
+{
+  "clock_shaded": {
+    "x": 72,
+    "y": 120,
+    "w": 12,
+    "h": 12
+  },
+  "cross_flat": {
+    "x": 213,
+    "y": 37,
+    "w": 9,
+    "h": 9
+  },
+  "decrement": {
+    "x": 108,
+    "y": 221,
+    "w": 5,
+    "h": 5
+  },
+  "decrement_hightlight": {
+    "x": 114,
+    "y": 221,
+    "w": 5,
+    "h": 5
+  },
+  "decrement_pressed": {
+    "x": 120,
+    "y": 221,
+    "w": 5,
+    "h": 5
+  },
+  "email_flat": {
+    "x": 85,
+    "y": 230,
+    "w": 10,
+    "h": 8
+  },
+  "folder_open_flat": {
+    "x": 84,
+    "y": 72,
+    "w": 12,
+    "h": 12
+  },
+  "increment": {
+    "x": 108,
+    "y": 216,
+    "w": 5,
+    "h": 5
+  },
+  "increment_highlight": {
+    "x": 114,
+    "y": 216,
+    "w": 5,
+    "h": 5
+  },
+  "increment_pressed": {
+    "x": 126,
+    "y": 216,
+    "w": 5,
+    "h": 5
+  },
+  "locked_flat": {
+    "x": 85,
+    "y": 25,
+    "w": 10,
+    "h": 10
+  },
+  "locked_shaded": {
+    "x": 73,
+    "y": 25,
+    "w": 10,
+    "h": 10
+  },
+  "play_start_shaded": {
+    "x": 174,
+    "y": 111,
+    "w": 9,
+    "h": 9
+  },
+  "skull_bones_shaded": {
+    "x": 109,
+    "y": 40,
+    "w": 11,
+    "h": 14
+  },
+  "sound_high_flat": {
+    "x": 85,
+    "y": 193,
+    "w": 10,
+    "h": 10
+  },
+  "unlocked_flat": {
+    "x": 85,
+    "y": 37,
+    "w": 10,
+    "h": 10
+  },
+  "unlocked_shaded": {
+    "x": 73,
+    "y": 37,
+    "w": 10,
+    "h": 10
+  }
+}

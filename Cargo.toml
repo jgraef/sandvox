@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["sandvox"]
+members = ["sandvox", "sandvox-xtask"]
 
 #[profile.dev.package.sandvox]
 #opt-level = 1

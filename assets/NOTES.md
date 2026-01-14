@@ -1,10 +1,11 @@
 
 # Attributions
 
-- Textures:
- - [Original Minecraft][1]: Only for testing (copyright issues)
- - https://content.luanti.org/packages/MysticTempest/refi_textures/
- - https://content.luanti.org/packages/ROllerozxa/vilja_pix_2/
- - https://content.luanti.org/packages/Mirtilo/baunilha/
+- [Block & Item textures][1]
+- [UI][2]
+- [Crosshairs][3]
 
-[1]: https://minecraft.fandom.com/wiki/List_of_block_textures
+[1]: https://content.luanti.org/packages/Mirtilo/baunilha/
+[2]: https://flatus.itch.io/generic-dark-pixel-ui
+[3]: https://donut-studio.itch.io/pixel-crosshaires
+

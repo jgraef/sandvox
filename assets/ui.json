@@ -1,0 +1,308 @@
+{
+  "btn_13p_disabled": {
+    "x": 1,
+    "y": 1,
+    "w": 13,
+    "h": 13
+  },
+  "btn_13p_focus": {
+    "x": 15,
+    "y": 1,
+    "w": 13,
+    "h": 13
+  },
+  "btn_13p_hover": {
+    "x": 1,
+    "y": 15,
+    "w": 13,
+    "h": 13
+  },
+  "btn_13p_normal": {
+    "x": 1,
+    "y": 29,
+    "w": 13,
+    "h": 13
+  },
+  "btn_13p_pressed": {
+    "x": 1,
+    "y": 57,
+    "w": 13,
+    "h": 13
+  },
+  "btn_13p_textured_focus": {
+    "x": 15,
+    "y": 1,
+    "w": 13,
+    "h": 13
+  },
+  "checked": {
+    "x": 32,
+    "y": 230,
+    "w": 5,
+    "h": 5
+  },
+  "checked_7px": {
+    "x": 1,
+    "y": 232,
+    "w": 7,
+    "h": 7
+  },
+  "checked_disabled": {
+    "x": 32,
+    "y": 230,
+    "w": 5,
+    "h": 5
+  },
+  "checked_disabled_7px": {
+    "x": 1,
+    "y": 224,
+    "w": 7,
+    "h": 7
+  },
+  "focus_pill": {
+    "x": 213,
+    "y": 117,
+    "w": 14,
+    "h": 14
+  },
+  "focus_round": {
+    "x": 213,
+    "y": 87,
+    "w": 14,
+    "h": 14
+  },
+  "focus_sharp": {
+    "x": 213,
+    "y": 72,
+    "w": 14,
+    "h": 14
+  },
+  "focus_square": {
+    "x": 213,
+    "y": 57,
+    "w": 14,
+    "h": 14
+  },
+  "focus_v_round": {
+    "x": 213,
+    "y": 87,
+    "w": 14,
+    "h": 14
+  },
+  "h_grabber_7x5px": {
+    "x": 55,
+    "y": 182,
+    "w": 7,
+    "h": 5
+  },
+  "h_grabber_highlight_7x5px": {
+    "x": 55,
+    "y": 188,
+    "w": 7,
+    "h": 5
+  },
+  "h_grabber_pressed_7x5px": {
+    "x": 55,
+    "y": 194,
+    "w": 7,
+    "h": 5
+  },
+  "h_scroll_7x5px": {
+    "x": 55,
+    "y": 200,
+    "w": 7,
+    "h": 5
+  },
+  "normal_panel_pill": {
+    "x": 239,
+    "y": 239,
+    "w": 16,
+    "h": 16
+  },
+  "normal_panel_round": {
+    "x": 205,
+    "y": 239,
+    "w": 16,
+    "h": 16
+  },
+  "normal_panel_sharp": {
+    "x": 188,
+    "y": 239,
+    "w": 16,
+    "h": 16
+  },
+  "normal_panel_square": {
+    "x": 171,
+    "y": 239,
+    "w": 16,
+    "h": 16
+  },
+  "normal_panel_v_round": {
+    "x": 222,
+    "y": 239,
+    "w": 16,
+    "h": 16
+  },
+  "popup_item_hover": {
+    "x": 43,
+    "y": 15,
+    "w": 13,
+    "h": 13
+  },
+  "popup_panel": {
+    "x": 29,
+    "y": 15,
+    "w": 13,
+    "h": 13
+  },
+  "popup_panel_disabled": {
+    "x": 29,
+    "y": 1,
+    "w": 13,
+    "h": 13
+  },
+  "radio_checked": {
+    "x": 38,
+    "y": 230,
+    "w": 5,
+    "h": 5
+  },
+  "radio_checked_7px": {
+    "x": 9,
+    "y": 232,
+    "w": 7,
+    "h": 7
+  },
+  "radio_checked_disabled": {
+    "x": 38,
+    "y": 224,
+    "w": 5,
+    "h": 5
+  },
+  "radio_checked_disabled7px": {
+    "x": 9,
+    "y": 224,
+    "w": 7,
+    "h": 7
+  },
+  "radio_unchecked": {
+    "x": 38,
+    "y": 236,
+    "w": 5,
+    "h": 5
+  },
+  "radio_unchecked_7px": {
+    "x": 9,
+    "y": 248,
+    "w": 7,
+    "h": 7
+  },
+  "radio_unchecked_disabled": {
+    "x": 38,
+    "y": 242,
+    "w": 5,
+    "h": 5
+  },
+  "radio_unchecked_disabled_7px": {
+    "x": 9,
+    "y": 240,
+    "w": 7,
+    "h": 7
+  },
+  "selected_focus_dark": {
+    "x": 72,
+    "y": 228,
+    "w": 13,
+    "h": 13
+  },
+  "selected_focus_light": {
+    "x": 72,
+    "y": 200,
+    "w": 13,
+    "h": 13
+  },
+  "selected_mid": {
+    "x": 72,
+    "y": 200,
+    "w": 13,
+    "h": 13
+  },
+  "selected_not_focus": {
+    "x": 72,
+    "y": 214,
+    "w": 13,
+    "h": 13
+  },
+  "slim_panel_pill": {
+    "x": 154,
+    "y": 239,
+    "w": 16,
+    "h": 16
+  },
+  "slim_panel_round": {
+    "x": 120,
+    "y": 239,
+    "w": 16,
+    "h": 16
+  },
+  "slim_panel_sharp": {
+    "x": 103,
+    "y": 239,
+    "w": 16,
+    "h": 16
+  },
+  "slim_panel_square": {
+    "x": 86,
+    "y": 239,
+    "w": 16,
+    "h": 16
+  },
+  "slim_panel_v_round": {
+    "x": 137,
+    "y": 239,
+    "w": 16,
+    "h": 16
+  },
+  "unchecked": {
+    "x": 32,
+    "y": 236,
+    "w": 5,
+    "h": 5
+  },
+  "unchecked_7px": {
+    "x": 1,
+    "y": 248,
+    "w": 7,
+    "h": 7
+  },
+  "unchecked_disabled": {
+    "x": 32,
+    "y": 224,
+    "w": 5,
+    "h": 5
+  },
+  "v_grabber_5x7px": {
+    "x": 48,
+    "y": 174,
+    "w": 5,
+    "h": 7
+  },
+  "v_grabber_highlight_5x7px": {
+    "x": 48,
+    "y": 182,
+    "w": 5,
+    "h": 7
+  },
+  "v_grabber_pressed_5x7px": {
+    "x": 48,
+    "y": 190,
+    "w": 5,
+    "h": 7
+  },
+  "v_scroll_5x7px": {
+    "x": 48,
+    "y": 198,
+    "w": 5,
+    "h": 7
+  }
+}
