@@ -23,6 +23,7 @@ use nalgebra::{
 };
 
 use crate::{
+    collide::Aabb,
     ecs::{
         plugin::{
             Plugin,
@@ -35,6 +36,7 @@ use crate::{
             TransformSystems,
         },
     },
+    render::camera::FrustrumCulled,
     voxel::{
         chunk_generator::GenerateChunk,
         chunk_map::{
@@ -145,22 +147,28 @@ struct LoadChunks<'w, 's, const CHUNK_SIZE: usize> {
 
 impl<'w, 's, const CHUNK_SIZE: usize> LoadChunks<'w, 's, CHUNK_SIZE> {
     fn load_all(&mut self, positions: impl IntoIterator<Item = Point3<i32>>) {
-        for position in positions {
-            if !self.chunk_map.contains(position) {
+        for chunk_position in positions {
+            if !self.chunk_map.contains(chunk_position) {
                 // note: creating an entity with a ChunkPosition will cause this entity to be
                 // inserted into the chunk map
                 //
                 // though on second thought it might be a good idea to make sure this can't
                 // endlessly create entities if e.g. the chunk map system doesn't work.
 
-                let transform: LocalTransform = (CHUNK_SIZE as i32 * position).cast::<f32>().into();
+                let origin = (CHUNK_SIZE as i32 * chunk_position).cast::<f32>();
+                let aabb = Aabb::from_size(origin, Vector3::repeat(CHUNK_SIZE as f32));
 
                 let entity = self
                     .commands
-                    .spawn((ChunkPosition(position), transform, GenerateChunk))
+                    .spawn((
+                        ChunkPosition(chunk_position),
+                        LocalTransform::from(origin),
+                        GenerateChunk,
+                        FrustrumCulled { aabb },
+                    ))
                     .id();
 
-                tracing::trace!(?position, ?entity, "start loading chunk");
+                tracing::trace!(?chunk_position, ?entity, "start loading chunk");
             }
         }
     }

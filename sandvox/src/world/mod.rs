@@ -91,13 +91,31 @@ pub const CHUNK_SIZE: usize = 32;
 
 #[derive(Clone, Debug, Default)]
 pub struct WorldPlugin {
-    pub world_seed: WorldSeed,
-    pub world_file: Option<PathBuf>,
+    pub config: WorldConfig,
 }
 
-impl WorldPlugin {
+#[derive(Clone, Debug, Resource)]
+pub struct WorldConfig {
+    pub world_seed: Option<WorldSeed>,
+    pub world_file: Option<PathBuf>,
+    pub chunk_load_distance: u32,
+    pub chunk_render_distance: u32,
+}
+
+impl Default for WorldConfig {
+    fn default() -> Self {
+        Self {
+            world_seed: Default::default(),
+            world_file: None,
+            chunk_load_distance: 4,
+            chunk_render_distance: 4,
+        }
+    }
+}
+
+impl WorldConfig {
     pub fn with_seed(mut self, world_seed: impl Into<WorldSeed>) -> Self {
-        self.world_seed = world_seed.into();
+        self.world_seed = Some(world_seed.into());
         self
     }
 
@@ -109,21 +127,30 @@ impl WorldPlugin {
 
 impl Plugin for WorldPlugin {
     fn setup(&self, builder: &mut WorldBuilder) -> Result<(), Error> {
-        let mut world_seed = self.world_seed;
-
-        if let Some(path) = &self.world_file {
+        if let Some(path) = &self.config.world_file {
             let world_file = if path.exists() {
                 let world_file = WorldFile::open(path)?;
-                world_seed = world_file.world_seed();
+                let file_seed = world_file.world_seed();
 
-                tracing::info!(path = %path.display(), seed = ?world_seed, "Opened world file");
+                if let Some(config_seed) = self.config.world_seed
+                    && config_seed != file_seed
+                {
+                    tracing::warn!(
+                        ?config_seed,
+                        ?file_seed,
+                        "Ignoring configured seed because we're loading a world file"
+                    )
+                }
+
+                tracing::info!(path = %path.display(), seed = ?self.config.world_seed, "Opened world file");
 
                 world_file
             }
             else {
-                let world_file = WorldFile::create(path, self.world_seed)?;
+                let world_file =
+                    WorldFile::create(path, self.config.world_seed.unwrap_or_default())?;
 
-                tracing::info!(path = %path.display(), seed = ?self.world_seed, "Created world file");
+                tracing::info!(path = %path.display(), seed = ?self.config.world_seed, "Created world file");
 
                 world_file
             };
@@ -131,7 +158,7 @@ impl Plugin for WorldPlugin {
         }
 
         builder
-            .insert_resource(world_seed)
+            .insert_resource(self.config.clone())
             .add_plugin(ChunkMeshPlugin::<
                 TerrainVoxel,
                 GreedyMesher<TerrainVoxel, CHUNK_SIZE>,
@@ -144,6 +171,7 @@ impl Plugin for WorldPlugin {
             .add_plugin(ChunkGeneratorPlugin::<
                 TerrainVoxel,
                 TerrainGenerator,
+                //TestChunkGenerator,
                 CHUNK_SIZE,
             >::default())?
             .add_systems(
@@ -173,13 +201,17 @@ fn load_block_types(mut atlas_builder: ResMut<AtlasBuilder>, mut commands: Comma
 
 fn create_terrain_generator(
     block_types: Res<BlockTypes>,
-    world_seed: Res<WorldSeed>,
+    config: Res<WorldConfig>,
     mut commands: Commands,
 ) {
-    commands.insert_resource(TerrainGenerator::new(world_seed.0, &block_types));
+    commands.insert_resource(TerrainGenerator::new(
+        config.world_seed.unwrap_or_default(),
+        &block_types,
+    ));
+    //commands.insert_resource(TestChunkGenerator::new(&block_types));
 }
 
-fn init_player(mut commands: Commands) {
+fn init_player(config: Res<WorldConfig>, mut commands: Commands) {
     tracing::debug!("initializing world");
 
     let chunk_side_length = CHUNK_SIZE as f32;
@@ -189,7 +221,10 @@ fn init_player(mut commands: Commands) {
     let camera_entity = commands
         .spawn((
             Name::new("main_camera"),
-            CameraProjection::default(),
+            CameraProjection::new(
+                CameraProjection::DEFAULT_FOVY,
+                config.chunk_render_distance as f32 * CHUNK_SIZE as f32,
+            ),
             LocalTransform::from(chunk_center + chunk_side_length * Vector3::y()),
             CameraController {
                 state: CameraControllerState {
@@ -199,7 +234,7 @@ fn init_player(mut commands: Commands) {
                 config: Default::default(),
             },
             ChunkLoader {
-                radius: Vector3::repeat(4),
+                radius: Vector3::repeat(config.chunk_load_distance),
             },
         ))
         .id();

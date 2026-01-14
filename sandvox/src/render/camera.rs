@@ -3,11 +3,6 @@ use std::f32::consts::FRAC_PI_4;
 use bevy_ecs::{
     component::Component,
     entity::Entity,
-    lifecycle::HookContext,
-    message::{
-        Message,
-        MessageReader,
-    },
     query::{
         Changed,
         Or,
@@ -19,7 +14,6 @@ use bevy_ecs::{
         Query,
         Res,
     },
-    world::DeferredWorld,
 };
 use bytemuck::{
     Pod,
@@ -38,6 +32,10 @@ use nalgebra::{
 use wgpu::util::DeviceExt;
 
 use crate::{
+    collide::{
+        Aabb,
+        frustrum::Frustrum,
+    },
     ecs::{
         plugin::{
             Plugin,
@@ -55,14 +53,13 @@ pub struct CameraPlugin;
 impl Plugin for CameraPlugin {
     fn setup(&self, builder: &mut WorldBuilder) -> Result<(), Error> {
         builder
-            .add_message::<CameraAdded>()
             .add_systems(
                 schedule::Startup,
                 create_camera_bind_group_layout.in_set(RenderSystems::Setup),
             )
             .add_systems(
                 schedule::Render,
-                (create_camera_bind_groups, update_camera_bind_groups)
+                (update_camera_bind_groups, update_camera_frustrums)
                     .before(RenderSystems::BeginFrame),
             );
 
@@ -71,23 +68,34 @@ impl Plugin for CameraPlugin {
 }
 
 #[derive(Clone, Copy, Debug, Component)]
-#[component(on_add = camera_added)]
 pub struct CameraProjection {
     // note: not public because nalgebra seems to have the z-axis inverted relative to our
     // coordinate systems
     projection: Perspective3<f32>,
+    fovy: f32,
+    aspect_ratio: f32,
+    z_bounds: [f32; 2],
 }
 
 impl CameraProjection {
+    // 45 degrees
+    pub const DEFAULT_FOVY: f32 = FRAC_PI_4;
+
     /// # Arguments
     ///
     /// - `fovy`: Field of view along (camera-local) Y-axis (vertical angle).
-    pub fn new(fovy: f32) -> Self {
-        let projection = Perspective3::new(1.0, fovy, 0.1, 1000.0);
-        Self { projection }
+    pub fn new(fovy: f32, z_far: f32) -> Self {
+        let z_bounds = [0.1, z_far];
+        let projection = Perspective3::new(1.0, fovy, z_bounds[0], z_bounds[1]);
+        Self {
+            projection,
+            fovy,
+            aspect_ratio: 1.0,
+            z_bounds,
+        }
     }
 
-    pub(super) fn set_viewport(&mut self, viewport: Vector2<u32>) {
+    pub fn set_viewport(&mut self, viewport: Vector2<u32>) {
         if viewport.y != 0 {
             let viewport = viewport.cast::<f32>();
             self.set_aspect_ratio(viewport.x / viewport.y);
@@ -96,6 +104,7 @@ impl CameraProjection {
 
     /// Set aspect ratio (width / height)
     pub fn set_aspect_ratio(&mut self, aspect_ratio: f32) {
+        self.aspect_ratio = aspect_ratio;
         self.projection.set_aspect(aspect_ratio);
     }
 
@@ -114,22 +123,23 @@ impl CameraProjection {
         Vector2::new(point.x * fovy / aspect_ratio, point.y * fovy)
     }
 
-    pub fn fovy(&self) -> f32 {
-        self.projection.fovy()
+    pub fn fov(&self) -> Vector2<f32> {
+        Vector2::new(self.aspect_ratio * self.fovy, self.fovy)
     }
 
     /// Aspect ration (width / height)
     pub fn aspect_ratio(&self) -> f32 {
-        self.projection.aspect()
+        self.aspect_ratio
+    }
+
+    pub fn z_bounds(&self) -> [f32; 2] {
+        self.z_bounds
     }
 }
 
 impl Default for CameraProjection {
     fn default() -> Self {
-        // 45 degrees
-        let fovy = FRAC_PI_4;
-
-        Self::new(fovy)
+        Self::new(Self::DEFAULT_FOVY, 1000.0)
     }
 }
 
@@ -195,13 +205,6 @@ impl CameraBindGroup {
     }
 }
 
-fn camera_added(mut world: DeferredWorld, context: HookContext) {
-    world.write_message(CameraAdded(context.entity));
-}
-
-#[derive(Clone, Copy, Debug, Message)]
-struct CameraAdded(Entity);
-
 #[derive(Clone, Debug, Resource)]
 pub struct CameraBindGroupLayout {
     pub bind_group_layout: wgpu::BindGroupLayout,
@@ -227,18 +230,27 @@ fn create_camera_bind_group_layout(wgpu: Res<WgpuContext>, mut commands: Command
     commands.insert_resource(CameraBindGroupLayout { bind_group_layout });
 }
 
-fn create_camera_bind_groups(
+fn update_camera_bind_groups(
     wgpu: Res<WgpuContext>,
     camera_bind_group_layout: Res<CameraBindGroupLayout>,
-    mut added: MessageReader<CameraAdded>,
-    cameras: Query<(&CameraProjection, Option<&GlobalTransform>)>,
+    changed: Query<
+        (
+            Entity,
+            &CameraProjection,
+            &GlobalTransform,
+            Option<&CameraBindGroup>,
+        ),
+        Or<(Changed<CameraProjection>, Changed<GlobalTransform>)>,
+    >,
     mut commands: Commands,
 ) {
-    for &CameraAdded(entity) in added.read() {
-        if let Ok((projection, transform)) = cameras.get(entity) {
-            let transform =
-                transform.map_or_else(|| Isometry3::identity(), |transform| *transform.isometry());
-            let data = CameraData::new(projection, &transform);
+    for (entity, projection, transform, bind_group) in changed {
+        // update bind group
+        let data = CameraData::new(&projection, transform.isometry());
+        if let Some(bind_group) = bind_group {
+            bind_group.update(&wgpu, &data);
+        }
+        else {
             let bind_group =
                 CameraBindGroup::new(&wgpu, &camera_bind_group_layout.bind_group_layout, &data);
             commands.entity(entity).insert(bind_group);
@@ -246,15 +258,46 @@ fn create_camera_bind_groups(
     }
 }
 
-fn update_camera_bind_groups(
-    wgpu: Res<WgpuContext>,
+fn update_camera_frustrums(
     changed: Query<
-        (&mut CameraBindGroup, &CameraProjection, &GlobalTransform),
+        (Entity, &CameraProjection, Option<&mut CameraFrustrum>),
         Or<(Changed<CameraProjection>, Changed<GlobalTransform>)>,
     >,
+    mut commands: Commands,
 ) {
-    for (bind_group, projection, transform) in changed {
-        let data = CameraData::new(&projection, transform.isometry());
-        bind_group.update(&wgpu, &data);
+    for (entity, projection, frustrum) in changed {
+        // update frustrum
+        if let Some(mut frustrum) = frustrum {
+            *frustrum = CameraFrustrum::new(projection);
+        }
+        else {
+            let frustrum = CameraFrustrum::new(projection);
+            commands.entity(entity).insert(frustrum);
+        }
     }
+}
+
+#[derive(Clone, Copy, Debug, Component)]
+pub struct CameraFrustrum {
+    frustrum: Frustrum,
+}
+
+impl CameraFrustrum {
+    pub fn new(projection: &CameraProjection) -> Self {
+        let half_fov = 0.5 * projection.fov();
+        let [z_near, z_far] = projection.z_bounds();
+
+        Self {
+            frustrum: Frustrum::new(half_fov.x, half_fov.y, z_near, z_far),
+        }
+    }
+
+    pub fn cull(&self, isometry: &Isometry3<f32>, aabb: &Aabb) -> bool {
+        !self.frustrum.intersect_aabb(isometry, aabb)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Component)]
+pub struct FrustrumCulled {
+    pub aabb: Aabb,
 }

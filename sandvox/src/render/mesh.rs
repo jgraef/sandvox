@@ -24,6 +24,7 @@ use bevy_ecs::{
         Commands,
         Local,
         Populated,
+        Query,
         Res,
         ResMut,
     },
@@ -51,9 +52,16 @@ use crate::{
     },
     render::{
         RenderSystems,
-        camera::CameraBindGroupLayout,
+        camera::{
+            CameraBindGroupLayout,
+            CameraFrustrum,
+            FrustrumCulled,
+        },
         frame::Frame,
-        surface::Surface,
+        surface::{
+            AttachedCamera,
+            Surface,
+        },
         texture_atlas::{
             Atlas,
             AtlasSystems,
@@ -512,31 +520,53 @@ fn update_instance_buffer(
 
 fn render_meshes(
     atlas: Res<Atlas>,
-    frames: Populated<(&mut Frame, &MeshRenderPipelinePerSurface)>,
-    chunk_meshes: Populated<(&Mesh, &InstanceId)>,
+    frames: Populated<(&mut Frame, &MeshRenderPipelinePerSurface, &AttachedCamera)>,
+    camera_frustrums: Query<(&CameraFrustrum, &GlobalTransform)>,
+    meshes: Populated<(&Mesh, &InstanceId, Option<&FrustrumCulled>)>,
     instance_buffer: Res<InstanceBuffer>,
 ) {
-    for (mut frame, pipeline) in frames {
+    let mut count_rendered = 0;
+    let mut count_culled = 0;
+
+    for (mut frame, pipeline, camera) in frames {
         let mut render_pass = frame.render_pass_mut();
 
         render_pass.set_pipeline(&pipeline.pipeline);
         render_pass.set_bind_group(1, Some(atlas.bind_group()), &[]);
         render_pass.set_vertex_buffer(1, instance_buffer.buffer.slice(..));
 
-        let mut count = 0;
-        for (mesh, instance_id) in &chunk_meshes {
-            mesh.draw(&mut render_pass, 0, instance_id.0..(instance_id.0 + 1));
-            count += 1;
-        }
+        let frustrum_culling =
+            camera_frustrums
+                .get(camera.0)
+                .ok()
+                .map(|(camera_frustrum, camera_transform)| {
+                    (camera_frustrum, camera_transform.isometry().inverse())
+                });
 
-        tracing::trace!("rendered {count} meshes");
+        for (mesh, instance_id, cull_aabb) in &meshes {
+            let cull = frustrum_culling.is_some_and(|(camera_frustrum, camera_transform_inv)| {
+                cull_aabb.is_some_and(|cull_aabb| {
+                    camera_frustrum.cull(&camera_transform_inv, &cull_aabb.aabb)
+                })
+            });
+
+            if cull {
+                count_culled += 1;
+            }
+            else {
+                mesh.draw(&mut render_pass, 0, instance_id.0..(instance_id.0 + 1));
+                count_rendered += 1;
+            }
+        }
     }
+
+    tracing::trace!(count_rendered, count_culled, "rendered meshes");
 }
 
 fn render_wireframes(
     atlas: Res<Atlas>,
     frames: Populated<(&mut Frame, &MeshRenderPipelinePerSurface)>,
-    chunk_meshes: Populated<(&Mesh, &InstanceId)>,
+    meshes: Populated<(&Mesh, &InstanceId)>,
     instance_buffer: Res<InstanceBuffer>,
 ) {
     for (mut frame, pipeline) in frames {
@@ -547,7 +577,7 @@ fn render_wireframes(
         render_pass.set_vertex_buffer(1, instance_buffer.buffer.slice(..));
 
         let mut count = 0;
-        for (mesh, instance_id) in &chunk_meshes {
+        for (mesh, instance_id) in &meshes {
             mesh.draw(&mut render_pass, 0, instance_id.0..(instance_id.0 + 1));
             count += 1;
         }

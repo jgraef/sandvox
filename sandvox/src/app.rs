@@ -79,6 +79,7 @@ use crate::{
     },
     wgpu::WgpuPlugin,
     world::{
+        WorldConfig,
         WorldPlugin,
         terrain::WorldSeed,
     },
@@ -131,15 +132,13 @@ impl App {
             .add_plugin(CameraControllerPlugin)?
             .add_plugin(AtlasPlugin)?
             .add_plugin({
-                let world_seed = args
-                    .world_seed
-                    .as_deref()
-                    .map(WorldSeed::from_str)
-                    .unwrap_or_default();
-
                 WorldPlugin {
-                    world_seed,
-                    world_file: args.world_file,
+                    config: WorldConfig {
+                        world_seed: args.world_seed.as_deref().map(WorldSeed::from_str),
+                        world_file: args.world_file,
+                        chunk_load_distance: config.chunk_load_distance,
+                        chunk_render_distance: config.chunk_render_distance,
+                    },
                 }
             })?
             .add_systems(schedule::PostUpdate, update_window_config);

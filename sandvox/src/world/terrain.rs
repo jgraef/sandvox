@@ -87,8 +87,10 @@ pub struct TerrainGenerator {
 }
 
 impl TerrainGenerator {
-    pub fn new(seed: u64, block_types: &BlockTypes) -> Self {
-        let mut rng = Xoroshiro128PlusPlus::seed_from_u64(seed);
+    pub fn new(world_seed: WorldSeed, block_types: &BlockTypes) -> Self {
+        // seed a RNG with the world seed so each individual noise function is seeded
+        // differently
+        let mut rng = Xoroshiro128PlusPlus::seed_from_u64(world_seed.0);
 
         let surface_height =
             FractalNoise::<PerlinNoise>::new(|| rng.random(), 4, 1.0 / 128.0, 2.0, 0.5)
@@ -208,6 +210,36 @@ struct TerrainNoiseParameters {
     erosion: f32,
 }
 */
+
+#[derive(Debug, Resource)]
+pub struct TestChunkGenerator {
+    stone: BlockType,
+}
+
+impl TestChunkGenerator {
+    pub fn new(block_types: &BlockTypes) -> Self {
+        Self {
+            stone: block_types.lookup("stone").unwrap(),
+        }
+    }
+}
+
+impl ChunkGenerator<TerrainVoxel, CHUNK_SIZE> for TestChunkGenerator {
+    fn early_discard(&self, position: Point3<i32>) -> bool {
+        position != Point3::origin()
+    }
+
+    fn generate_chunk(
+        &self,
+        _chunk_position: Point3<i32>,
+    ) -> Option<Chunk<TerrainVoxel, CHUNK_SIZE>> {
+        Some(Chunk::from_fn(move |_point| {
+            TerrainVoxel {
+                block_type: self.stone,
+            }
+        }))
+    }
+}
 
 #[cfg(test)]
 mod tests {

@@ -25,6 +25,12 @@ pub struct Config {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub num_threads: Option<NonZero<usize>>,
+
+    #[serde(default = "default_chunk_distance")]
+    pub chunk_load_distance: u32,
+
+    #[serde(default = "default_chunk_distance")]
+    pub chunk_render_distance: u32,
 }
 
 impl Config {
@@ -70,4 +76,8 @@ pub struct GraphicsConfig {
 
     #[serde(flatten)]
     pub render: RenderConfig,
+}
+
+fn default_chunk_distance() -> u32 {
+    4
 }

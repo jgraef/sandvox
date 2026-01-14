@@ -1,5 +1,8 @@
 # This file will be modified by the game. Any manual changes might be lost.
 
+chunk_load_distance = 4
+chunk_render_distance = 16
+
 [graphics]
 backends = ["VULKAN"]
 power_preference = "none"
