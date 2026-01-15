@@ -6,6 +6,7 @@ pub mod game;
 pub mod input;
 pub mod render;
 pub mod sound;
+pub mod ui;
 pub mod util;
 pub mod voxel;
 pub mod wgpu;
