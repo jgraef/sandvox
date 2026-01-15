@@ -1,5 +1,4 @@
 pub mod camera;
-pub mod camera_controller;
 pub mod fps_counter;
 pub mod frame;
 pub mod mesh;

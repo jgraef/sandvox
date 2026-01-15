@@ -11,8 +11,19 @@ memory_hints = "Performance"
 vsync = false
 
 [sound]
-disabled = false
+disabled = true
 host = "default"
 device = "default"
 master_volume = 0.2
 
+[camera_controller]
+mouse_sensitivity = 0.01
+movement_speed = 16.0
+
+[camera_controller.keybindings]
+KeyW = { local = [0.0, 0.0, 1.0] }
+KeyA = { local = [-1.0, 0.0, 0.0] }
+KeyS = { local = [0.0, 0.0, -1.0] }
+KeyD = { local = [1.0, 0.0, 0.0] }
+ShiftLeft = { global = [0.0, -1.0, 0.0] }
+Space = { global = [0.0, 1.0, 0.0] }

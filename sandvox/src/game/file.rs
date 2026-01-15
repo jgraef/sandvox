@@ -19,7 +19,7 @@ use serde::{
     Serialize,
 };
 
-use crate::world::terrain::WorldSeed;
+use crate::game::terrain::WorldSeed;
 
 #[derive(Debug, Resource)]
 pub struct WorldFile {

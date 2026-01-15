@@ -23,6 +23,13 @@ use serde::{
 };
 
 use crate::{
+    game::{
+        CHUNK_SIZE,
+        block_type::{
+            BlockType,
+            BlockTypes,
+        },
+    },
     render::texture_atlas::AtlasId,
     util::noise::{
         FractalNoise,
@@ -37,13 +44,6 @@ use crate::{
         Voxel,
         chunk::Chunk,
         chunk_generator::ChunkGenerator,
-    },
-    world::{
-        CHUNK_SIZE,
-        block_type::{
-            BlockType,
-            BlockTypes,
-        },
     },
 };
 
@@ -243,7 +243,7 @@ impl ChunkGenerator<TerrainVoxel, CHUNK_SIZE> for TestChunkGenerator {
 
 #[cfg(test)]
 mod tests {
-    use crate::world::terrain::WorldSeed;
+    use crate::game::terrain::WorldSeed;
 
     #[test]
     fn world_seed_hashing_is_stable() {

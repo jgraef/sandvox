@@ -2,13 +2,13 @@ pub mod app;
 pub mod collide;
 pub mod config;
 pub mod ecs;
+pub mod game;
 pub mod input;
 pub mod render;
 pub mod sound;
 pub mod util;
 pub mod voxel;
 pub mod wgpu;
-pub mod world;
 
 use clap::{
     Parser,

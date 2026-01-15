@@ -15,6 +15,7 @@ use serde::{
 };
 
 use crate::{
+    game::camera_controller::CameraControllerConfig,
     render::RenderConfig,
     sound::SoundConfig,
     wgpu::WgpuConfig,
@@ -34,6 +35,9 @@ pub struct Config {
 
     #[serde(default = "default_chunk_distance")]
     pub chunk_render_distance: u32,
+
+    #[serde(default)]
+    pub camera_controller: CameraControllerConfig,
 }
 
 impl Default for Config {
@@ -47,6 +51,7 @@ impl Default for Config {
             num_threads: None,
             chunk_load_distance: default_chunk_distance(),
             chunk_render_distance: default_chunk_distance(),
+            camera_controller: Default::default(),
         }
     }
 }

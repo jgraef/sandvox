@@ -1,4 +1,5 @@
 pub mod block_type;
+pub mod camera_controller;
 pub mod file;
 pub mod terrain;
 
@@ -43,13 +44,24 @@ use crate::{
         schedule,
         transform::LocalTransform,
     },
+    game::{
+        block_type::BlockTypes,
+        camera_controller::{
+            CameraController,
+            CameraControllerConfig,
+            CameraControllerPlugin,
+            CameraControllerState,
+        },
+        file::WorldFile,
+        terrain::{
+            TerrainGenerator,
+            TerrainVoxel,
+            WorldSeed,
+        },
+    },
     input::Keys,
     render::{
         camera::CameraProjection,
-        camera_controller::{
-            CameraController,
-            CameraControllerState,
-        },
         fps_counter::{
             FpsCounter,
             FpsCounterPlugin,
@@ -76,44 +88,37 @@ use crate::{
             greedy_quads::GreedyMesher,
         },
     },
-    world::{
-        block_type::BlockTypes,
-        file::WorldFile,
-        terrain::{
-            TerrainGenerator,
-            TerrainVoxel,
-            WorldSeed,
-        },
-    },
 };
 
 pub const CHUNK_SIZE: usize = 32;
 
 #[derive(Clone, Debug, Default)]
-pub struct WorldPlugin {
-    pub config: WorldConfig,
+pub struct GamePlugin {
+    pub config: GameConfig,
 }
 
 #[derive(Clone, Debug, Resource)]
-pub struct WorldConfig {
+pub struct GameConfig {
     pub world_seed: Option<WorldSeed>,
     pub world_file: Option<PathBuf>,
     pub chunk_load_distance: u32,
     pub chunk_render_distance: u32,
+    pub camera_controller: CameraControllerConfig,
 }
 
-impl Default for WorldConfig {
+impl Default for GameConfig {
     fn default() -> Self {
         Self {
             world_seed: Default::default(),
             world_file: None,
             chunk_load_distance: 4,
             chunk_render_distance: 4,
+            camera_controller: Default::default(),
         }
     }
 }
 
-impl WorldConfig {
+impl GameConfig {
     pub fn with_seed(mut self, world_seed: impl Into<WorldSeed>) -> Self {
         self.world_seed = Some(world_seed.into());
         self
@@ -125,7 +130,7 @@ impl WorldConfig {
     }
 }
 
-impl Plugin for WorldPlugin {
+impl Plugin for GamePlugin {
     fn setup(&self, builder: &mut WorldBuilder) -> Result<(), Error> {
         if let Some(path) = &self.config.world_file {
             let world_file = if path.exists() {
@@ -159,6 +164,8 @@ impl Plugin for WorldPlugin {
 
         builder
             .insert_resource(self.config.clone())
+            .add_plugin(FpsCounterPlugin::default())?
+            .add_plugin(CameraControllerPlugin)?
             .add_plugin(ChunkMeshPlugin::<
                 TerrainVoxel,
                 GreedyMesher<TerrainVoxel, CHUNK_SIZE>,
@@ -167,7 +174,6 @@ impl Plugin for WorldPlugin {
             >::default())?
             .add_plugin(ChunkMapPlugin)?
             .add_plugin(ChunkLoaderPlugin::<CHUNK_SIZE>)?
-            .add_plugin(FpsCounterPlugin::default())?
             .add_plugin(ChunkGeneratorPlugin::<
                 TerrainVoxel,
                 TerrainGenerator,
@@ -201,7 +207,7 @@ fn load_block_types(mut atlas_builder: ResMut<AtlasBuilder>, mut commands: Comma
 
 fn create_terrain_generator(
     block_types: Res<BlockTypes>,
-    config: Res<WorldConfig>,
+    config: Res<GameConfig>,
     mut commands: Commands,
 ) {
     commands.insert_resource(TerrainGenerator::new(
@@ -211,7 +217,7 @@ fn create_terrain_generator(
     //commands.insert_resource(TestChunkGenerator::new(&block_types));
 }
 
-fn init_player(config: Res<WorldConfig>, mut commands: Commands) {
+fn init_player(config: Res<GameConfig>, mut commands: Commands) {
     tracing::debug!("initializing world");
 
     let chunk_side_length = CHUNK_SIZE as f32;
@@ -231,7 +237,7 @@ fn init_player(config: Res<WorldConfig>, mut commands: Commands) {
                     yaw: 0.0,
                     pitch: -FRAC_PI_4,
                 },
-                config: Default::default(),
+                config: config.camera_controller.clone(),
             },
             ChunkLoader {
                 radius: Vector3::repeat(config.chunk_load_distance),

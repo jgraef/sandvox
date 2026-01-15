@@ -34,6 +34,10 @@ use nalgebra::{
     Vector3,
 };
 use num_traits::identities::Zero;
+use serde::{
+    Deserialize,
+    Serialize,
+};
 use winit::keyboard::KeyCode;
 
 use crate::{
@@ -88,7 +92,8 @@ impl CameraControllerState {
     }
 }
 
-#[derive(Clone, Debug, Component)]
+#[derive(Clone, Debug, Component, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CameraControllerConfig {
     // rad / pixel
     pub mouse_sensitivity: f32,
@@ -212,7 +217,8 @@ fn update_camera(
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "lowercase")]
 pub enum Movement {
     Local(Vector3<f32>),
     Global(Vector3<f32>),

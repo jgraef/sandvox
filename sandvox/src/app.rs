@@ -70,20 +70,19 @@ use crate::{
         schedule,
         transform::TransformHierarchyPlugin,
     },
+    game::{
+        GameConfig,
+        GamePlugin,
+        terrain::WorldSeed,
+    },
     input::InputPlugin,
     render::{
         RenderPlugin,
         camera::CameraPlugin,
-        camera_controller::CameraControllerPlugin,
         texture_atlas::AtlasPlugin,
     },
     sound::SoundPlugin,
     wgpu::WgpuPlugin,
-    world::{
-        WorldConfig,
-        WorldPlugin,
-        terrain::WorldSeed,
-    },
 };
 
 #[derive(Clone, Debug, Default, Parser)]
@@ -130,7 +129,6 @@ impl App {
                 config: config.graphics.render,
             })?
             .add_plugin(CameraPlugin)?
-            .add_plugin(CameraControllerPlugin)?
             .add_plugin(AtlasPlugin)?;
 
         if !config.sound.disabled {
@@ -141,12 +139,13 @@ impl App {
 
         world_builder
             .add_plugin({
-                WorldPlugin {
-                    config: WorldConfig {
+                GamePlugin {
+                    config: GameConfig {
                         world_seed: args.world_seed.as_deref().map(WorldSeed::from_str),
                         world_file: args.world_file,
                         chunk_load_distance: config.chunk_load_distance,
                         chunk_render_distance: config.chunk_render_distance,
+                        camera_controller: config.camera_controller,
                     },
                 }
             })?
