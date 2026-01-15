@@ -33,6 +33,7 @@ use bevy_ecs::{
 use color_eyre::eyre::Error;
 use nalgebra::{
     Point3,
+    Vector2,
     Vector3,
 };
 use palette::WithAlpha;
@@ -90,6 +91,10 @@ use crate::{
             AtlasBuilder,
             AtlasSystems,
         },
+    },
+    ui::{
+        UiSurface,
+        layout::Style,
     },
     voxel::{
         chunk_generator::ChunkGeneratorPlugin,
@@ -275,13 +280,30 @@ fn init_player(config: Res<GameConfig>, mut commands: Commands) {
     ));
 }
 
+#[derive(Clone, Copy, Debug, Default, Component)]
+struct DebugOverlay;
+
 fn init_debug_overlay(mut fps_counter_config: ResMut<FpsCounterConfig>, mut commands: Commands) {
     fps_counter_config.measurement_inverval = Duration::from_millis(100);
     commands.spawn((Text::default(), TextSize { height: 2.0 }, DebugOverlay));
-}
 
-#[derive(Clone, Copy, Debug, Default, Component)]
-struct DebugOverlay;
+    commands
+        .spawn((
+            UiSurface {
+                size: Vector2::new(400.0, 400.0),
+            },
+            {
+                let mut style = Style::default();
+                style.display = taffy::style::Display::Block;
+                style
+            },
+        ))
+        .with_child((
+            Text::from("Hello World!"),
+            TextSize { height: 2.0 },
+            Style::default(),
+        ));
+}
 
 fn update_debug_overlay(
     fps_counter: Res<FpsCounter>,

@@ -14,7 +14,10 @@ use bevy_ecs::{
         MessageReader,
     },
     query::With,
-    schedule::IntoScheduleConfigs,
+    schedule::{
+        IntoScheduleConfigs,
+        common_conditions::on_message,
+    },
     system::{
         Commands,
         Populated,
@@ -67,7 +70,11 @@ impl Plugin for CameraControllerPlugin {
     fn setup(&self, builder: &mut WorldBuilder) -> Result<(), Error> {
         builder.add_message::<ControllerMessage>().add_systems(
             schedule::Update,
-            (grab_cursor, update_camera).after(InputSystems::Update),
+            (
+                grab_cursor.run_if(on_message::<ControllerMessage>),
+                update_camera,
+            )
+                .after(InputSystems::Update),
         );
 
         Ok(())

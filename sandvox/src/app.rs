@@ -96,6 +96,7 @@ use crate::{
         texture_atlas::AtlasPlugin,
     },
     sound::SoundPlugin,
+    ui::UiPlugin,
     wgpu::WgpuPlugin,
 };
 
@@ -148,7 +149,8 @@ impl App {
                 font: PathBuf::from("assets/cozette.bdf"),
             })?
             .add_plugin(CameraPlugin)?
-            .add_plugin(AtlasPlugin)?;
+            .add_plugin(AtlasPlugin)?
+            .add_plugin(UiPlugin)?;
 
         if !config.sound.disabled {
             world_builder.add_plugin(SoundPlugin {
