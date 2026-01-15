@@ -11,10 +11,15 @@ use morton_encoding::{
 use nalgebra::{
     Point3,
     Vector2,
+    Vector3,
 };
 use rand::{
     Rng,
     SeedableRng,
+    distr::{
+        Distribution,
+        StandardUniform,
+    },
 };
 use rand_xoshiro::Xoroshiro128PlusPlus;
 use serde::{
@@ -47,6 +52,18 @@ use crate::{
     },
 };
 
+#[derive(Clone, Debug, Default, Resource, Serialize, Deserialize)]
+pub struct WorldConfig {
+    pub seed: WorldSeed,
+    pub bounds: WorldBounds,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+pub struct WorldBounds {
+    pub min: Vector3<Option<i32>>,
+    pub max: Vector3<Option<i32>>,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct TerrainVoxel {
     pub block_type: BlockType,
@@ -74,6 +91,9 @@ impl Voxel for TerrainVoxel {
 
 #[derive(Debug, Resource)]
 pub struct TerrainGenerator {
+    // todo: do we need to store the whole world config? probably right? only time will tell...
+    world_config: WorldConfig,
+
     // noises
     surface_height: WithAmplitude<FractalNoise<PerlinNoise>>,
     dirt_depth: WithBias<WithAmplitude<FractalNoise<PerlinNoise>>>,
@@ -87,10 +107,10 @@ pub struct TerrainGenerator {
 }
 
 impl TerrainGenerator {
-    pub fn new(world_seed: WorldSeed, block_types: &BlockTypes) -> Self {
+    pub fn new(world_config: &WorldConfig, block_types: &BlockTypes) -> Self {
         // seed a RNG with the world seed so each individual noise function is seeded
         // differently
-        let mut rng = Xoroshiro128PlusPlus::seed_from_u64(world_seed.0);
+        let mut rng = Xoroshiro128PlusPlus::seed_from_u64(world_config.seed.0);
 
         let surface_height =
             FractalNoise::<PerlinNoise>::new(|| rng.random(), 4, 1.0 / 128.0, 2.0, 0.5)
@@ -101,6 +121,7 @@ impl TerrainGenerator {
             .with_bias(2.0);
 
         Self {
+            world_config: world_config.clone(),
             surface_height,
             dirt_depth,
             air: block_types.lookup("air").unwrap(),
@@ -114,7 +135,18 @@ impl TerrainGenerator {
 
 impl ChunkGenerator<TerrainVoxel, CHUNK_SIZE> for TerrainGenerator {
     fn early_discard(&self, position: Point3<i32>) -> bool {
-        position.y < -4
+        // todo: should this be an option on the chunk loader instead? (we should still
+        // keep this trait method so the chunk generator can opt out of generating a
+        // chunk early before dispatching the request to a thread).
+
+        let WorldBounds { min, max } = self.world_config.bounds;
+
+        let is_inside_bounds = (0..3).all(|i| {
+            min[i].is_none_or(|min| min <= position[i])
+                && max[i].is_none_or(|max| position[i] <= max)
+        });
+
+        !is_inside_bounds
     }
 
     fn generate_chunk(
@@ -190,14 +222,24 @@ pub struct WorldSeed(#[debug("0x{:x}", self.0)] pub u64);
 
 impl Default for WorldSeed {
     fn default() -> Self {
-        // chosen with a fair dice
-        Self(0xc481ec1f222d0691)
+        // for now this will be fixed, but we might want the default to be random. not
+        // sure. you can do either explicitely though.
+        Self::FIXED_DEFAULT
     }
 }
 
 impl WorldSeed {
+    /// Chosen with a fair dice.
+    pub const FIXED_DEFAULT: Self = Self(0xc481ec1f222d0691);
+
     pub fn from_str(seed: &str) -> Self {
         Self(seahash::hash(seed.as_bytes()))
+    }
+}
+
+impl Distribution<WorldSeed> for StandardUniform {
+    fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> WorldSeed {
+        WorldSeed(rng.next_u64())
     }
 }
 

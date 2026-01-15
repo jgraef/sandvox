@@ -19,7 +19,7 @@ use serde::{
     Serialize,
 };
 
-use crate::game::terrain::WorldSeed;
+use crate::game::WorldConfig;
 
 #[derive(Debug, Resource)]
 pub struct WorldFile {
@@ -42,14 +42,14 @@ impl WorldFile {
         })
     }
 
-    pub fn create(path: impl AsRef<Path>, seed: WorldSeed) -> Result<Self, Error> {
+    pub fn create(path: impl AsRef<Path>, world_config: WorldConfig) -> Result<Self, Error> {
         let database = Database::create(path)?;
 
         let time = Local::now();
         let metadata = Metadata {
-            world_seed: seed,
             time_created: time,
             time_last_written: time,
+            world_config,
         };
 
         let write_transaction = database.begin_write()?;
@@ -65,8 +65,8 @@ impl WorldFile {
         })
     }
 
-    pub fn world_seed(&self) -> WorldSeed {
-        self.metadata.world_seed
+    pub fn world_config(&self) -> &WorldConfig {
+        &self.metadata.world_config
     }
 }
 
@@ -74,7 +74,7 @@ const METADATA: TableDefinition<(), Vec<u8>> = TableDefinition::new("metadata");
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Metadata {
-    world_seed: WorldSeed,
     time_created: DateTime<Local>,
     time_last_written: DateTime<Local>,
+    world_config: WorldConfig,
 }

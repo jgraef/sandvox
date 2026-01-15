@@ -39,10 +39,17 @@ use bevy_ecs::{
     },
 };
 use clap::Parser;
-use color_eyre::eyre::Error;
+use color_eyre::{
+    Section,
+    eyre::{
+        Error,
+        bail,
+    },
+};
 use nalgebra::{
     Point2,
     Vector2,
+    Vector3,
 };
 use winit::{
     application::ApplicationHandler,
@@ -71,9 +78,13 @@ use crate::{
         transform::TransformHierarchyPlugin,
     },
     game::{
-        GameConfig,
         GamePlugin,
-        terrain::WorldSeed,
+        InitWorld,
+        terrain::{
+            WorldBounds,
+            WorldConfig,
+            WorldSeed,
+        },
     },
     input::InputPlugin,
     render::{
@@ -93,11 +104,11 @@ pub struct Args {
     #[clap(long)]
     pub num_threads: Option<NonZero<usize>>,
 
-    #[clap(short = 'w', long = "world")]
+    #[clap(short = 'w', long = "world-file")]
     pub world_file: Option<PathBuf>,
 
-    #[clap(short = 's', long = "seed")]
-    pub world_seed: Option<String>,
+    #[clap(short = 'c', long = "create-world")]
+    pub create_world: Option<PathBuf>,
 }
 
 #[derive(Debug)]
@@ -137,16 +148,50 @@ impl App {
             })?;
         }
 
+        let init_world = if let Some(world_config_file) = &args.create_world {
+            if let Some(world_file) = &args.world_file
+                && world_file.exists()
+            {
+                bail!("--create-world passed, but world-file already exists");
+            }
+
+            let world_config_toml = std::fs::read(world_config_file)
+                .with_note(|| world_config_file.display().to_string())?;
+            let world_config: WorldConfig = toml::from_slice(&world_config_toml)?;
+            InitWorld::Create {
+                world_config,
+                world_file: args.world_file,
+            }
+        }
+        else {
+            if let Some(world_file) = args.world_file {
+                InitWorld::Load { world_file }
+            }
+            else {
+                tracing::info!(
+                    "Neither --world-file, nor --create-world passed. Creating default world."
+                );
+                InitWorld::Create {
+                    world_config: {
+                        // special world config for development
+                        WorldConfig {
+                            seed: WorldSeed::FIXED_DEFAULT,
+                            bounds: WorldBounds {
+                                min: Vector3::new(None, Some(-2), Some(1)),
+                                max: Default::default(),
+                            },
+                        }
+                    },
+                    world_file: None,
+                }
+            }
+        };
+
         world_builder
             .add_plugin({
                 GamePlugin {
-                    config: GameConfig {
-                        world_seed: args.world_seed.as_deref().map(WorldSeed::from_str),
-                        world_file: args.world_file,
-                        chunk_load_distance: config.chunk_load_distance,
-                        chunk_render_distance: config.chunk_render_distance,
-                        camera_controller: config.camera_controller,
-                    },
+                    game_config: config.game,
+                    init_world,
                 }
             })?
             .add_systems(schedule::PostUpdate, update_window_config);

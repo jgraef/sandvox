@@ -11,7 +11,7 @@ memory_hints = "Performance"
 vsync = false
 
 [sound]
-disabled = true
+disabled = false
 host = "default"
 device = "default"
 master_volume = 0.2

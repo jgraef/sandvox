@@ -29,6 +29,10 @@ use nalgebra::{
     Vector3,
 };
 use palette::WithAlpha;
+use serde::{
+    Deserialize,
+    Serialize,
+};
 use winit::keyboard::KeyCode;
 
 use crate::{
@@ -56,7 +60,7 @@ use crate::{
         terrain::{
             TerrainGenerator,
             TerrainVoxel,
-            WorldSeed,
+            WorldConfig,
         },
     },
     input::Keys,
@@ -94,76 +98,81 @@ pub const CHUNK_SIZE: usize = 32;
 
 #[derive(Clone, Debug, Default)]
 pub struct GamePlugin {
-    pub config: GameConfig,
+    pub game_config: GameConfig,
+    pub init_world: InitWorld,
 }
 
-#[derive(Clone, Debug, Resource)]
+#[derive(Clone, Debug, Resource, Serialize, Deserialize)]
 pub struct GameConfig {
-    pub world_seed: Option<WorldSeed>,
-    pub world_file: Option<PathBuf>,
+    #[serde(default = "default_chunk_distance")]
     pub chunk_load_distance: u32,
+
+    #[serde(default = "default_chunk_distance")]
     pub chunk_render_distance: u32,
+
+    #[serde(default)]
     pub camera_controller: CameraControllerConfig,
+}
+
+fn default_chunk_distance() -> u32 {
+    4
 }
 
 impl Default for GameConfig {
     fn default() -> Self {
         Self {
-            world_seed: Default::default(),
-            world_file: None,
-            chunk_load_distance: 4,
-            chunk_render_distance: 4,
+            chunk_load_distance: default_chunk_distance(),
+            chunk_render_distance: default_chunk_distance(),
             camera_controller: Default::default(),
         }
     }
 }
 
-impl GameConfig {
-    pub fn with_seed(mut self, world_seed: impl Into<WorldSeed>) -> Self {
-        self.world_seed = Some(world_seed.into());
-        self
-    }
+#[derive(Clone, Debug, Resource)]
+pub enum InitWorld {
+    Load {
+        world_file: PathBuf,
+    },
+    Create {
+        world_config: WorldConfig,
+        world_file: Option<PathBuf>,
+    },
+}
 
-    pub fn with_file(mut self, world_file: impl Into<PathBuf>) -> Self {
-        self.world_file = Some(world_file.into());
-        self
+impl Default for InitWorld {
+    fn default() -> Self {
+        Self::Create {
+            world_config: Default::default(),
+            world_file: None,
+        }
     }
 }
 
 impl Plugin for GamePlugin {
     fn setup(&self, builder: &mut WorldBuilder) -> Result<(), Error> {
-        if let Some(path) = &self.config.world_file {
-            let world_file = if path.exists() {
-                let world_file = WorldFile::open(path)?;
-                let file_seed = world_file.world_seed();
+        match &self.init_world {
+            InitWorld::Load { world_file } => {
+                let world_file = WorldFile::open(world_file)?;
 
-                if let Some(config_seed) = self.config.world_seed
-                    && config_seed != file_seed
-                {
-                    tracing::warn!(
-                        ?config_seed,
-                        ?file_seed,
-                        "Ignoring configured seed because we're loading a world file"
-                    )
-                }
-
-                tracing::info!(path = %path.display(), seed = ?self.config.world_seed, "Opened world file");
-
-                world_file
+                builder
+                    .insert_resource(world_file.world_config().clone())
+                    .insert_resource(world_file);
             }
-            else {
-                let world_file =
-                    WorldFile::create(path, self.config.world_seed.unwrap_or_default())?;
+            InitWorld::Create {
+                world_config,
+                world_file,
+            } => {
+                builder.insert_resource(world_config.clone());
 
-                tracing::info!(path = %path.display(), seed = ?self.config.world_seed, "Created world file");
-
-                world_file
-            };
-            builder.insert_resource(world_file);
+                if let Some(world_file) = world_file {
+                    let world_file = WorldFile::create(&world_file, world_config.clone())?;
+                    builder.insert_resource(world_file);
+                }
+            }
         }
 
         builder
-            .insert_resource(self.config.clone())
+            .insert_resource(self.game_config.clone())
             .add_plugin(FpsCounterPlugin::default())?
             .add_plugin(CameraControllerPlugin)?
             .add_plugin(ChunkMeshPlugin::<
@@ -207,13 +216,10 @@ fn load_block_types(mut atlas_builder: ResMut<AtlasBuilder>, mut commands: Comma
 
 fn create_terrain_generator(
     block_types: Res<BlockTypes>,
-    config: Res<GameConfig>,
+    world_config: Res<WorldConfig>,
     mut commands: Commands,
 ) {
-    commands.insert_resource(TerrainGenerator::new(
-        config.world_seed.unwrap_or_default(),
-        &block_types,
-    ));
+    commands.insert_resource(TerrainGenerator::new(&world_config, &block_types));
     //commands.insert_resource(TestChunkGenerator::new(&block_types));
 }
 
