@@ -146,7 +146,7 @@ mod parallel {
     };
 
     /// Update [`GlobalTransform`] component of entities based on entity
-    /// hierarchy and [`Transform`] component.
+    /// hierarchy and [`LocalTransform`] component.
     ///
     /// Third party plugins should ensure that this is used in concert with
     /// [`sync_simple_transforms`](super::sync_simple_transforms) and

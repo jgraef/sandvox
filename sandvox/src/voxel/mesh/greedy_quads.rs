@@ -442,7 +442,9 @@ mod tranpose {
         fn len(&self) -> usize;
         fn get_mut_2(&mut self, rows: [usize; 2]) -> [&mut u64; 2];
 
-        /// https://github.com/dsnet/matrix-transpose
+        /// Taken from [`dsnet/matrix-transpose`][1]
+        ///
+        /// [1]: https://github.com/dsnet/matrix-transpose
         fn transpose(&mut self) {
             //let mut swap_width = 64;
             //let mut swap_mask = u64::MAX;

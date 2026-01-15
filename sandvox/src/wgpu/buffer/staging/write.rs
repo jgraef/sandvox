@@ -19,10 +19,6 @@ use crate::wgpu::TextureSourceLayout;
 /// easier (e.g. as `impl WriteStaging`) when only staging operations are
 /// required. This has a blanket implementation for `&mut T` when `T` implements
 /// the trait.
-///
-/// This is also implemented by [`CommitOnDrop`], which wraps any
-/// [`WriteStaging`] (with [`WriteStagingCommit`]) and commits the transaction
-/// when dropped.
 pub trait WriteStaging {
     #[must_use]
     fn view_mut(
