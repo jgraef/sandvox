@@ -22,10 +22,7 @@ use crate::{
         schedule,
     },
     render::RenderSystems,
-    ui::{
-        layout::layout_trees,
-        widgets::text::Fonts,
-    },
+    ui::layout::layout_trees,
 };
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -33,9 +30,7 @@ pub struct UiPlugin;
 
 impl Plugin for UiPlugin {
     fn setup(&self, builder: &mut WorldBuilder) -> Result<(), Error> {
-        let fonts = Fonts::new();
-
-        builder.insert_resource(fonts).add_systems(
+        builder.add_systems(
             schedule::Render,
             layout_trees.in_set(RenderSystems::BeginFrame),
         );
