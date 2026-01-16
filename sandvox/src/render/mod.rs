@@ -2,6 +2,7 @@ pub mod camera;
 pub mod fps_counter;
 pub mod frame;
 pub mod mesh;
+pub mod staging;
 pub mod surface;
 pub mod texture_atlas;
 
@@ -26,7 +27,13 @@ use crate::{
         },
         schedule,
     },
-    render::surface::handle_window_events,
+    render::{
+        staging::{
+            flush_staging,
+            initialize_staging,
+        },
+        surface::handle_window_events,
+    },
     util::serde::default_true,
     wgpu::WgpuSystems,
 };
@@ -40,16 +47,21 @@ impl Plugin for RenderPlugin {
     fn setup(&self, builder: &mut WorldBuilder) -> Result<(), Error> {
         builder
             .add_systems(
+                schedule::Startup,
+                (
+                    initialize_staging
+                        .after(WgpuSystems::CreateContext)
+                        .before(RenderSystems::Setup),
+                    flush_staging.after(RenderSystems::Setup),
+                ),
+            )
+            .add_systems(
                 schedule::Render,
                 (
                     handle_window_events.before(RenderSystems::BeginFrame),
                     frame::begin_frame.in_set(RenderSystems::BeginFrame),
                     frame::end_frame.in_set(RenderSystems::EndFrame),
                 ),
-            )
-            .configure_system_sets(
-                schedule::Startup,
-                RenderSystems::Setup.after(WgpuSystems::CreateContext),
             )
             .configure_system_sets(
                 schedule::Render,

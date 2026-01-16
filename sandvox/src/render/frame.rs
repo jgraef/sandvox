@@ -6,8 +6,10 @@ use bevy_ecs::{
     name::NameOrEntity,
     system::{
         Commands,
+        Local,
         Query,
         Res,
+        ResMut,
     },
 };
 use palette::Srgba;
@@ -15,6 +17,8 @@ use palette::Srgba;
 use crate::{
     render::{
         camera::CameraBindGroup,
+        flush_staging,
+        staging::Staging,
         surface::{
             AttachedCamera,
             ClearColor,
@@ -25,7 +29,6 @@ use crate::{
 };
 
 pub fn begin_frame(
-    wgpu: Res<WgpuContext>,
     surfaces: Query<(
         Entity,
         &Surface,
@@ -33,16 +36,18 @@ pub fn begin_frame(
         Option<&AttachedCamera>,
     )>,
     cameras: Query<&CameraBindGroup>,
+    // todo: make it work with Res
+    mut staging: ResMut<Staging>,
     mut commands: Commands,
 ) {
     let start_time = Instant::now();
 
     for (surface_entity, surface, clear_color, camera) in surfaces {
-        let mut command_encoder =
-            wgpu.device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("frame"),
-                });
+        /*let mut command_encoder =
+        wgpu.device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("frame"),
+            });*/
 
         let surface_texture = surface.surface_texture();
         let surface_texture_view =
@@ -53,7 +58,8 @@ pub fn begin_frame(
                     ..Default::default()
                 });
 
-        let mut render_pass = command_encoder
+        let mut render_pass = staging
+            .command_encoder_mut()
             .begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("frame"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -95,7 +101,7 @@ pub fn begin_frame(
 
         commands.entity(surface_entity).insert(Frame {
             inner: Some(FrameInner {
-                command_encoder,
+                //command_encoder,
                 render_pass,
                 surface_texture,
                 start_time,
@@ -105,23 +111,41 @@ pub fn begin_frame(
     }
 }
 
-pub fn end_frame(wgpu: Res<WgpuContext>, frames: Query<(NameOrEntity, &mut Frame)>) {
-    for (name, mut frame) in frames {
-        if let Some(frame) = frame.inner.take() {
-            // first drop the render pass such that it doesn't "block" the command encoder
-            // anymore
-            drop(frame.render_pass);
+pub fn end_frame(
+    wgpu: Res<WgpuContext>,
+    frames: Query<(NameOrEntity, &mut Frame)>,
+    mut present_surfaces: Local<Vec<wgpu::SurfaceTexture>>,
+    staging: ResMut<Staging>,
+) {
+    assert!(present_surfaces.is_empty());
 
-            // submit command buffer
-            let command_buffer = frame.command_encoder.finish();
-            wgpu.queue.submit([command_buffer]);
+    // end all render passes and get the surface textures
+    present_surfaces.extend(frames.into_iter().filter_map(|(name, mut frame)| {
+        frame.inner.take().map(
+            |FrameInner {
+                 render_pass,
+                 surface_texture,
+                 start_time,
+                 has_camera: _,
+             }| {
+                // drop the render pass explicitely since we'll submit the command encoder next
+                drop(render_pass);
 
-            let end_time = Instant::now();
-            let time = end_time - frame.start_time;
-            tracing::trace!(surface = %name, ?time, "rendered frame");
+                let end_time = Instant::now();
+                let time = end_time - start_time;
+                tracing::trace!(surface = %name, ?time, "rendered frame");
 
-            frame.surface_texture.present();
-        }
+                surface_texture
+            },
+        )
+    }));
+
+    // flush staging. this also submits the command encoder
+    flush_staging(wgpu, staging);
+
+    // present surfaces
+    for surface_texture in present_surfaces.drain(..) {
+        surface_texture.present();
     }
 }
 
@@ -150,7 +174,7 @@ impl Frame {
 
 #[derive(Debug)]
 struct FrameInner {
-    command_encoder: wgpu::CommandEncoder,
+    //command_encoder: wgpu::CommandEncoder,
     render_pass: wgpu::RenderPass<'static>,
     surface_texture: wgpu::SurfaceTexture,
     start_time: Instant,
