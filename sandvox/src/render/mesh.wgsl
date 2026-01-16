@@ -1,5 +1,6 @@
 
 struct VertexInput {
+    // from vertex buffer
     @location(0)
     position: vec4f,
 
@@ -12,6 +13,7 @@ struct VertexInput {
     @location(3)
     texture_id: u32,
 
+    // from instance buffer
     @location(4) model0: vec4f,
     @location(5) model1: vec4f,
     @location(6) model2: vec4f,
@@ -42,7 +44,7 @@ struct VertexOutputWireframe {
 }
 
 struct FrameUniform {
-    viewport_size: vec2f,
+    viewport_size: vec2u,
     // padding: 8 bytes
     camera_matrix: mat4x4f,
 }

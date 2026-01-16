@@ -95,7 +95,17 @@ impl<T> TypedArrayBuffer<T> {
         Self::new_impl(device, label.into(), capacity, 0, usage, false)
     }
 
-    pub fn buffer(&self) -> Option<&wgpu::Buffer> {
+    /// Returns a reference to the underlying [`wgpu::Buffer`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if the buffer has size 0 and thus has no underlying buffer. Use
+    /// [`try_buffer`] if you want to handle this case yourself.
+    pub fn buffer(&self) -> &wgpu::Buffer {
+        self.try_buffer().expect("Zero-sized buffer")
+    }
+
+    pub fn try_buffer(&self) -> Option<&wgpu::Buffer> {
         self.inner.as_ref().map(|inner| &inner.buffer)
     }
 

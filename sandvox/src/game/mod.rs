@@ -5,22 +5,29 @@ pub mod terrain;
 
 use std::{
     f32::consts::FRAC_PI_4,
+    fmt::Write,
     path::PathBuf,
+    time::Duration,
 };
 
 use bevy_ecs::{
-    entity::Entity,
+    component::Component,
     name::Name,
+    query::With,
     resource::Resource,
     schedule::{
         IntoScheduleConfigs,
-        common_conditions::resource_changed,
+        SystemCondition,
+        common_conditions::{
+            any_with_component,
+            resource_changed,
+        },
     },
     system::{
         Commands,
-        Query,
         Res,
         ResMut,
+        Single,
     },
 };
 use color_eyre::eyre::Error;
@@ -68,12 +75,16 @@ use crate::{
         camera::CameraProjection,
         fps_counter::{
             FpsCounter,
-            FpsCounterPlugin,
+            FpsCounterConfig,
         },
         mesh::RenderWireframes,
         surface::{
             AttachedCamera,
             ClearColor,
+        },
+        text::{
+            Text,
+            TextSize,
         },
         texture_atlas::{
             AtlasBuilder,
@@ -173,7 +184,6 @@ impl Plugin for GamePlugin {
 
         builder
             .insert_resource(self.game_config.clone())
-            .add_plugin(FpsCounterPlugin::default())?
             .add_plugin(CameraControllerPlugin)?
             .add_plugin(ChunkMeshPlugin::<
                 TerrainVoxel,
@@ -195,12 +205,15 @@ impl Plugin for GamePlugin {
                     load_block_types.in_set(AtlasSystems::InsertTextures),
                     create_terrain_generator.after(load_block_types),
                     init_player,
+                    init_debug_overlay,
                 ),
             )
             .add_systems(
                 schedule::Update,
                 (
-                    show_fps_in_window_title.run_if(resource_changed::<FpsCounter>),
+                    update_debug_overlay.run_if(
+                        resource_changed::<FpsCounter>.and(any_with_component::<DebugOverlay>),
+                    ),
                     handle_keys.run_if(resource_changed::<Keys>),
                 ),
             );
@@ -252,30 +265,30 @@ fn init_player(config: Res<GameConfig>, mut commands: Commands) {
         .id();
 
     // spawn window
-    let window = commands
-        .spawn((
-            Name::new("main_window"),
-            WindowConfig {
-                title: "SandVox".to_owned(),
-            },
-            ClearColor(palette::named::LIGHTSKYBLUE.into_format().with_alpha(1.0)),
-            AttachedCamera(camera_entity),
-        ))
-        .id();
-
-    commands.insert_resource(MainWindow(window));
+    commands.spawn((
+        Name::new("main_window"),
+        WindowConfig {
+            title: "SandVox".to_owned(),
+        },
+        ClearColor(palette::named::LIGHTSKYBLUE.into_format().with_alpha(1.0)),
+        AttachedCamera(camera_entity),
+    ));
 }
 
-#[derive(Clone, Copy, Debug, Resource)]
-struct MainWindow(Entity);
+fn init_debug_overlay(mut fps_counter_config: ResMut<FpsCounterConfig>, mut commands: Commands) {
+    fps_counter_config.measurement_inverval = Duration::from_millis(100);
+    commands.spawn((Text::default(), TextSize { height: 2.0 }, DebugOverlay));
+}
 
-fn show_fps_in_window_title(
+#[derive(Clone, Copy, Debug, Default, Component)]
+struct DebugOverlay;
+
+fn update_debug_overlay(
     fps_counter: Res<FpsCounter>,
-    main_window: Res<MainWindow>,
-    mut windows: Query<&mut WindowConfig>,
+    mut debug_overlay: Single<&mut Text, With<DebugOverlay>>,
 ) {
-    let mut config = windows.get_mut(main_window.0).unwrap();
-    config.title = format!("SandVox ({:.2} fps)", fps_counter.fps);
+    debug_overlay.text.clear();
+    write!(&mut debug_overlay.text, "FPS: {:.1}", fps_counter.fps).unwrap();
 }
 
 fn handle_keys(

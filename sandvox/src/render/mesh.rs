@@ -114,10 +114,10 @@ impl Plugin for MeshPlugin {
                             )>,
                         ),
                     render_meshes
-                        .in_set(RenderSystems::RenderFrame)
+                        .in_set(RenderSystems::RenderWorld)
                         .run_if(resource_exists::<InstanceBuffer>),
                     render_wireframes
-                        .in_set(RenderSystems::RenderFrame)
+                        .in_set(RenderSystems::RenderWorld)
                         .run_if(
                             resource_exists::<InstanceBuffer>
                                 .and(resource_exists::<RenderWireframes>),

@@ -270,7 +270,7 @@ pub struct FrameUniform {
 }
 
 impl FrameUniform {
-    pub fn set_viewport_size(&mut self, viewport_size: Vector2<f32>) {
+    pub fn set_viewport_size(&mut self, viewport_size: Vector2<u32>) {
         self.data.viewport_size = viewport_size;
     }
 
@@ -282,7 +282,7 @@ impl FrameUniform {
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 #[repr(C)]
 struct FrameUniformData {
-    viewport_size: Vector2<f32>,
+    viewport_size: Vector2<u32>,
     _padding: [u32; 2],
     camera_matrix: Matrix4<f32>,
 }

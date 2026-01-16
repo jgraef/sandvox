@@ -4,6 +4,7 @@ pub mod frame;
 pub mod mesh;
 pub mod staging;
 pub mod surface;
+pub mod text;
 pub mod texture_atlas;
 
 use bevy_ecs::{
@@ -40,7 +41,8 @@ use crate::{
         },
         surface::{
             create_surfaces,
-            update_viewport,
+            reconfigure_surfaces,
+            update_viewports,
         },
     },
     util::serde::default_true,
@@ -67,7 +69,8 @@ impl Plugin for RenderPlugin {
             .add_systems(
                 schedule::Render,
                 (
-                    (update_viewport, create_surfaces).before(RenderSystems::BeginFrame),
+                    (update_viewports, create_surfaces, reconfigure_surfaces)
+                        .before(RenderSystems::BeginFrame),
                     (create_frames, begin_frames)
                         .chain()
                         .in_set(RenderSystems::BeginFrame),
@@ -76,11 +79,17 @@ impl Plugin for RenderPlugin {
             )
             .configure_system_sets(
                 schedule::Render,
-                RenderSystems::RenderFrame.after(RenderSystems::BeginFrame),
+                RenderSystems::RenderWorld
+                    .after(RenderSystems::BeginFrame)
+                    .before(RenderSystems::EndFrame)
+                    .before(RenderSystems::RenderUi),
             )
             .configure_system_sets(
                 schedule::Render,
-                RenderSystems::RenderFrame.before(RenderSystems::EndFrame),
+                RenderSystems::RenderUi
+                    .after(RenderSystems::BeginFrame)
+                    .before(RenderSystems::EndFrame)
+                    .after(RenderSystems::RenderWorld),
             )
             .configure_system_sets(
                 schedule::Render,
@@ -96,7 +105,8 @@ impl Plugin for RenderPlugin {
 pub enum RenderSystems {
     Setup,
     BeginFrame,
-    RenderFrame,
+    RenderWorld,
+    RenderUi,
     EndFrame,
 }
 

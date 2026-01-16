@@ -90,6 +90,9 @@ use crate::{
     render::{
         RenderPlugin,
         camera::CameraPlugin,
+        fps_counter::FpsCounterPlugin,
+        mesh::MeshPlugin,
+        text::TextPlugin,
         texture_atlas::AtlasPlugin,
     },
     sound::SoundPlugin,
@@ -138,6 +141,11 @@ impl App {
             })?
             .add_plugin(RenderPlugin {
                 config: config.graphics.render,
+            })?
+            .add_plugin(FpsCounterPlugin::default())?
+            .add_plugin(MeshPlugin)?
+            .add_plugin(TextPlugin {
+                font: PathBuf::from("assets/cozette.bdf"),
             })?
             .add_plugin(CameraPlugin)?
             .add_plugin(AtlasPlugin)?;

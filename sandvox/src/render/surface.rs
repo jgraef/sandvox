@@ -42,11 +42,20 @@ pub(super) fn create_surfaces(
 }
 
 // todo: this should be handled by UI I think
-pub(super) fn update_viewport(
+pub(super) fn update_viewports(
     windows: Populated<(&mut FrameUniform, &WindowSize), Changed<WindowSize>>,
 ) {
     for (mut frame_uniform, window_size) in windows {
-        frame_uniform.set_viewport_size(window_size.size.cast());
+        frame_uniform.set_viewport_size(window_size.size);
+    }
+}
+
+pub(super) fn reconfigure_surfaces(
+    wgpu: Res<WgpuContext>,
+    windows: Populated<(&mut Surface, &WindowSize), Changed<WindowSize>>,
+) {
+    for (mut surface, window_size) in windows {
+        surface.resize(&wgpu, window_size.size);
     }
 }
 

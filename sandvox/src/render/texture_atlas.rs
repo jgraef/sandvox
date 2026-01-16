@@ -66,8 +66,9 @@ impl Plugin for AtlasPlugin {
             .add_systems(
                 schedule::Startup,
                 create_atlas_builder
-                    .in_set(AtlasSystems::CreateBuilder)
+                    // we need a wgpu context
                     .after(WgpuSystems::CreateContext)
+                    .in_set(AtlasSystems::CreateBuilder)
                     .before(AtlasSystems::InsertTextures),
             )
             .add_systems(
@@ -83,6 +84,12 @@ impl Plugin for AtlasPlugin {
 }
 
 fn request_wgpu_features(mut builder: ResMut<WgpuContextBuilder>) {
+    // to build the texture atlas we use a texture binding array to bind all images
+    // that are put into the atlas at once.
+    //
+    // todo: technically we could opt out of doing this if the feature is not
+    // available. instead we'd issue a separate draw call per image.
+
     builder
         .request_features(wgpu::Features::TEXTURE_BINDING_ARRAY)
         .request_features(
@@ -144,6 +151,8 @@ pub struct AtlasBuilder {
     textures: Vec<wgpu::Texture>,
     device: wgpu::Device,
     queue: wgpu::Queue,
+
+    // can we use the general rendering staging transaction?
     staging: WriteStagingTransaction<WriteStagingBelt, wgpu::Device, wgpu::CommandEncoder>,
 }
 
