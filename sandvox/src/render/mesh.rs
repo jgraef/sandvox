@@ -503,12 +503,13 @@ fn update_instance_buffer(
     instance_data.clear();
 }
 
-fn render_meshes(
+fn render_meshes_with(
     atlas: Res<Atlas>,
     frames: Populated<(&mut Frame, &MeshRenderPipelinePerSurface, &AttachedCamera)>,
     camera_frustrums: Query<(&CameraFrustrum, &GlobalTransform)>,
     meshes: Populated<(&Mesh, &InstanceId, Option<&FrustrumCulled>)>,
     instance_buffer: Res<InstanceBuffer>,
+    get_pipeline: impl Fn(&MeshRenderPipelinePerSurface) -> &wgpu::RenderPipeline,
 ) {
     let mut count_rendered = 0;
     let mut count_culled = 0;
@@ -516,7 +517,7 @@ fn render_meshes(
     for (mut frame, pipeline, camera) in frames {
         let mut render_pass = frame.render_pass_mut();
 
-        render_pass.set_pipeline(&pipeline.pipeline);
+        render_pass.set_pipeline(get_pipeline(pipeline));
         render_pass.set_bind_group(1, Some(atlas.bind_group()), &[]);
         render_pass.set_vertex_buffer(1, instance_buffer.buffer.slice(..));
 
@@ -548,25 +549,36 @@ fn render_meshes(
     tracing::trace!(count_rendered, count_culled, "rendered meshes");
 }
 
-fn render_wireframes(
+fn render_meshes(
     atlas: Res<Atlas>,
-    frames: Populated<(&mut Frame, &MeshRenderPipelinePerSurface)>,
-    meshes: Populated<(&Mesh, &InstanceId)>,
+    frames: Populated<(&mut Frame, &MeshRenderPipelinePerSurface, &AttachedCamera)>,
+    camera_frustrums: Query<(&CameraFrustrum, &GlobalTransform)>,
+    meshes: Populated<(&Mesh, &InstanceId, Option<&FrustrumCulled>)>,
     instance_buffer: Res<InstanceBuffer>,
 ) {
-    for (mut frame, pipeline) in frames {
-        let mut render_pass = frame.render_pass_mut();
+    render_meshes_with(
+        atlas,
+        frames,
+        camera_frustrums,
+        meshes,
+        instance_buffer,
+        |per_surface| &per_surface.pipeline,
+    );
+}
 
-        render_pass.set_pipeline(&pipeline.wireframe_pipeline);
-        render_pass.set_bind_group(1, Some(atlas.bind_group()), &[]);
-        render_pass.set_vertex_buffer(1, instance_buffer.buffer.slice(..));
-
-        let mut count = 0;
-        for (mesh, instance_id) in &meshes {
-            mesh.draw(&mut render_pass, 0, instance_id.0..(instance_id.0 + 1));
-            count += 1;
-        }
-
-        tracing::trace!("rendered {count} meshes");
-    }
+fn render_wireframes(
+    atlas: Res<Atlas>,
+    frames: Populated<(&mut Frame, &MeshRenderPipelinePerSurface, &AttachedCamera)>,
+    camera_frustrums: Query<(&CameraFrustrum, &GlobalTransform)>,
+    meshes: Populated<(&Mesh, &InstanceId, Option<&FrustrumCulled>)>,
+    instance_buffer: Res<InstanceBuffer>,
+) {
+    render_meshes_with(
+        atlas,
+        frames,
+        camera_frustrums,
+        meshes,
+        instance_buffer,
+        |per_surface| &per_surface.wireframe_pipeline,
+    );
 }
