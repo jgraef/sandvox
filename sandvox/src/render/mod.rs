@@ -31,7 +31,7 @@ use crate::{
     render::{
         frame::{
             begin_frames,
-            create_frame_uniform_layout,
+            create_frame_bind_group_layout,
             create_frames,
             end_frames,
         },
@@ -60,7 +60,7 @@ impl Plugin for RenderPlugin {
             .add_systems(
                 schedule::Startup,
                 (
-                    (initialize_staging, create_frame_uniform_layout)
+                    (initialize_staging, create_frame_bind_group_layout)
                         .after(WgpuSystems::CreateContext)
                         .before(RenderSystems::Setup),
                     flush_staging.after(RenderSystems::Setup),

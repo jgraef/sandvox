@@ -47,7 +47,7 @@ use crate::{
     },
 };
 
-pub(super) fn create_frame_uniform_layout(wgpu: Res<WgpuContext>, mut commands: Commands) {
+pub(super) fn create_frame_bind_group_layout(wgpu: Res<WgpuContext>, mut commands: Commands) {
     let bind_group_layout =
         wgpu.device
             .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -64,12 +64,12 @@ pub(super) fn create_frame_uniform_layout(wgpu: Res<WgpuContext>, mut commands: 
                 }],
             });
 
-    commands.insert_resource(FrameUniformLayout { bind_group_layout });
+    commands.insert_resource(FrameBindGroupLayout { bind_group_layout });
 }
 
 pub(super) fn create_frames(
     wgpu: Res<WgpuContext>,
-    frame_uniform_layout: Res<FrameUniformLayout>,
+    frame_bind_group_layout: Res<FrameBindGroupLayout>,
     surfaces: Populated<Entity, (With<Surface>, Without<Frame>)>,
     mut commands: Commands,
 ) {
@@ -83,7 +83,7 @@ pub(super) fn create_frames(
 
         let uniform_bind_group = wgpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("frame uniform"),
-            layout: &frame_uniform_layout.bind_group_layout,
+            layout: &frame_bind_group_layout.bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: uniform_buffer.as_entire_binding(),
@@ -260,7 +260,7 @@ fn srgba_to_wgpu(color: Srgba<f32>) -> wgpu::Color {
 }
 
 #[derive(Debug, Resource)]
-pub struct FrameUniformLayout {
+pub struct FrameBindGroupLayout {
     pub bind_group_layout: wgpu::BindGroupLayout,
 }
 

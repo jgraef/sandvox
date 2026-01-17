@@ -26,6 +26,10 @@ use parking_lot::{
     Condvar,
     Mutex,
 };
+use serde::{
+    Deserialize,
+    Serialize,
+};
 
 use crate::ecs::{
     plugin::{
@@ -94,7 +98,8 @@ fn apply_background_modifications(pool: Res<BackgroundTaskPool>, mut commands: C
     commands.append(&mut state.world_modifications);
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BackgroundTaskConfig {
     pub queue_size: Option<NonZero<usize>>,
     pub num_threads: Option<NonZero<usize>>,

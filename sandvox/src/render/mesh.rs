@@ -58,7 +58,7 @@ use crate::{
         },
         frame::{
             Frame,
-            FrameUniformLayout,
+            FrameBindGroupLayout,
         },
         surface::{
             AttachedCamera,
@@ -281,7 +281,7 @@ struct MeshRenderPipelinePerSurface {
 
 fn create_mesh_render_pipeline_shared(
     wgpu: Res<WgpuContext>,
-    frame_uniform_layout: Res<FrameUniformLayout>,
+    frame_bind_group_layout: Res<FrameBindGroupLayout>,
     atlas: Res<Atlas>,
     mut commands: Commands,
 ) {
@@ -290,7 +290,7 @@ fn create_mesh_render_pipeline_shared(
         .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("mesh"),
             bind_group_layouts: &[
-                &frame_uniform_layout.bind_group_layout,
+                &frame_bind_group_layout.bind_group_layout,
                 &atlas.bind_group_layout(),
             ],
             immediate_size: 0,

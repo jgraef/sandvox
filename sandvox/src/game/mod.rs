@@ -7,7 +7,6 @@ use std::{
     f32::consts::FRAC_PI_4,
     fmt::Write,
     path::PathBuf,
-    time::Duration,
 };
 
 use bevy_ecs::{
@@ -49,6 +48,7 @@ use crate::{
         WindowConfig,
     },
     ecs::{
+        background_tasks::BackgroundTaskConfig,
         plugin::{
             Plugin,
             WorldBuilder,
@@ -93,6 +93,7 @@ use crate::{
         },
     },
     ui::{
+        LeafMeasure,
         UiSurface,
         layout::Style,
     },
@@ -127,6 +128,9 @@ pub struct GameConfig {
     pub chunk_render_distance: u32,
 
     #[serde(default)]
+    pub chunk_generator_config: BackgroundTaskConfig,
+
+    #[serde(default)]
     pub camera_controller: CameraControllerConfig,
 }
 
@@ -139,6 +143,7 @@ impl Default for GameConfig {
         Self {
             chunk_load_distance: default_chunk_distance(),
             chunk_render_distance: default_chunk_distance(),
+            chunk_generator_config: Default::default(),
             camera_controller: Default::default(),
         }
     }
@@ -203,7 +208,7 @@ impl Plugin for GamePlugin {
                 TerrainGenerator,
                 //TestChunkGenerator,
                 CHUNK_SIZE,
-            >::default())?
+            >::new(self.game_config.chunk_generator_config))?
             .add_systems(
                 schedule::Startup,
                 (
@@ -283,9 +288,9 @@ fn init_player(config: Res<GameConfig>, mut commands: Commands) {
 #[derive(Clone, Copy, Debug, Default, Component)]
 struct DebugOverlay;
 
-fn init_debug_overlay(mut fps_counter_config: ResMut<FpsCounterConfig>, mut commands: Commands) {
-    fps_counter_config.measurement_inverval = Duration::from_millis(100);
-    commands.spawn((Text::default(), TextSize { height: 2.0 }, DebugOverlay));
+fn init_debug_overlay(mut _fps_counter_config: ResMut<FpsCounterConfig>, mut commands: Commands) {
+    //fps_counter_config.measurement_inverval = Duration::from_millis(100);
+    //commands.spawn((Text::default(), TextSize { height: 2.0 }, DebugOverlay));
 
     commands
         .spawn((
@@ -302,6 +307,7 @@ fn init_debug_overlay(mut fps_counter_config: ResMut<FpsCounterConfig>, mut comm
             Text::from("Hello World!"),
             TextSize { height: 2.0 },
             Style::default(),
+            LeafMeasure::default(),
         ));
 }
 

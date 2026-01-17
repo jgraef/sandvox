@@ -92,7 +92,7 @@ use crate::{
         camera::CameraPlugin,
         fps_counter::FpsCounterPlugin,
         mesh::MeshPlugin,
-        text::TextPlugin,
+        text::FontPlugin,
         texture_atlas::AtlasPlugin,
     },
     sound::SoundPlugin,
@@ -145,7 +145,7 @@ impl App {
             })?
             .add_plugin(FpsCounterPlugin::default())?
             .add_plugin(MeshPlugin)?
-            .add_plugin(TextPlugin {
+            .add_plugin(FontPlugin {
                 font: PathBuf::from("assets/cozette.bdf"),
             })?
             .add_plugin(CameraPlugin)?

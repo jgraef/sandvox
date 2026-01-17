@@ -40,8 +40,10 @@ use crate::{
         plugin::WorldBuilder,
         schedule,
     },
-    render::RenderSystems,
-    ui::UiSurface,
+    ui::{
+        UiSurface,
+        UiSystems,
+    },
 };
 
 pub(super) fn setup_layout_systems(builder: &mut WorldBuilder) {
@@ -49,7 +51,7 @@ pub(super) fn setup_layout_systems(builder: &mut WorldBuilder) {
         schedule::Render,
         (initialize_layout_components, layout_trees)
             .chain()
-            .in_set(RenderSystems::BeginFrame),
+            .in_set(UiSystems::Render),
     );
 }
 
@@ -207,6 +209,7 @@ struct Node {
     cache: &'static mut Cache,
     leaf_measure: Option<&'static mut LeafMeasure>,
     debug_label: Option<&'static DebugLabel>,
+    children: Option<&'static Children>,
 }
 
 #[inline(always)]
@@ -222,7 +225,6 @@ fn entity_to_node_id(entity: Entity) -> NodeId {
 #[derive(Debug, SystemParam)]
 pub(super) struct Tree<'w, 's> {
     nodes: Query<'w, 's, Node>,
-    children: Query<'w, 's, &'static Children>,
 }
 
 impl<'w, 's> Tree<'w, 's> {
@@ -277,28 +279,33 @@ impl<'w, 's> LayoutPartialTree for Tree<'w, 's> {
         taffy::compute_cached_layout(self, node_id, inputs, |tree, node_id, inputs| {
             let node = tree.nodes.get_mut(node_id_to_entity(node_id)).unwrap();
 
-            if let Some(mut leaf_measure) = node.leaf_measure {
-                taffy::compute_leaf_layout(
-                    inputs,
-                    &**node.style,
-                    |_calc_ptr, _parent_size| 0.0,
-                    |known_dimensions, available_space| {
-                        let measured_size = leaf_measure.measured_size();
-                        *leaf_measure = LeafMeasure::Pending {
-                            known_dimensions,
-                            available_space,
-                        };
-                        measured_size.unwrap_or_default()
-                    },
-                )
-            }
-            else {
+            if node.children.is_some() {
                 match node.style.display {
                     taffy::Display::Block => taffy::compute_block_layout(tree, node_id, inputs),
                     taffy::Display::Flex => taffy::compute_flexbox_layout(tree, node_id, inputs),
                     taffy::Display::Grid => taffy::compute_grid_layout(tree, node_id, inputs),
                     taffy::Display::None => taffy::compute_hidden_layout(tree, node_id),
                 }
+            }
+            else {
+                taffy::compute_leaf_layout(
+                    inputs,
+                    &**node.style,
+                    |_calc_ptr, _parent_size| 0.0,
+                    |known_dimensions, available_space| {
+                        let mut measured_size = None;
+
+                        if let Some(mut leaf_measure) = node.leaf_measure {
+                            measured_size = leaf_measure.measured_size();
+                            *leaf_measure = LeafMeasure::Pending {
+                                known_dimensions,
+                                available_space,
+                            };
+                        }
+
+                        measured_size.unwrap_or_default()
+                    },
+                )
             }
         })
     }
@@ -313,21 +320,26 @@ impl<'w, 's> TraversePartialTree for Tree<'w, 's> {
     fn child_ids(&self, node_id: NodeId) -> Self::ChildIter<'_> {
         ChildIter {
             inner: self
-                .children
+                .nodes
                 .get(node_id_to_entity(node_id))
                 .ok()
+                .and_then(|node| node.children)
                 .map_or([].iter(), |children| children.iter()),
         }
     }
 
     fn child_count(&self, node_id: NodeId) -> usize {
-        self.children
+        self.nodes
             .get(node_id_to_entity(node_id))
+            .ok()
+            .and_then(|node| node.children)
             .map_or(0, |children| children.len())
     }
 
     fn get_child_id(&self, node_id: NodeId, index: usize) -> NodeId {
-        entity_to_node_id(self.children.get(node_id_to_entity(node_id)).unwrap()[index])
+        let node = self.nodes.get(node_id_to_entity(node_id)).unwrap();
+        let children = node.children.unwrap();
+        entity_to_node_id(children[index])
     }
 }
 
