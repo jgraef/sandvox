@@ -1,11 +1,14 @@
 use bevy_ecs::{
     component::Component,
     entity::Entity,
-    message::MessageReader,
+    name::NameOrEntity,
+    query::{
+        Changed,
+        Without,
+    },
     system::{
         Commands,
-        ParamSet,
-        Query,
+        Populated,
         Res,
     },
 };
@@ -14,71 +17,36 @@ use palette::Srgba;
 
 use crate::{
     app::{
-        WindowEvent,
         WindowHandle,
         WindowSize,
     },
     render::{
         RenderConfig,
-        camera::CameraProjection,
+        frame::FrameUniform,
     },
     wgpu::WgpuContext,
 };
 
-pub fn handle_window_events(
+pub(super) fn create_surfaces(
     wgpu: Res<WgpuContext>,
     config: Res<RenderConfig>,
-    mut messages: MessageReader<WindowEvent>,
-    mut params: ParamSet<(
-        (
-            Query<(&WindowHandle, &WindowSize, Option<&AttachedCamera>)>,
-            Query<&mut CameraProjection>,
-        ),
-        (
-            Query<(&mut Surface, &WindowSize, Option<&AttachedCamera>)>,
-            Query<&mut CameraProjection>,
-        ),
-    )>,
+    windows: Populated<(NameOrEntity, &WindowHandle, &WindowSize), Without<Surface>>,
     mut commands: Commands,
 ) {
-    for message in messages.read() {
-        match message {
-            WindowEvent::Created { window } => {
-                let entity = *window;
-                let (windows, mut cameras) = params.p0();
+    for (entity, window_handle, window_size) in windows {
+        tracing::info!(?entity, "creating surface");
 
-                let (window, window_size, camera) = windows.get(entity).unwrap();
+        let surface = Surface::new(&wgpu, &window_handle, window_size.size, &config);
+        commands.entity(entity.entity).insert(surface);
+    }
+}
 
-                let surface = Surface::new(&wgpu, window, window_size.size, &config);
-                commands.entity(entity).insert(surface);
-
-                if let Some(camera) = camera
-                    && let Ok(mut camera) = cameras.get_mut(camera.0)
-                {
-                    camera.set_viewport(window_size.size);
-                }
-            }
-            WindowEvent::Resized { window, size } => {
-                let (mut surfaces, mut cameras) = params.p1();
-                if let Ok((mut surface, window_size, camera)) = surfaces.get_mut(*window) {
-                    surface.resize(&wgpu, *size);
-
-                    if let Some(camera) = camera
-                        && let Ok(mut camera) = cameras.get_mut(camera.0)
-                    {
-                        camera.set_viewport(window_size.size);
-                    }
-                }
-                else {
-                    // fixme: this can happen if we create the surface and
-                    // immediately need to resize it in the same frame.
-                    // to fix this we can have separate message queues for
-                    // created and update events. then we process the created
-                    // events first
-                }
-            }
-            _ => {}
-        }
+// todo: this should be handled by UI I think
+pub(super) fn update_viewport(
+    windows: Populated<(&mut FrameUniform, &WindowSize), Changed<WindowSize>>,
+) {
+    for (mut frame_uniform, window_size) in windows {
+        frame_uniform.set_viewport_size(window_size.size.cast());
     }
 }
 

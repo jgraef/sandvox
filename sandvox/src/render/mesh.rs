@@ -53,11 +53,13 @@ use crate::{
     render::{
         RenderSystems,
         camera::{
-            CameraBindGroupLayout,
             CameraFrustrum,
             FrustrumCulled,
         },
-        frame::Frame,
+        frame::{
+            Frame,
+            FrameUniformLayout,
+        },
         surface::{
             AttachedCamera,
             Surface,
@@ -275,36 +277,45 @@ struct MeshRenderPipelineShared {
     shader: wgpu::ShaderModule,
 }
 
-impl MeshRenderPipelineShared {
-    fn new(
-        wgpu: &WgpuContext,
-        camera_bind_group_layout: &wgpu::BindGroupLayout,
-        atlas_bind_group_layout: &wgpu::BindGroupLayout,
-    ) -> Self {
-        let layout = wgpu
-            .device
-            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("mesh"),
-                bind_group_layouts: &[&camera_bind_group_layout, &atlas_bind_group_layout],
-                immediate_size: 0,
-            });
-
-        let shader = wgpu
-            .device
-            .create_shader_module(wgpu::include_wgsl!("mesh.wgsl"));
-
-        Self { layout, shader }
-    }
-}
-
 #[derive(Debug, Component)]
 struct MeshRenderPipelinePerSurface {
     pipeline: wgpu::RenderPipeline,
     wireframe_pipeline: wgpu::RenderPipeline,
 }
 
-impl MeshRenderPipelinePerSurface {
-    fn new(wgpu: &WgpuContext, shared: &MeshRenderPipelineShared, surface: &Surface) -> Self {
+fn create_mesh_render_pipeline_shared(
+    wgpu: Res<WgpuContext>,
+    frame_uniform_layout: Res<FrameUniformLayout>,
+    atlas: Res<Atlas>,
+    mut commands: Commands,
+) {
+    let layout = wgpu
+        .device
+        .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("mesh"),
+            bind_group_layouts: &[
+                &frame_uniform_layout.bind_group_layout,
+                &atlas.bind_group_layout(),
+            ],
+            immediate_size: 0,
+        });
+
+    let shader = wgpu
+        .device
+        .create_shader_module(wgpu::include_wgsl!("mesh.wgsl"));
+
+    commands.insert_resource(MeshRenderPipelineShared { layout, shader });
+}
+
+fn create_mesh_render_pipeline_for_surfaces(
+    wgpu: Res<WgpuContext>,
+    shared: Res<MeshRenderPipelineShared>,
+    surfaces: Populated<(Entity, NameOrEntity, &Surface), Without<MeshRenderPipelinePerSurface>>,
+    mut commands: Commands,
+) {
+    for (entity, name, surface) in surfaces {
+        tracing::trace!(surface = %name, "creating mesh render pipeline for surface");
+
         let pipeline = wgpu
             .device
             .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -389,38 +400,12 @@ impl MeshRenderPipelinePerSurface {
                     cache: None,
                 });
 
-        Self {
-            pipeline,
-            wireframe_pipeline,
-        }
-    }
-}
-
-fn create_mesh_render_pipeline_shared(
-    wgpu: Res<WgpuContext>,
-    camera_bind_group_layout: Res<CameraBindGroupLayout>,
-    atlas: Res<Atlas>,
-    mut commands: Commands,
-) {
-    commands.insert_resource(MeshRenderPipelineShared::new(
-        &wgpu,
-        &camera_bind_group_layout.bind_group_layout,
-        atlas.bind_group_layout(),
-    ));
-}
-
-fn create_mesh_render_pipeline_for_surfaces(
-    wgpu: Res<WgpuContext>,
-    shared: Res<MeshRenderPipelineShared>,
-    surfaces: Populated<(Entity, NameOrEntity, &Surface), Without<MeshRenderPipelinePerSurface>>,
-    mut commands: Commands,
-) {
-    for (entity, name, surface) in surfaces {
-        tracing::trace!(surface = %name, "creating mesh render pipeline for surface");
-
         commands
             .entity(entity)
-            .insert(MeshRenderPipelinePerSurface::new(&wgpu, &shared, surface));
+            .insert(MeshRenderPipelinePerSurface {
+                pipeline,
+                wireframe_pipeline,
+            });
     }
 }
 

@@ -24,12 +24,10 @@ pub(super) fn initialize_staging(wgpu: Res<WgpuContext>, mut commands: Commands)
 
 /// Flushes the current staging transaction.
 ///
-/// This is done in the setup schedule after rendering setup systems have run,
-/// and when a render pass is submitted.
+/// This is done in the setup schedule after rendering setup systems have run.
+/// During rendering this is done in `end_frames`
 pub(super) fn flush_staging(wgpu: Res<WgpuContext>, mut staging: ResMut<Staging>) {
-    let staging = std::mem::replace(&mut *staging, Staging::new(&wgpu));
-    let command_encoder = staging.staging_transaction.commit();
-    wgpu.queue.submit([command_encoder.finish()]);
+    wgpu.queue.submit([staging.flush(&wgpu).finish()]);
 }
 
 // rename to `RenderStaging`? we think this should be only used for rendering
@@ -64,6 +62,11 @@ impl Staging {
     // transaction per thread possibly.
     pub fn command_encoder_mut(&mut self) -> &mut wgpu::CommandEncoder {
         &mut self.staging_transaction.command_encoder
+    }
+
+    pub(super) fn flush(&mut self, wgpu: &WgpuContext) -> wgpu::CommandEncoder {
+        let staging = std::mem::replace(self, Self::new(&wgpu));
+        staging.staging_transaction.commit()
     }
 }
 

@@ -1,37 +1,33 @@
 use std::f32::consts::FRAC_PI_4;
 
 use bevy_ecs::{
+    change_detection::{
+        DetectChanges,
+        Ref,
+    },
     component::Component,
     entity::Entity,
     query::{
         Changed,
         Or,
     },
-    resource::Resource,
     schedule::IntoScheduleConfigs,
     system::{
         Commands,
-        Query,
-        Res,
+        Populated,
     },
-};
-use bytemuck::{
-    Pod,
-    Zeroable,
-    bytes_of,
 };
 use color_eyre::eyre::Error;
 use nalgebra::{
     Isometry3,
-    Matrix4,
     Perspective3,
     Point2,
     Point3,
     Vector2,
 };
-use wgpu::util::DeviceExt;
 
 use crate::{
+    app::WindowSize,
     collide::{
         Aabb,
         frustrum::Frustrum,
@@ -44,24 +40,26 @@ use crate::{
         schedule,
         transform::GlobalTransform,
     },
-    render::RenderSystems,
-    wgpu::WgpuContext,
+    render::{
+        RenderSystems,
+        frame::FrameUniform,
+        surface::AttachedCamera,
+    },
 };
 
 pub struct CameraPlugin;
 
 impl Plugin for CameraPlugin {
     fn setup(&self, builder: &mut WorldBuilder) -> Result<(), Error> {
-        builder
-            .add_systems(
-                schedule::Startup,
-                create_camera_bind_group_layout.in_set(RenderSystems::Setup),
-            )
-            .add_systems(
-                schedule::Render,
-                (update_camera_bind_groups, update_camera_frustrums)
-                    .before(RenderSystems::BeginFrame),
-            );
+        builder.add_systems(
+            schedule::Render,
+            (
+                update_camera_projection,
+                (update_camera_matrices, update_camera_frustrums)
+                    .before(RenderSystems::BeginFrame)
+                    .after(update_camera_projection),
+            ),
+        );
 
         Ok(())
     }
@@ -143,123 +141,47 @@ impl Default for CameraProjection {
     }
 }
 
-#[derive(Clone, Copy, Debug, Pod, Zeroable)]
-#[repr(C)]
-struct CameraData {
-    matrix: Matrix4<f32>,
-}
-
-impl CameraData {
-    fn new(projection: &CameraProjection, transform: &Isometry3<f32>) -> Self {
-        let transform = transform.inverse().to_homogeneous();
-
-        let projection = {
-            let mut projection = projection.projection.to_homogeneous();
-            // nalgebra assumes we're using a right-handed world coordinate system and a
-            // left-handed NDC and thus flips the z-axis. Undo this here.
-            projection[(2, 2)] *= -1.0;
-            projection[(3, 2)] = 1.0;
-            projection
-        };
-
-        let matrix = projection * transform;
-
-        Self { matrix }
-    }
-}
-
-#[derive(Clone, Debug, Component)]
-pub struct CameraBindGroup {
-    pub buffer: wgpu::Buffer,
-    pub bind_group: wgpu::BindGroup,
-}
-
-impl CameraBindGroup {
-    fn new(
-        wgpu: &WgpuContext,
-        camera_bind_group_layout: &wgpu::BindGroupLayout,
-        data: &CameraData,
-    ) -> Self {
-        let buffer = wgpu
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("camera"),
-                contents: bytemuck::bytes_of(data),
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            });
-
-        let bind_group = wgpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("camera"),
-            layout: camera_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: buffer.as_entire_binding(),
-            }],
-        });
-
-        Self { buffer, bind_group }
-    }
-
-    fn update(&self, wgpu: &WgpuContext, data: &CameraData) {
-        wgpu.queue.write_buffer(&self.buffer, 0, bytes_of(data));
-    }
-}
-
-#[derive(Clone, Debug, Resource)]
-pub struct CameraBindGroupLayout {
-    pub bind_group_layout: wgpu::BindGroupLayout,
-}
-
-fn create_camera_bind_group_layout(wgpu: Res<WgpuContext>, mut commands: Commands) {
-    let bind_group_layout =
-        wgpu.device
-            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("camera"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-            });
-
-    commands.insert_resource(CameraBindGroupLayout { bind_group_layout });
-}
-
-fn update_camera_bind_groups(
-    wgpu: Res<WgpuContext>,
-    camera_bind_group_layout: Res<CameraBindGroupLayout>,
-    changed: Query<
-        (
-            Entity,
-            &CameraProjection,
-            &GlobalTransform,
-            Option<&CameraBindGroup>,
-        ),
-        Or<(Changed<CameraProjection>, Changed<GlobalTransform>)>,
-    >,
-    mut commands: Commands,
+fn update_camera_projection(
+    windows: Populated<(&WindowSize, &AttachedCamera), Changed<WindowSize>>,
+    mut cameras: Populated<&mut CameraProjection>,
 ) {
-    for (entity, projection, transform, bind_group) in changed {
-        // update bind group
-        let data = CameraData::new(&projection, transform.isometry());
-        if let Some(bind_group) = bind_group {
-            bind_group.update(&wgpu, &data);
+    for (window_size, camera) in windows {
+        if let Ok(mut projection) = cameras.get_mut(camera.0) {
+            projection.set_viewport(window_size.size);
         }
-        else {
-            let bind_group =
-                CameraBindGroup::new(&wgpu, &camera_bind_group_layout.bind_group_layout, &data);
-            commands.entity(entity).insert(bind_group);
+    }
+}
+
+fn update_camera_matrices(
+    changed: Populated<(Ref<CameraProjection>, Ref<GlobalTransform>)>,
+    frame_uniforms: Populated<(&mut FrameUniform, Ref<AttachedCamera>)>,
+) {
+    for (mut frame_uniform, attached_camera) in frame_uniforms {
+        if let Ok((projection, transform)) = changed.get(attached_camera.0) {
+            if attached_camera.is_changed() || projection.is_changed() || transform.is_changed() {
+                let camera_matrix = {
+                    let transform = transform.isometry().inverse().to_homogeneous();
+
+                    let projection = {
+                        let mut projection = projection.projection.to_homogeneous();
+                        // nalgebra assumes we're using a right-handed world coordinate system and a
+                        // left-handed NDC and thus flips the z-axis. Undo this here.
+                        projection[(2, 2)] *= -1.0;
+                        projection[(3, 2)] = 1.0;
+                        projection
+                    };
+
+                    projection * transform
+                };
+
+                frame_uniform.set_camera_matrix(camera_matrix);
+            }
         }
     }
 }
 
 fn update_camera_frustrums(
-    changed: Query<
+    changed: Populated<
         (Entity, &CameraProjection, Option<&mut CameraFrustrum>),
         Or<(Changed<CameraProjection>, Changed<GlobalTransform>)>,
     >,

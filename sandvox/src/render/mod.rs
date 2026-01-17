@@ -28,11 +28,20 @@ use crate::{
         schedule,
     },
     render::{
+        frame::{
+            begin_frames,
+            create_frame_uniform_layout,
+            create_frames,
+            end_frames,
+        },
         staging::{
             flush_staging,
             initialize_staging,
         },
-        surface::handle_window_events,
+        surface::{
+            create_surfaces,
+            update_viewport,
+        },
     },
     util::serde::default_true,
     wgpu::WgpuSystems,
@@ -49,7 +58,7 @@ impl Plugin for RenderPlugin {
             .add_systems(
                 schedule::Startup,
                 (
-                    initialize_staging
+                    (initialize_staging, create_frame_uniform_layout)
                         .after(WgpuSystems::CreateContext)
                         .before(RenderSystems::Setup),
                     flush_staging.after(RenderSystems::Setup),
@@ -58,9 +67,11 @@ impl Plugin for RenderPlugin {
             .add_systems(
                 schedule::Render,
                 (
-                    handle_window_events.before(RenderSystems::BeginFrame),
-                    frame::begin_frame.in_set(RenderSystems::BeginFrame),
-                    frame::end_frame.in_set(RenderSystems::EndFrame),
+                    (update_viewport, create_surfaces).before(RenderSystems::BeginFrame),
+                    (create_frames, begin_frames)
+                        .chain()
+                        .in_set(RenderSystems::BeginFrame),
+                    end_frames.in_set(RenderSystems::EndFrame),
                 ),
             )
             .configure_system_sets(

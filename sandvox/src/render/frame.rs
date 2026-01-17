@@ -1,53 +1,121 @@
 use std::time::Instant;
 
 use bevy_ecs::{
+    change_detection::{
+        DetectChanges,
+        Ref,
+    },
     component::Component,
     entity::Entity,
     name::NameOrEntity,
+    query::{
+        With,
+        Without,
+    },
+    resource::Resource,
     system::{
         Commands,
         Local,
+        Populated,
         Query,
         Res,
         ResMut,
     },
 };
+use bytemuck::{
+    Pod,
+    Zeroable,
+};
+use nalgebra::{
+    Matrix4,
+    Vector2,
+};
 use palette::Srgba;
 
 use crate::{
     render::{
-        camera::CameraBindGroup,
-        flush_staging,
         staging::Staging,
         surface::{
-            AttachedCamera,
             ClearColor,
             Surface,
         },
     },
-    wgpu::WgpuContext,
+    wgpu::{
+        WgpuContext,
+        buffer::WriteStaging,
+    },
 };
 
-pub fn begin_frame(
-    surfaces: Query<(
-        Entity,
-        &Surface,
-        Option<&ClearColor>,
-        Option<&AttachedCamera>,
-    )>,
-    cameras: Query<&CameraBindGroup>,
+pub(super) fn create_frame_uniform_layout(wgpu: Res<WgpuContext>, mut commands: Commands) {
+    let bind_group_layout =
+        wgpu.device
+            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("frame uniform"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+
+    commands.insert_resource(FrameUniformLayout { bind_group_layout });
+}
+
+pub(super) fn create_frames(
+    wgpu: Res<WgpuContext>,
+    frame_uniform_layout: Res<FrameUniformLayout>,
+    surfaces: Populated<Entity, (With<Surface>, Without<Frame>)>,
+    mut commands: Commands,
+) {
+    for entity in surfaces {
+        let uniform_buffer = wgpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("frame uniform"),
+            size: size_of::<FrameUniformData>() as wgpu::BufferAddress,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::UNIFORM,
+            mapped_at_creation: false,
+        });
+
+        let uniform_bind_group = wgpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("frame uniform"),
+            layout: &frame_uniform_layout.bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform_buffer.as_entire_binding(),
+            }],
+        });
+
+        commands.entity(entity).insert((
+            Frame { inner: None },
+            FrameUniform {
+                bind_group: uniform_bind_group,
+                buffer: uniform_buffer,
+                data: Zeroable::zeroed(),
+            },
+        ));
+    }
+}
+
+pub(super) fn begin_frames(
+    wgpu: Res<WgpuContext>,
+    surfaces: Populated<(&Surface, Option<&ClearColor>, &mut Frame, Ref<FrameUniform>)>,
     // todo: make it work with Res
     mut staging: ResMut<Staging>,
-    mut commands: Commands,
 ) {
     let start_time = Instant::now();
 
-    for (surface_entity, surface, clear_color, camera) in surfaces {
-        /*let mut command_encoder =
-        wgpu.device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("frame"),
-            });*/
+    for (surface, clear_color, mut frame, frame_uniform) in surfaces {
+        assert!(frame.inner.is_none());
+
+        let mut command_encoder =
+            wgpu.device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("frame"),
+                });
 
         let surface_texture = surface.surface_texture();
         let surface_texture_view =
@@ -58,8 +126,7 @@ pub fn begin_frame(
                     ..Default::default()
                 });
 
-        let mut render_pass = staging
-            .command_encoder_mut()
+        let mut render_pass = command_encoder
             .begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("frame"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -87,61 +154,65 @@ pub fn begin_frame(
             })
             .forget_lifetime();
 
-        // todo: update camera uniform buffer and bind it
-        let mut has_camera = false;
-        if let Some(camera) = camera
-            && let Ok(camera_bind_group) = cameras.get(camera.0)
-        {
-            render_pass.set_bind_group(0, Some(&camera_bind_group.bind_group), &[]);
-            has_camera = true;
+        // update frame uniform buffer
+        if frame_uniform.is_changed() {
+            staging.write_buffer_from_slice(
+                frame_uniform.buffer.slice(..),
+                bytemuck::bytes_of(&frame_uniform.data),
+            );
         }
 
-        // debug
-        assert!(has_camera, "frame without camera");
+        // bind frame uniform buffer
+        render_pass.set_bind_group(0, Some(&frame_uniform.bind_group), &[]);
 
-        commands.entity(surface_entity).insert(Frame {
-            inner: Some(FrameInner {
-                //command_encoder,
-                render_pass,
-                surface_texture,
-                start_time,
-                has_camera,
-            }),
+        frame.inner = Some(FrameInner {
+            command_encoder,
+            render_pass,
+            surface_texture,
+            start_time,
         });
     }
 }
 
-pub fn end_frame(
+pub fn end_frames(
     wgpu: Res<WgpuContext>,
     frames: Query<(NameOrEntity, &mut Frame)>,
+    mut command_buffers: Local<Vec<wgpu::CommandBuffer>>,
     mut present_surfaces: Local<Vec<wgpu::SurfaceTexture>>,
-    staging: ResMut<Staging>,
+    mut staging: ResMut<Staging>,
 ) {
+    assert!(command_buffers.is_empty());
     assert!(present_surfaces.is_empty());
 
-    // end all render passes and get the surface textures
-    present_surfaces.extend(frames.into_iter().filter_map(|(name, mut frame)| {
-        frame.inner.take().map(
-            |FrameInner {
-                 render_pass,
-                 surface_texture,
-                 start_time,
-                 has_camera: _,
-             }| {
-                // drop the render pass explicitely since we'll submit the command encoder next
-                drop(render_pass);
-
-                let end_time = Instant::now();
-                let time = end_time - start_time;
-                tracing::trace!(surface = %name, ?time, "rendered frame");
-
-                surface_texture
-            },
-        )
-    }));
-
     // flush staging. this also submits the command encoder
-    flush_staging(wgpu, staging);
+    command_buffers.push(staging.flush(&wgpu).finish());
+
+    // end all render passes and get the surface textures
+    for (name, mut frame) in frames {
+        if let Some(FrameInner {
+            command_encoder,
+            render_pass,
+            surface_texture,
+            start_time,
+        }) = frame.inner.take()
+        {
+            // drop the render pass explicitely since we'll submit the command encoder next
+            drop(render_pass);
+
+            // finish the frame's renderpass command encoder
+            command_buffers.push(command_encoder.finish());
+            // and present after we submit
+            present_surfaces.push(surface_texture);
+
+            let end_time = Instant::now();
+            let time = end_time - start_time;
+
+            tracing::trace!(surface = %name, ?time, "rendered frame");
+        }
+    }
+
+    // submit all command buffers
+    wgpu.queue.submit(command_buffers.drain(..));
 
     // present surfaces
     for surface_texture in present_surfaces.drain(..) {
@@ -155,6 +226,7 @@ pub struct Frame {
 }
 
 impl Frame {
+    #[allow(dead_code)]
     fn inner(&self) -> &FrameInner {
         self.inner.as_ref().expect("No active frame")
     }
@@ -166,19 +238,14 @@ impl Frame {
     pub fn render_pass_mut(&mut self) -> &mut wgpu::RenderPass<'static> {
         &mut self.inner_mut().render_pass
     }
-
-    pub fn has_camera(&self) -> bool {
-        self.inner().has_camera
-    }
 }
 
 #[derive(Debug)]
 struct FrameInner {
-    //command_encoder: wgpu::CommandEncoder,
+    command_encoder: wgpu::CommandEncoder,
     render_pass: wgpu::RenderPass<'static>,
     surface_texture: wgpu::SurfaceTexture,
     start_time: Instant,
-    has_camera: bool,
 }
 
 fn srgba_to_wgpu(color: Srgba<f32>) -> wgpu::Color {
@@ -188,4 +255,34 @@ fn srgba_to_wgpu(color: Srgba<f32>) -> wgpu::Color {
         b: color.blue as f64,
         a: color.alpha as f64,
     }
+}
+
+#[derive(Debug, Resource)]
+pub struct FrameUniformLayout {
+    pub bind_group_layout: wgpu::BindGroupLayout,
+}
+
+#[derive(Debug, Component)]
+pub struct FrameUniform {
+    bind_group: wgpu::BindGroup,
+    buffer: wgpu::Buffer,
+    data: FrameUniformData,
+}
+
+impl FrameUniform {
+    pub fn set_viewport_size(&mut self, viewport_size: Vector2<f32>) {
+        self.data.viewport_size = viewport_size;
+    }
+
+    pub fn set_camera_matrix(&mut self, camera_matrix: Matrix4<f32>) {
+        self.data.camera_matrix = camera_matrix;
+    }
+}
+
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+#[repr(C)]
+struct FrameUniformData {
+    viewport_size: Vector2<f32>,
+    _padding: [u32; 2],
+    camera_matrix: Matrix4<f32>,
 }

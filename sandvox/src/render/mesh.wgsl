@@ -41,13 +41,15 @@ struct VertexOutputWireframe {
     fragment_position: vec4f,
 }
 
-struct Camera {
-    matrix: mat4x4f,
+struct FrameUniform {
+    viewport_size: vec2f,
+    // padding: 8 bytes
+    camera_matrix: mat4x4f,
 }
 
 @group(0)
 @binding(0)
-var<uniform> camera: Camera;
+var<uniform> frame_uniform: FrameUniform;
 
 @group(1)
 @binding(0)
@@ -74,7 +76,7 @@ fn vertex_main(input: VertexInput) -> VertexOutput {
     let world_position = model_matrix * input.position;
     let normal = model_matrix * input.normal;
 
-    let fragment_position = camera.matrix * world_position;
+    let fragment_position = frame_uniform.camera_matrix * world_position;
 
     return VertexOutput(
         fragment_position,
@@ -103,7 +105,7 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4f {
 fn vertex_main_wireframe(input: VertexInput) -> VertexOutputWireframe {
     let model_matrix = mat4x4f(input.model0, input.model1, input.model2, input.model3);
     let world_position = model_matrix * input.position;
-    let fragment_position = camera.matrix * world_position;
+    let fragment_position = frame_uniform.camera_matrix * world_position;
 
     return VertexOutputWireframe(
         fragment_position,
