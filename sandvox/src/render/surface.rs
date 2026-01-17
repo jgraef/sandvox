@@ -120,14 +120,20 @@ impl Surface {
         }
     }
 
+    pub fn size(&self) -> Vector2<u32> {
+        Vector2::new(self.config.width, self.config.height)
+    }
+
     pub fn resize(&mut self, wgpu: &WgpuContext, size: Vector2<u32>) {
-        tracing::debug!(?size, "resizing surface");
+        if size != self.size() {
+            tracing::debug!(?size, "resizing surface");
 
-        self.config.width = size.x;
-        self.config.height = size.y;
-        self.surface.configure(&wgpu.device, &self.config);
+            self.config.width = size.x;
+            self.config.height = size.y;
+            self.surface.configure(&wgpu.device, &self.config);
 
-        self.depth_texture = create_depth_texture(wgpu, size, self.depth_stencil_format);
+            self.depth_texture = create_depth_texture(wgpu, size, self.depth_stencil_format);
+        }
     }
 
     pub fn surface_texture(&self) -> wgpu::SurfaceTexture {
