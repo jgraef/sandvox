@@ -15,4 +15,4 @@ Thumbs.db
 
 /rustc-ice-*
 /tmp
-
+/config.toml
