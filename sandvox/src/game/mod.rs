@@ -93,7 +93,6 @@ use crate::{
         },
     },
     ui::{
-        LeafMeasure,
         UiSurface,
         layout::Style,
     },
@@ -303,12 +302,21 @@ fn init_debug_overlay(mut _fps_counter_config: ResMut<FpsCounterConfig>, mut com
                 style
             },
         ))
-        .with_child((
-            Text::from("Hello World!"),
-            TextSize { height: 2.0 },
-            Style::default(),
-            LeafMeasure::default(),
-        ));
+        .with_children(|spawner| {
+            /*spawner.spawn((
+                Text::from("Hello World!"),
+                TextSize { height: 2.0 },
+                Style::default(),
+                LeafMeasure::default(),
+            ));*/
+
+            spawner.spawn((
+                Text::default(),
+                TextSize { height: 2.0 },
+                Style::default(),
+                DebugOverlay,
+            ));
+        });
 }
 
 fn update_debug_overlay(

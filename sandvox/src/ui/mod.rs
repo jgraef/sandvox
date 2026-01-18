@@ -5,6 +5,10 @@ mod text;
 use bevy_ecs::{
     component::Component,
     entity::Entity,
+    query::{
+        AnyOf,
+        QueryData,
+    },
     schedule::{
         IntoScheduleConfigs,
         SystemSet,
@@ -27,8 +31,14 @@ use crate::{
     },
     render::RenderSystems,
     ui::{
-        layout::setup_layout_systems,
-        text::setup_text_systems,
+        layout::{
+            LayoutConfig,
+            setup_layout_systems,
+        },
+        text::{
+            TextLeafMeasure,
+            setup_text_systems,
+        },
     },
 };
 
@@ -45,11 +55,21 @@ use crate::{
 */
 
 #[derive(Clone, Copy, Debug, Default)]
-pub struct UiPlugin;
+pub struct UiPlugin<L = DefaultLeafMeasure> {
+    pub leaf_measure: L,
+}
 
-impl Plugin for UiPlugin {
+impl<L> Plugin for UiPlugin<L>
+where
+    L: LeafMeasure + Clone,
+{
     fn setup(&self, builder: &mut WorldBuilder) -> Result<(), Error> {
-        setup_layout_systems(builder);
+        setup_layout_systems(
+            builder,
+            LayoutConfig {
+                leaf_measure: self.leaf_measure.clone(),
+            },
+        );
         setup_text_systems(builder);
 
         builder
@@ -65,6 +85,8 @@ impl Plugin for UiPlugin {
         Ok(())
     }
 }
+
+pub type DefaultUiPlugin = UiPlugin<DefaultLeafMeasure>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, SystemSet)]
 pub enum UiSystems {
@@ -110,3 +132,30 @@ where
     }
 }
 */
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct DefaultLeafMeasure {
+    pub text: TextLeafMeasure,
+}
+
+impl LeafMeasure for DefaultLeafMeasure {
+    type Data = <TextLeafMeasure as LeafMeasure>::Data;
+    type Node = AnyOf<(<TextLeafMeasure as LeafMeasure>::Node,)>;
+
+    fn measure(
+        &self,
+        leaf: &<Self::Node as QueryData>::Item<'_, '_>,
+        data: &<Self::Data as bevy_ecs::system::SystemParam>::Item<'_, '_>,
+        known_dimensions: taffy::Size<Option<f32>>,
+        available_space: taffy::Size<taffy::AvailableSpace>,
+    ) -> taffy::Size<f32> {
+        let (text,) = leaf;
+        if let Some(text) = text {
+            self.text
+                .measure(text, data, known_dimensions, available_space)
+        }
+        else {
+            unreachable!()
+        }
+    }
+}

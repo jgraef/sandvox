@@ -1,12 +1,15 @@
+use std::ops::Range;
+
 use bevy_ecs::{
-    change_detection::{
-        DetectChanges,
-        Ref,
-    },
     component::Component,
     entity::Entity,
     name::NameOrEntity,
-    query::Without,
+    query::{
+        Changed,
+        Or,
+        QueryData,
+        Without,
+    },
     resource::Resource,
     schedule::IntoScheduleConfigs,
     system::{
@@ -14,7 +17,6 @@ use bevy_ecs::{
         Local,
         Populated,
         Res,
-        ResMut,
     },
 };
 use bytemuck::{
@@ -38,7 +40,6 @@ use crate::{
             Frame,
             FrameBindGroupLayout,
         },
-        staging::Staging,
         surface::Surface,
         text::{
             Font,
@@ -46,6 +47,7 @@ use crate::{
             FontBindGroupLayout,
             FontSystems,
             Text,
+            TextSize,
         },
     },
     ui::{
@@ -58,6 +60,100 @@ use crate::{
     },
 };
 
+#[derive(Clone, Copy, Debug, Default)]
+pub struct TextLeafMeasure;
+
+impl LeafMeasure for TextLeafMeasure {
+    type Data = Res<'static, Font>;
+    type Node = (&'static TextSize, &'static TextLayout);
+
+    fn measure(
+        &self,
+        leaf: &<Self::Node as QueryData>::Item<'_, '_>,
+        data: &<Self::Data as bevy_ecs::system::SystemParam>::Item<'_, '_>,
+        known_dimensions: Size<Option<f32>>,
+        available_space: Size<AvailableSpace>,
+    ) -> Size<f32> {
+        tracing::debug!(?known_dimensions, ?available_space);
+
+        let (text_size, layout) = *leaf;
+        let font = &**data;
+
+        let displacement = font.glyph_displacement();
+        let displacement = Vector2::new(
+            text_size.height * displacement.x / displacement.y,
+            text_size.height,
+        );
+
+        let width_constraint = known_dimensions.width.or(match available_space.width {
+            AvailableSpace::MinContent | AvailableSpace::MaxContent => None,
+            AvailableSpace::Definite(width) => Some(width),
+        });
+        let width_constraint = width_constraint
+            .map(|width_constraint| (width_constraint / displacement.x).floor().max(1.0) as usize);
+
+        let mut line_width = 0;
+        let mut max_line_width = 0;
+        let mut num_lines = 0;
+        let mut is_first_chunk_on_line = true;
+
+        for chunk in &layout.chunks {
+            match chunk {
+                TextLayoutChunk::Glyphs {
+                    span: _,
+                    num_glyphs,
+                } => {
+                    if !is_first_chunk_on_line
+                        && width_constraint.is_some_and(|width_constraint| {
+                            line_width + *num_glyphs > width_constraint
+                        })
+                    {
+                        num_lines += 1;
+                        line_width = *num_glyphs;
+                    }
+                    else {
+                        line_width += *num_glyphs;
+                    }
+
+                    is_first_chunk_on_line = false;
+                    max_line_width = max_line_width.max(line_width);
+                }
+                TextLayoutChunk::Spaces { num_spaces } => {
+                    let num_spaces_on_this_line =
+                        width_constraint.map_or(*num_spaces, |width_constraint| {
+                            let min_spaces_on_this_line =
+                                if is_first_chunk_on_line { 1 } else { 0 };
+
+                            (width_constraint - line_width).max(min_spaces_on_this_line)
+                        });
+
+                    let num_spaces_on_next_line = *num_spaces - num_spaces_on_this_line;
+
+                    line_width += num_spaces_on_this_line;
+
+                    if num_spaces_on_next_line > 0 {
+                        max_line_width = max_line_width.max(line_width);
+                        num_lines += 1;
+                        line_width = num_spaces_on_next_line;
+                    }
+
+                    is_first_chunk_on_line = false;
+                }
+                TextLayoutChunk::Newlines { num_newlines } => {
+                    line_width = 0;
+                    num_lines += *num_newlines;
+                    is_first_chunk_on_line = true;
+                }
+            }
+        }
+
+        Size {
+            width: max_line_width as f32 * displacement.x,
+            height: num_lines as f32 * displacement.y,
+        }
+    }
+}
+
 pub(super) fn setup_text_systems(builder: &mut WorldBuilder) {
     builder
         .add_systems(
@@ -69,7 +165,8 @@ pub(super) fn setup_text_systems(builder: &mut WorldBuilder) {
         .add_systems(
             schedule::Render,
             (
-                text_layout.in_set(UiSystems::Layout),
+                //text_layout.in_set(UiSystems::Layout),
+                compute_text_layouts.before(UiSystems::Layout),
                 create_pipeline.in_set(RenderSystems::BeginFrame),
                 render_text.in_set(UiSystems::Render),
             ),
@@ -178,6 +275,104 @@ fn create_pipeline(
     }
 }
 
+fn compute_text_layouts(
+    font: Res<Font>,
+    texts: Populated<
+        (Entity, &Text, Option<&mut TextLayout>),
+        Or<(Changed<Text>, Without<TextLayout>)>,
+    >,
+    mut commands: Commands,
+    mut layout_run_buffer: Local<Vec<TextLayoutChunk>>,
+) {
+    for (entity, text, computed_text_layout) in texts {
+        tracing::debug!(?entity, text = text.text, "layout text");
+
+        assert!(layout_run_buffer.is_empty());
+
+        let mut characters = text.text.char_indices().peekable();
+
+        while let Some((start_index, character)) = characters.next() {
+            match character {
+                ' ' => {
+                    if let Some(TextLayoutChunk::Spaces { num_spaces }) =
+                        layout_run_buffer.last_mut()
+                    {
+                        *num_spaces += 1;
+                    }
+                    else {
+                        layout_run_buffer.push(TextLayoutChunk::Spaces { num_spaces: 1 });
+                    }
+                }
+                '\r' => {
+                    // nop
+                }
+                '\n' => {
+                    if let Some(TextLayoutChunk::Newlines { num_newlines }) =
+                        layout_run_buffer.last_mut()
+                    {
+                        *num_newlines += 1;
+                    }
+                    else {
+                        layout_run_buffer.push(TextLayoutChunk::Newlines { num_newlines: 1 });
+                    }
+                }
+                _ => {
+                    if let Some(_glyph_id) = font.glyph_id(character) {
+                        let end_index = characters
+                            .peek()
+                            .map_or_else(|| text.text.len(), |(index, _)| *index);
+
+                        if let Some(TextLayoutChunk::Glyphs { span, num_glyphs }) =
+                            layout_run_buffer.last_mut()
+                        {
+                            span.end = end_index;
+                            *num_glyphs += 1;
+                        }
+                        else {
+                            layout_run_buffer.push(TextLayoutChunk::Glyphs {
+                                span: start_index..end_index,
+                                num_glyphs: 1,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Some(mut computed_text_layout) = computed_text_layout {
+            computed_text_layout.chunks.clear();
+            computed_text_layout
+                .chunks
+                .extend(layout_run_buffer.drain(..));
+        }
+        else {
+            commands.entity(entity).insert(TextLayout {
+                chunks: std::mem::take(&mut *layout_run_buffer),
+            });
+        }
+    }
+}
+
+#[derive(Debug, Component)]
+pub struct TextLayout {
+    chunks: Vec<TextLayoutChunk>,
+}
+
+#[derive(Debug)]
+enum TextLayoutChunk {
+    Glyphs {
+        span: Range<usize>,
+        num_glyphs: usize,
+    },
+    Spaces {
+        num_spaces: usize,
+    },
+    Newlines {
+        num_newlines: usize,
+    },
+}
+
+/*
 /// System that performs text layout.
 ///
 /// This will do the leaf measurement and update glyph buffers for texts
@@ -205,14 +400,16 @@ fn text_layout(
         leaf_measure.respond_with(
             |known_dimensions: Size<Option<f32>>, available_space: Size<AvailableSpace>| {
                 if text.is_changed() {
-                    /*let width_constraint = known_dimensions.width.or(match available_space.width {
-                        AvailableSpace::MinContent => Some(0.0),
-                        AvailableSpace::MaxContent => None,
+                    tracing::debug!(?known_dimensions, ?available_space);
+
+                    let width_constraint = known_dimensions.width.or(match available_space.width {
+                        AvailableSpace::MinContent | AvailableSpace::MaxContent => None,
                         AvailableSpace::Definite(width) => Some(width),
-                    });*/
+                    });
+
                     // todo
-                    let _ = (known_dimensions, available_space);
-                    let width_constraint = None;
+                    //let _ = (known_dimensions, available_space);
+                    //let width_constraint = None;
 
                     tracing::debug!(?entity, text = text.text, ?width_constraint, "layout text");
 
@@ -326,7 +523,7 @@ fn text_layout(
             }
         }
     }
-}
+} */
 
 fn render_text(
     font: Res<FontBindGroup>,

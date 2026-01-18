@@ -17,11 +17,14 @@ use bevy_ecs::{
         With,
         Without,
     },
+    resource::Resource,
     schedule::IntoScheduleConfigs,
     system::{
         Commands,
         Populated,
         Query,
+        Res,
+        StaticSystemParam,
         SystemParam,
     },
 };
@@ -46,10 +49,26 @@ use crate::{
     },
 };
 
-pub(super) fn setup_layout_systems(builder: &mut WorldBuilder) {
-    builder.add_systems(
+pub trait LeafMeasure: Send + Sync + 'static {
+    type Data: SystemParam + Send + Sync + 'static;
+    type Node: QueryData + Send + Sync + 'static;
+
+    fn measure(
+        &self,
+        leaf: &<Self::Node as QueryData>::Item<'_, '_>,
+        data: &<Self::Data as SystemParam>::Item<'_, '_>,
+        known_dimensions: Size<Option<f32>>,
+        available_space: Size<AvailableSpace>,
+    ) -> Size<f32>;
+}
+
+pub(super) fn setup_layout_systems<L>(builder: &mut WorldBuilder, layout_config: LayoutConfig<L>)
+where
+    L: LeafMeasure,
+{
+    builder.insert_resource(layout_config).add_systems(
         schedule::Render,
-        (initialize_layout_components, layout_trees)
+        (initialize_layout_components, layout_trees::<L>)
             .chain()
             .in_set(UiSystems::Render),
     );
@@ -68,10 +87,12 @@ pub(super) fn setup_layout_systems(builder: &mut WorldBuilder) {
 /// ```no_run
 /// .run_if(any_match_filter::<Or<(Changed<Style>, Changed<LeafMeasure>)>>)
 /// ```
-fn layout_trees(
-    mut tree: Tree,
+fn layout_trees<L>(
+    mut tree: Tree<L>,
     roots: Populated<(Entity, &UiSurface), (With<Style>, Without<ChildOf>)>,
-) {
+) where
+    L: LeafMeasure,
+{
     for (entity, surface) in roots.iter() {
         tree.compute_root_layout(entity, surface.size);
     }
@@ -146,6 +167,7 @@ impl RoundedLayout {
 #[derive(Clone, Copy, Debug, Component)]
 struct DebugLabel(&'static str);
 
+/*
 #[derive(Debug, Component)]
 pub enum LeafMeasure {
     Pending {
@@ -198,18 +220,21 @@ impl LeafMeasure {
             LeafMeasure::Response { .. } => {}
         }
     }
-}
+} */
 
+// note: the derive macro for `QueryData` doesn't like it when we put the trait
+// bound `L: Leaf` into a where clause. we think this is a bug with bevy_ecs
+// that should be reported.
 #[derive(Debug, QueryData)]
 #[query_data(mutable)]
-struct Node {
+struct Node<L: LeafMeasure> {
     style: &'static Style,
     unrounded_layout: &'static mut UnroundedLayout,
     rounded_layout: &'static mut RoundedLayout,
     cache: &'static mut Cache,
-    leaf_measure: Option<&'static mut LeafMeasure>,
     debug_label: Option<&'static DebugLabel>,
     children: Option<&'static Children>,
+    leaf: Option<L::Node>,
 }
 
 #[inline(always)]
@@ -222,12 +247,25 @@ fn entity_to_node_id(entity: Entity) -> NodeId {
     entity.to_bits().into()
 }
 
-#[derive(Debug, SystemParam)]
-pub(super) struct Tree<'w, 's> {
-    nodes: Query<'w, 's, Node>,
+#[derive(Debug, Resource)]
+pub(super) struct LayoutConfig<L> {
+    pub leaf_measure: L,
 }
 
-impl<'w, 's> Tree<'w, 's> {
+#[derive(SystemParam)]
+pub(super) struct Tree<'w, 's, L>
+where
+    L: LeafMeasure,
+{
+    nodes: Query<'w, 's, Node<L>>,
+    leaf_data: StaticSystemParam<'w, 's, <L as LeafMeasure>::Data>,
+    layout_config: Res<'w, LayoutConfig<L>>,
+}
+
+impl<'w, 's, L> Tree<'w, 's, L>
+where
+    L: LeafMeasure,
+{
     fn compute_root_layout(&mut self, root: Entity, surface_size: Vector2<f32>) {
         let root = entity_to_node_id(root);
 
@@ -251,7 +289,10 @@ impl<'w, 's> Tree<'w, 's> {
     }
 }
 
-impl<'w, 's> LayoutPartialTree for Tree<'w, 's> {
+impl<'w, 's, L> LayoutPartialTree for Tree<'w, 's, L>
+where
+    L: LeafMeasure,
+{
     type CoreContainerStyle<'a>
         = &'a taffy::Style
     where
@@ -279,39 +320,45 @@ impl<'w, 's> LayoutPartialTree for Tree<'w, 's> {
         taffy::compute_cached_layout(self, node_id, inputs, |tree, node_id, inputs| {
             let node = tree.nodes.get_mut(node_id_to_entity(node_id)).unwrap();
 
-            if node.children.is_some() {
-                match node.style.display {
+            if let Some(leaf) = &node.leaf {
+                taffy::compute_leaf_layout(
+                    inputs,
+                    &**node.style,
+                    |_calc_ptr, _parent_size| 0.0,
+                    |known_dimensions, available_space| {
+                        tree.layout_config.leaf_measure.measure(
+                            leaf,
+                            &tree.leaf_data,
+                            known_dimensions,
+                            available_space,
+                        )
+                    },
+                )
+            }
+            else {
+                // we need to explicitely drop the node.
+                //
+                // Node is generic over L, so we don't know if it has a Drop impl, thus it can
+                // potentially live until the end of the scope. But we its lifetime to stop here
+                // so we can pass the tree to the recursive call.
+                let display = node.style.display;
+                drop(node);
+
+                match display {
                     taffy::Display::Block => taffy::compute_block_layout(tree, node_id, inputs),
                     taffy::Display::Flex => taffy::compute_flexbox_layout(tree, node_id, inputs),
                     taffy::Display::Grid => taffy::compute_grid_layout(tree, node_id, inputs),
                     taffy::Display::None => taffy::compute_hidden_layout(tree, node_id),
                 }
             }
-            else {
-                taffy::compute_leaf_layout(
-                    inputs,
-                    &**node.style,
-                    |_calc_ptr, _parent_size| 0.0,
-                    |known_dimensions, available_space| {
-                        let mut measured_size = None;
-
-                        if let Some(mut leaf_measure) = node.leaf_measure {
-                            measured_size = leaf_measure.measured_size();
-                            *leaf_measure = LeafMeasure::Pending {
-                                known_dimensions,
-                                available_space,
-                            };
-                        }
-
-                        measured_size.unwrap_or_default()
-                    },
-                )
-            }
         })
     }
 }
 
-impl<'w, 's> TraversePartialTree for Tree<'w, 's> {
+impl<'w, 's, L> TraversePartialTree for Tree<'w, 's, L>
+where
+    L: LeafMeasure,
+{
     type ChildIter<'a>
         = ChildIter<'a>
     where
@@ -343,9 +390,12 @@ impl<'w, 's> TraversePartialTree for Tree<'w, 's> {
     }
 }
 
-impl<'w, 's> taffy::TraverseTree for Tree<'w, 's> {}
+impl<'w, 's, L> taffy::TraverseTree for Tree<'w, 's, L> where L: LeafMeasure {}
 
-impl<'w, 's> CacheTree for Tree<'w, 's> {
+impl<'w, 's, L> CacheTree for Tree<'w, 's, L>
+where
+    L: LeafMeasure,
+{
     fn cache_get(
         &self,
         node_id: NodeId,
@@ -383,7 +433,10 @@ impl<'w, 's> CacheTree for Tree<'w, 's> {
     }
 }
 
-impl<'w, 's> taffy::LayoutBlockContainer for Tree<'w, 's> {
+impl<'w, 's, L> taffy::LayoutBlockContainer for Tree<'w, 's, L>
+where
+    L: LeafMeasure,
+{
     type BlockContainerStyle<'a>
         = &'a taffy::Style
     where
@@ -403,7 +456,10 @@ impl<'w, 's> taffy::LayoutBlockContainer for Tree<'w, 's> {
     }
 }
 
-impl<'w, 's> taffy::LayoutFlexboxContainer for Tree<'w, 's> {
+impl<'w, 's, L> taffy::LayoutFlexboxContainer for Tree<'w, 's, L>
+where
+    L: LeafMeasure,
+{
     type FlexboxContainerStyle<'a>
         = &'a taffy::Style
     where
@@ -423,7 +479,10 @@ impl<'w, 's> taffy::LayoutFlexboxContainer for Tree<'w, 's> {
     }
 }
 
-impl<'w, 's> taffy::LayoutGridContainer for Tree<'w, 's> {
+impl<'w, 's, L> taffy::LayoutGridContainer for Tree<'w, 's, L>
+where
+    L: LeafMeasure,
+{
     type GridContainerStyle<'a>
         = &'a taffy::Style
     where
@@ -443,7 +502,10 @@ impl<'w, 's> taffy::LayoutGridContainer for Tree<'w, 's> {
     }
 }
 
-impl<'w, 's> taffy::RoundTree for Tree<'w, 's> {
+impl<'w, 's, L> taffy::RoundTree for Tree<'w, 's, L>
+where
+    L: LeafMeasure,
+{
     fn get_unrounded_layout(&self, node_id: NodeId) -> taffy::Layout {
         self.nodes
             .get(node_id_to_entity(node_id))
@@ -463,7 +525,10 @@ impl<'w, 's> taffy::RoundTree for Tree<'w, 's> {
     }
 }
 
-impl<'w, 's> taffy::PrintTree for Tree<'w, 's> {
+impl<'w, 's, L> taffy::PrintTree for Tree<'w, 's, L>
+where
+    L: LeafMeasure,
+{
     fn get_debug_label(&self, node_id: NodeId) -> &'static str {
         self.nodes
             .get(node_id_to_entity(node_id))

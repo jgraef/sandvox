@@ -96,7 +96,10 @@ use crate::{
         texture_atlas::AtlasPlugin,
     },
     sound::SoundPlugin,
-    ui::UiPlugin,
+    ui::{
+        DefaultUiPlugin,
+        UiPlugin,
+    },
     wgpu::WgpuPlugin,
 };
 
@@ -150,7 +153,7 @@ impl App {
             })?
             .add_plugin(CameraPlugin)?
             .add_plugin(AtlasPlugin)?
-            .add_plugin(UiPlugin)?;
+            .add_plugin(DefaultUiPlugin::default())?;
 
         if !config.sound.disabled {
             world_builder.add_plugin(SoundPlugin {
