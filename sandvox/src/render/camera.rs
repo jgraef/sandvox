@@ -153,11 +153,11 @@ fn update_camera_projection(
 }
 
 fn update_camera_matrices(
-    changed: Populated<(Ref<CameraProjection>, Ref<GlobalTransform>)>,
+    cameras: Populated<(Ref<CameraProjection>, Ref<GlobalTransform>)>,
     frame_uniforms: Populated<(&mut FrameUniform, Ref<AttachedCamera>)>,
 ) {
     for (mut frame_uniform, attached_camera) in frame_uniforms {
-        if let Ok((projection, transform)) = changed.get(attached_camera.0) {
+        if let Ok((projection, transform)) = cameras.get(attached_camera.0) {
             if attached_camera.is_changed() || projection.is_changed() || transform.is_changed() {
                 let camera_matrix = {
                     let transform = transform.isometry().inverse().to_homogeneous();

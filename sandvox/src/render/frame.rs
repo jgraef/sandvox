@@ -9,6 +9,7 @@ use bevy_ecs::{
     entity::Entity,
     name::NameOrEntity,
     query::{
+        Changed,
         With,
         Without,
     },
@@ -103,8 +104,6 @@ pub(super) fn create_frames(
 pub(super) fn begin_frames(
     wgpu: Res<WgpuContext>,
     surfaces: Populated<(&Surface, Option<&ClearColor>, &mut Frame, Ref<FrameUniform>)>,
-    // todo: make it work with Res
-    mut staging: ResMut<Staging>,
 ) {
     let start_time = Instant::now();
 
@@ -154,14 +153,6 @@ pub(super) fn begin_frames(
             })
             .forget_lifetime();
 
-        // update frame uniform buffer
-        if frame_uniform.is_changed() {
-            staging.write_buffer_from_slice(
-                frame_uniform.buffer.slice(..),
-                bytemuck::bytes_of(&frame_uniform.data),
-            );
-        }
-
         // bind frame uniform buffer
         render_pass.set_bind_group(0, Some(&frame_uniform.bind_group), &[]);
 
@@ -176,6 +167,7 @@ pub(super) fn begin_frames(
 
 pub fn end_frames(
     wgpu: Res<WgpuContext>,
+    changed_frame_uniforms: Query<&FrameUniform, Changed<FrameUniform>>,
     frames: Query<(NameOrEntity, &mut Frame)>,
     mut command_buffers: Local<Vec<wgpu::CommandBuffer>>,
     mut present_surfaces: Local<Vec<wgpu::SurfaceTexture>>,
@@ -184,8 +176,18 @@ pub fn end_frames(
     assert!(command_buffers.is_empty());
     assert!(present_surfaces.is_empty());
 
-    // flush staging. this also submits the command encoder
-    command_buffers.push(staging.flush(&wgpu).finish());
+    for frame_uniform in changed_frame_uniforms {
+        // update frame uniform buffer
+        staging.write_buffer_from_slice(
+            frame_uniform.buffer.slice(..),
+            bytemuck::bytes_of(&frame_uniform.data),
+        );
+    }
+
+    if staging.is_changed() {
+        // flush staging. this also submits the command encoder
+        command_buffers.push(staging.flush(&wgpu).finish());
+    }
 
     // end all render passes and get the surface textures
     for (name, mut frame) in frames {

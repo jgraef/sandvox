@@ -106,11 +106,7 @@ impl Plugin for MeshPlugin {
                         .run_if(
                             any_match_filter::<(
                                 With<Mesh>,
-                                Or<(
-                                    Changed<GlobalTransform>,
-                                    Added<GlobalTransform>,
-                                    Added<Mesh>,
-                                )>,
+                                Or<(Changed<GlobalTransform>, Added<Mesh>)>,
                             )>,
                         ),
                     render_meshes
