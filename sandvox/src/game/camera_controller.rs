@@ -1,9 +1,6 @@
-use std::{
-    collections::HashMap,
-    f32::consts::{
-        FRAC_PI_2,
-        TAU,
-    },
+use std::f32::consts::{
+    FRAC_PI_2,
+    TAU,
 };
 
 use bevy_ecs::{
@@ -28,6 +25,7 @@ use bevy_ecs::{
     world::DeferredWorld,
 };
 use color_eyre::eyre::Error;
+use indexmap::IndexMap;
 use nalgebra::{
     Translation3,
     UnitQuaternion,
@@ -98,7 +96,7 @@ pub struct CameraControllerConfig {
     // rad / pixel
     pub mouse_sensitivity: f32,
 
-    pub keybindings: HashMap<KeyCode, Movement>,
+    pub keybindings: IndexMap<KeyCode, Movement>,
 
     // block / second
     pub movement_speed: f32,
@@ -106,7 +104,7 @@ pub struct CameraControllerConfig {
 
 impl Default for CameraControllerConfig {
     fn default() -> Self {
-        let mut keybindings = HashMap::with_capacity(6);
+        let mut keybindings = IndexMap::with_capacity(6);
         keybindings.insert(KeyCode::KeyW, Movement::Local(Vector3::z()));
         keybindings.insert(KeyCode::KeyA, Movement::Local(-Vector3::x()));
         keybindings.insert(KeyCode::KeyS, Movement::Local(-Vector3::z()));
