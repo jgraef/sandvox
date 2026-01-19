@@ -1,16 +1,25 @@
 use std::collections::HashSet;
 
 use bevy_ecs::{
-    entity::Entity,
+    component::Component,
+    entity::{
+        Entity,
+        EntityHashMap,
+    },
     message::MessageReader,
-    resource::Resource,
+    query::{
+        With,
+        Without,
+    },
     schedule::{
         IntoScheduleConfigs,
         SystemSet,
     },
     system::{
         Commands,
-        ResMut,
+        Local,
+        Query,
+        SystemParam,
     },
 };
 use color_eyre::eyre::Error;
@@ -25,7 +34,10 @@ use winit::keyboard::{
 };
 
 use crate::{
-    app::WindowEvent,
+    app::{
+        WindowEvent,
+        WindowHandle,
+    },
     ecs::{
         plugin::{
             Plugin,
@@ -40,9 +52,9 @@ pub struct InputPlugin;
 
 impl Plugin for InputPlugin {
     fn setup(&self, builder: &mut WorldBuilder) -> Result<(), Error> {
-        builder.insert_resource(Keys::default()).add_systems(
+        builder.add_systems(
             schedule::PreUpdate,
-            (update_mouse, update_keys).in_set(InputSystems::Update),
+            (update_mouse, (create_keys, update_keys).chain()).in_set(InputSystems::Update),
         );
         Ok(())
     }
@@ -53,128 +65,206 @@ pub enum InputSystems {
     Update,
 }
 
-#[derive(Clone, Copy, Debug, Resource)]
+#[derive(Clone, Copy, Debug, Default, Component)]
 pub struct MousePosition {
-    pub window: Entity,
     pub position: Point2<f32>,
     pub frame_delta: Vector2<f32>,
 }
 
-fn update_mouse(
-    mut window_events: MessageReader<WindowEvent>,
-    mouse_position: Option<ResMut<MousePosition>>,
-    mut commands: Commands,
-) {
-    let mut mouse_position_changed = false;
-    let mut updated_mouse_position =
-        mouse_position
-            .as_deref()
-            .cloned()
-            .map(|mut mouse_position| {
-                if !mouse_position.frame_delta.is_zero() {
-                    mouse_position_changed = true;
-                }
-                mouse_position.frame_delta = Zero::zero();
-                mouse_position
-            });
+#[derive(SystemParam)]
+struct UpdateMouse<'w, 's> {
+    mouse_positions: Query<'w, 's, &'static mut MousePosition>,
+    commands: Commands<'w, 's>,
+    new_mouse_positions: Local<'s, EntityHashMap<MousePosition>>,
+}
+
+impl<'w, 's> UpdateMouse<'w, 's> {
+    fn begin(&mut self) {
+        assert!(self.new_mouse_positions.is_empty());
+
+        for mut mouse_position in &mut self.mouse_positions {
+            if !mouse_position.frame_delta.is_zero() {
+                mouse_position.frame_delta = Vector2::zeros();
+            }
+        }
+    }
+
+    fn update(&mut self, window: Entity, update: impl FnOnce(&mut MousePosition)) {
+        self.update_if(window, |_| true, update);
+    }
+
+    fn update_if(
+        &mut self,
+        window: Entity,
+        condition: impl FnOnce(&MousePosition) -> bool,
+        update: impl FnOnce(&mut MousePosition),
+    ) {
+        let update_if = |mouse_position: &mut MousePosition| {
+            if condition(mouse_position) {
+                update(mouse_position);
+            }
+        };
+
+        if let Ok(mut mouse_position) = self.mouse_positions.get_mut(window) {
+            update_if(&mut mouse_position);
+        }
+        else if let Some(mouse_position) = self.new_mouse_positions.get_mut(&window) {
+            update_if(mouse_position);
+        }
+        else {
+            let mut mouse_position = MousePosition::default();
+            update_if(&mut mouse_position);
+            self.new_mouse_positions.insert(window, mouse_position);
+        }
+    }
+
+    fn insert(&mut self, window: Entity) {
+        if self.mouse_positions.get(window).is_err() {
+            self.new_mouse_positions.insert(window, Default::default());
+        }
+    }
+
+    fn remove(&mut self, window: Entity) {
+        if self.new_mouse_positions.remove(&window).is_none() {
+            self.commands.entity(window).try_remove::<MousePosition>();
+        }
+    }
+
+    fn end(mut self) {
+        for (window, mouse_position) in self.new_mouse_positions.drain() {
+            self.commands.entity(window).insert(mouse_position);
+        }
+    }
+}
+
+fn update_mouse(mut window_events: MessageReader<WindowEvent>, mut update_mouse: UpdateMouse) {
+    update_mouse.begin();
 
     for event in window_events.read() {
         match event {
+            WindowEvent::MousePosition { window, position } => {
+                update_mouse.update_if(
+                    *window,
+                    |mouse_position| mouse_position.position != *position,
+                    |mouse_position| {
+                        mouse_position.position = *position;
+                    },
+                );
+            }
+            WindowEvent::MouseDelta { window, delta } => {
+                if !delta.is_zero() {
+                    update_mouse.update(*window, |mouse_position| {
+                        mouse_position.frame_delta += *delta;
+                    });
+                }
+            }
             WindowEvent::MouseEntered { window } => {
-                tracing::trace!(?window, "mouse entered");
-                // can't set it because we don't know the position
+                update_mouse.insert(*window);
             }
             WindowEvent::MouseLeft { window } => {
-                tracing::trace!(?window, "mouse left");
-                updated_mouse_position = None;
-            }
-            WindowEvent::MouseMoved { window, position } => {
-                tracing::trace!(?window, ?position, "mouse moved");
-
-                updated_mouse_position.get_or_insert_with(|| {
-                    MousePosition {
-                        window: *window,
-                        position: *position,
-                        frame_delta: Default::default(),
-                    }
-                });
-
-                mouse_position_changed = true;
-            }
-            WindowEvent::MouseMovedDelta { window, delta } => {
-                let updated_mouse_position = updated_mouse_position.get_or_insert_with(|| {
-                    MousePosition {
-                        window: *window,
-                        position: Default::default(),
-                        frame_delta: Default::default(),
-                    }
-                });
-                updated_mouse_position.frame_delta += delta;
-
-                mouse_position_changed = true;
+                update_mouse.remove(*window);
             }
             _ => {}
         }
     }
 
-    if let Some(updated_mouse_position) = updated_mouse_position {
-        if mouse_position_changed {
-            if let Some(mut mouse_position) = mouse_position {
-                *mouse_position = updated_mouse_position;
-            }
-            else {
-                commands.insert_resource(updated_mouse_position);
-            }
-        }
-    }
-    else {
-        if mouse_position.is_some() {
-            commands.remove_resource::<MousePosition>();
-        }
-    }
+    update_mouse.end();
 }
 
-#[derive(Clone, Debug, Default, Resource)]
+#[derive(Clone, Debug, Default, Component)]
 pub struct Keys {
     pub pressed: HashSet<KeyCode>,
     pub just_pressed: HashSet<KeyCode>,
     pub just_released: HashSet<KeyCode>,
 }
 
-fn update_keys(mut window_events: MessageReader<WindowEvent>, mut keys: ResMut<Keys>) {
-    // clear just_pressed and just_released.
-    // the extra check is so that we only trigger change detection if the sets
-    // really change.
-    if !keys.just_pressed.is_empty() {
-        keys.just_pressed.clear();
+#[derive(SystemParam)]
+struct UpdateKeys<'w, 's> {
+    keys: Query<'w, 's, &'static mut Keys>,
+}
+
+impl<'w, 's> UpdateKeys<'w, 's> {
+    fn begin(&mut self) {
+        for mut keys in &mut self.keys {
+            // clear just_pressed and just_released.
+            // the extra check is so that we only trigger change detection if the sets
+            // really change.
+            if !keys.just_pressed.is_empty() {
+                keys.just_pressed.clear();
+            }
+            if !keys.just_released.is_empty() {
+                keys.just_released.clear();
+            }
+        }
     }
-    if !keys.just_released.is_empty() {
-        keys.just_released.clear();
+
+    fn update_if(
+        &mut self,
+        window: Entity,
+        condition: impl FnOnce(&Keys) -> bool,
+        update: impl FnOnce(&mut Keys),
+    ) {
+        if let Ok(mut keys) = self.keys.get_mut(window) {
+            if condition(&*keys) {
+                update(&mut keys);
+            }
+        }
+        else {
+            tracing::error!(?window, "keys for unknown window");
+        }
     }
+}
+
+fn create_keys(
+    windows_without_keys: Query<Entity, (With<WindowHandle>, Without<Keys>)>,
+    mut commands: Commands,
+) {
+    for entity in windows_without_keys {
+        commands.entity(entity).insert(Keys::default());
+    }
+}
+
+fn update_keys(mut window_events: MessageReader<WindowEvent>, mut update_keys: UpdateKeys) {
+    update_keys.begin();
 
     for event in window_events.read() {
         match event {
-            WindowEvent::LostFocus { window: _ } => {
+            WindowEvent::LostFocus { window } => {
                 // release all keys
-                let keys = &mut *keys;
-                keys.just_released.extend(keys.pressed.drain());
+                update_keys.update_if(
+                    *window,
+                    |keys| !keys.pressed.is_empty(),
+                    |keys| {
+                        keys.just_released.extend(keys.pressed.drain());
+                    },
+                );
             }
-            WindowEvent::KeyPressed { window: _, key } => {
+            WindowEvent::KeyPressed { window, key } => {
                 match key {
                     PhysicalKey::Code(key_code) => {
-                        if keys.pressed.insert(*key_code) {
-                            keys.just_pressed.insert(*key_code);
-                        }
+                        update_keys.update_if(
+                            *window,
+                            |keys| !keys.pressed.contains(&key_code),
+                            |keys| {
+                                keys.pressed.insert(*key_code);
+                                keys.just_pressed.insert(*key_code);
+                            },
+                        );
                     }
                     PhysicalKey::Unidentified(_native_key_code) => {}
                 }
             }
-            WindowEvent::KeyReleased { window: _, key } => {
+            WindowEvent::KeyReleased { window, key } => {
                 match key {
                     PhysicalKey::Code(key_code) => {
-                        if keys.pressed.remove(key_code) {
-                            keys.just_released.insert(*key_code);
-                        }
+                        update_keys.update_if(
+                            *window,
+                            |keys| keys.pressed.contains(&key_code),
+                            |keys| {
+                                keys.pressed.remove(key_code);
+                                keys.just_released.insert(*key_code);
+                            },
+                        );
                     }
                     PhysicalKey::Unidentified(_native_key_code) => {}
                 }

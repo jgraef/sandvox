@@ -21,9 +21,7 @@ use bevy_ecs::{
     system::{
         Commands,
         Populated,
-        Query,
         Res,
-        Single,
     },
     world::DeferredWorld,
 };
@@ -44,7 +42,6 @@ use winit::keyboard::KeyCode;
 use crate::{
     app::{
         DeltaTime,
-        Focused,
         GrabCursor,
     },
     ecs::{
@@ -60,7 +57,7 @@ use crate::{
         Keys,
         MousePosition,
     },
-    render::surface::AttachedCamera,
+    render::surface::RenderTarget,
 };
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -149,26 +146,21 @@ enum ControllerMessage {
 
 fn grab_cursor(
     mut messages: MessageReader<ControllerMessage>,
-    windows: Populated<(Entity, &AttachedCamera)>,
+    cameras: Populated<&RenderTarget, With<CameraControllerState>>,
     mut commands: Commands,
 ) {
     for message in messages.read() {
-        let find_window = |camera| {
-            windows.iter().find_map(|(window_entity, attached_camera)| {
-                (attached_camera.0 == camera).then_some(window_entity)
-            })
-        };
-
         tracing::debug!(?message);
+
         match message {
             ControllerMessage::ControllerAdded(entity) => {
-                if let Some(window) = find_window(*entity) {
-                    commands.entity(window).insert(GrabCursor);
+                if let Ok(render_target) = cameras.get(*entity) {
+                    commands.entity(render_target.0).insert(GrabCursor);
                 }
             }
             ControllerMessage::ControllerRemoved(entity) => {
-                if let Some(window) = find_window(*entity) {
-                    commands.entity(window).try_remove::<GrabCursor>();
+                if let Ok(render_target) = cameras.get(*entity) {
+                    commands.entity(render_target.0).try_remove::<GrabCursor>();
                 }
             }
         }
@@ -176,46 +168,47 @@ fn grab_cursor(
 }
 
 fn update_camera(
-    mouse_position: Option<Res<MousePosition>>,
-    keys: Res<Keys>,
     delta_time: Res<DeltaTime>,
-    camera: Single<&AttachedCamera, With<Focused>>,
-    mut cameras: Query<(
+    windows: Populated<(Option<&MousePosition>, &Keys)>,
+    cameras: Populated<(
         &mut LocalTransform,
         &mut CameraControllerState,
         &CameraControllerConfig,
+        &RenderTarget,
     )>,
 ) {
-    if let Ok((mut transform, mut state, config)) = cameras.get_mut(camera.0) {
+    for (mut transform, mut state, config, render_target) in cameras {
         if state.is_added() {
             state.apply(&mut transform);
         }
 
-        let dt = delta_time.seconds();
+        if let Ok((mouse_position, keys)) = windows.get(render_target.0) {
+            let dt = delta_time.seconds();
 
-        // mouse
-        if let Some(mouse_position) = mouse_position {
-            if !mouse_position.frame_delta.is_zero() {
-                // note: don't multiply by delta-time, since the mouse delta is already
-                // naturally scaled by that.
-                let delta = config.mouse_sensitivity * mouse_position.frame_delta;
+            // mouse
+            if let Some(mouse_position) = mouse_position {
+                if !mouse_position.frame_delta.is_zero() {
+                    // note: don't multiply by delta-time, since the mouse delta is already
+                    // naturally scaled by that.
+                    let delta = config.mouse_sensitivity * mouse_position.frame_delta;
 
-                tracing::trace!(?delta, ?mouse_position.frame_delta, "mouse movement");
+                    tracing::trace!(?delta, ?mouse_position.frame_delta, "mouse movement");
 
-                state.yaw = (state.yaw + delta.x).rem_euclid(TAU);
-                state.pitch = (state.pitch - delta.y).clamp(-FRAC_PI_2, FRAC_PI_2);
+                    state.yaw = (state.yaw + delta.x).rem_euclid(TAU);
+                    state.pitch = (state.pitch - delta.y).clamp(-FRAC_PI_2, FRAC_PI_2);
 
-                state.apply(&mut transform);
+                    state.apply(&mut transform);
+                }
             }
-        }
 
-        // keyboard
-        if !keys.pressed.is_empty() {
-            tracing::trace!(?keys.pressed, "keys pressed");
-            let speed = dt * config.movement_speed;
-            for (key_code, action) in &config.keybindings {
-                if keys.pressed.contains(key_code) {
-                    action.apply(&mut transform, speed);
+            // keyboard
+            if !keys.pressed.is_empty() {
+                tracing::trace!(?keys.pressed, "keys pressed");
+                let speed = dt * config.movement_speed;
+                for (key_code, action) in &config.keybindings {
+                    if keys.pressed.contains(key_code) {
+                        action.apply(&mut transform, speed);
+                    }
                 }
             }
         }

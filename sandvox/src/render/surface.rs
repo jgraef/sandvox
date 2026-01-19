@@ -188,4 +188,9 @@ impl Default for ClearColor {
 }
 
 #[derive(Clone, Copy, Debug, Component)]
-pub struct AttachedCamera(pub Entity);
+#[relationship(relationship_target = RenderSources)]
+pub struct RenderTarget(pub Entity);
+
+#[derive(Clone, Debug, Component)]
+#[relationship_target(relationship = RenderTarget)]
+pub struct RenderSources(Vec<Entity>);

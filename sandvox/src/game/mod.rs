@@ -13,7 +13,10 @@ use std::{
 use bevy_ecs::{
     component::Component,
     name::Name,
-    query::With,
+    query::{
+        Changed,
+        With,
+    },
     resource::Resource,
     schedule::{
         IntoScheduleConfigs,
@@ -25,6 +28,7 @@ use bevy_ecs::{
     },
     system::{
         Commands,
+        Populated,
         Res,
         ResMut,
         Single,
@@ -81,8 +85,8 @@ use crate::{
         },
         mesh::RenderWireframes,
         surface::{
-            AttachedCamera,
             ClearColor,
+            RenderTarget,
         },
         text::{
             Text,
@@ -224,7 +228,7 @@ impl Plugin for GamePlugin {
                     update_debug_overlay.run_if(
                         resource_changed::<FpsCounter>.and(any_with_component::<DebugOverlay>),
                     ),
-                    handle_keys.run_if(resource_changed::<Keys>),
+                    handle_keys,
                 ),
             );
 
@@ -252,36 +256,36 @@ fn init_player(config: Res<GameConfig>, mut commands: Commands) {
     let chunk_side_length = CHUNK_SIZE as f32;
     let chunk_center = Point3::from(Vector3::repeat(0.5 * chunk_side_length));
 
-    // spawn camera
-    let camera_entity = commands
+    // spawn window
+    let window = commands
         .spawn((
-            Name::new("main_camera"),
-            CameraProjection::new(
-                CameraProjection::DEFAULT_FOVY,
-                config.chunk_render_distance as f32 * CHUNK_SIZE as f32,
-            ),
-            LocalTransform::from(chunk_center + chunk_side_length * Vector3::y()),
-            CameraController {
-                state: CameraControllerState {
-                    yaw: 0.0,
-                    pitch: -FRAC_PI_4,
-                },
-                config: config.camera_controller.clone(),
+            Name::new("main_window"),
+            WindowConfig {
+                title: "SandVox".to_owned(),
             },
-            ChunkLoader {
-                radius: Vector3::repeat(config.chunk_load_distance),
-            },
+            ClearColor(palette::named::LIGHTSKYBLUE.into_format().with_alpha(1.0)),
         ))
         .id();
 
-    // spawn window
+    // spawn camera
     commands.spawn((
-        Name::new("main_window"),
-        WindowConfig {
-            title: "SandVox".to_owned(),
+        Name::new("main_camera"),
+        RenderTarget(window),
+        CameraProjection::new(
+            CameraProjection::DEFAULT_FOVY,
+            config.chunk_render_distance as f32 * CHUNK_SIZE as f32,
+        ),
+        LocalTransform::from(chunk_center + chunk_side_length * Vector3::y()),
+        CameraController {
+            state: CameraControllerState {
+                yaw: 0.0,
+                pitch: -FRAC_PI_4,
+            },
+            config: config.camera_controller.clone(),
         },
-        ClearColor(palette::named::LIGHTSKYBLUE.into_format().with_alpha(1.0)),
-        AttachedCamera(camera_entity),
+        ChunkLoader {
+            radius: Vector3::repeat(config.chunk_load_distance),
+        },
     ));
 }
 
@@ -327,21 +331,23 @@ fn update_debug_overlay(
 }
 
 fn handle_keys(
-    keys: Res<Keys>,
+    keys: Populated<&Keys, Changed<Keys>>,
     render_wireframes: Option<Res<RenderWireframes>>,
     mut close_app: CloseApp,
     mut commands: Commands,
 ) {
-    if keys.just_pressed.contains(&KeyCode::F6) {
-        if render_wireframes.is_none() {
-            commands.insert_resource(RenderWireframes);
+    for keys in keys {
+        if keys.just_pressed.contains(&KeyCode::F6) {
+            if render_wireframes.is_none() {
+                commands.insert_resource(RenderWireframes);
+            }
+            else {
+                commands.remove_resource::<RenderWireframes>();
+            }
         }
-        else {
-            commands.remove_resource::<RenderWireframes>();
-        }
-    }
 
-    if keys.just_pressed.contains(&KeyCode::Escape) {
-        close_app.request_close();
+        if keys.just_pressed.contains(&KeyCode::Escape) {
+            close_app.request_close();
+        }
     }
 }

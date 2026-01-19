@@ -467,7 +467,7 @@ fn handle_window_event(
             device_id: _,
             position,
         } => {
-            window_events.write(WindowEvent::MouseMoved {
+            window_events.write(WindowEvent::MousePosition {
                 window: *window_entity,
                 position: Point2::new(position.x, position.y).cast(),
             });
@@ -550,7 +550,7 @@ fn handle_device_event(
     match event {
         MouseMotion { delta } => {
             if let Some(focused_window) = focused_window {
-                window_events.write(WindowEvent::MouseMovedDelta {
+                window_events.write(WindowEvent::MouseDelta {
                     window: *focused_window,
                     delta: Vector2::new(delta.0 as f32, delta.1 as f32),
                 });
@@ -632,11 +632,11 @@ pub enum WindowEvent {
         window: Entity,
         size: Vector2<u32>,
     },
-    MouseMoved {
+    MousePosition {
         window: Entity,
         position: Point2<f32>,
     },
-    MouseMovedDelta {
+    MouseDelta {
         window: Entity,
         delta: Vector2<f32>,
     },

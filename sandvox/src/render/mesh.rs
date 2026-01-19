@@ -11,6 +11,7 @@ use bevy_ecs::{
         With,
         Without,
     },
+    relationship::RelationshipTarget,
     resource::Resource,
     schedule::{
         IntoScheduleConfigs,
@@ -62,7 +63,7 @@ use crate::{
         },
         staging::Staging,
         surface::{
-            AttachedCamera,
+            RenderSources,
             Surface,
         },
         texture_atlas::{
@@ -450,7 +451,7 @@ fn update_instance_buffer(
 
 fn render_meshes_with(
     atlas: Res<Atlas>,
-    frames: Populated<(&mut Frame, &MeshRenderPipelinePerSurface, &AttachedCamera)>,
+    frames: Populated<(&mut Frame, &MeshRenderPipelinePerSurface, &RenderSources)>,
     camera_frustrums: Query<(&CameraFrustrum, &GlobalTransform)>,
     meshes: Populated<(&Mesh, &InstanceId, Option<&FrustrumCulled>)>,
     instance_buffer: Res<InstanceBuffer>,
@@ -460,20 +461,21 @@ fn render_meshes_with(
         let mut count_rendered = 0;
         let mut count_culled = 0;
 
-        for (mut frame, pipeline, camera) in frames {
+        for (mut frame, pipeline, render_sources) in frames {
             let mut render_pass = frame.render_pass_mut();
 
             render_pass.set_pipeline(get_pipeline(pipeline));
             render_pass.set_bind_group(1, Some(atlas.bind_group()), &[]);
             render_pass.set_vertex_buffer(1, instance_buffer.slice(..));
 
-            let frustrum_culling =
+            let frustrum_culling = render_sources.iter().next().and_then(|camera| {
                 camera_frustrums
-                    .get(camera.0)
+                    .get(camera)
                     .ok()
                     .map(|(camera_frustrum, camera_transform)| {
                         (camera_frustrum, camera_transform.isometry().inverse())
-                    });
+                    })
+            });
 
             for (mesh, instance_id, cull_aabb) in &meshes {
                 let cull =
@@ -499,7 +501,7 @@ fn render_meshes_with(
 
 fn render_meshes(
     atlas: Res<Atlas>,
-    frames: Populated<(&mut Frame, &MeshRenderPipelinePerSurface, &AttachedCamera)>,
+    frames: Populated<(&mut Frame, &MeshRenderPipelinePerSurface, &RenderSources)>,
     camera_frustrums: Query<(&CameraFrustrum, &GlobalTransform)>,
     meshes: Populated<(&Mesh, &InstanceId, Option<&FrustrumCulled>)>,
     instance_buffer: Res<InstanceBuffer>,
@@ -516,7 +518,7 @@ fn render_meshes(
 
 fn render_wireframes(
     atlas: Res<Atlas>,
-    frames: Populated<(&mut Frame, &MeshRenderPipelinePerSurface, &AttachedCamera)>,
+    frames: Populated<(&mut Frame, &MeshRenderPipelinePerSurface, &RenderSources)>,
     camera_frustrums: Query<(&CameraFrustrum, &GlobalTransform)>,
     meshes: Populated<(&Mesh, &InstanceId, Option<&FrustrumCulled>)>,
     instance_buffer: Res<InstanceBuffer>,

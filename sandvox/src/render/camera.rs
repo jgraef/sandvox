@@ -1,16 +1,14 @@
 use std::f32::consts::FRAC_PI_4;
 
 use bevy_ecs::{
-    change_detection::{
-        DetectChanges,
-        Ref,
-    },
     component::Component,
     entity::Entity,
     query::{
         Changed,
         Or,
+        Without,
     },
+    relationship::RelationshipTarget,
     schedule::IntoScheduleConfigs,
     system::{
         Commands,
@@ -43,7 +41,10 @@ use crate::{
     render::{
         RenderSystems,
         frame::FrameUniform,
-        surface::AttachedCamera,
+        surface::{
+            RenderSources,
+            RenderTarget,
+        },
     },
 };
 
@@ -142,40 +143,47 @@ impl Default for CameraProjection {
 }
 
 fn update_camera_projection(
-    windows: Populated<(&WindowSize, &AttachedCamera), Changed<WindowSize>>,
+    windows: Populated<(&WindowSize, &RenderSources), Changed<WindowSize>>,
     mut cameras: Populated<&mut CameraProjection>,
 ) {
-    for (window_size, camera) in windows {
-        if let Ok(mut projection) = cameras.get_mut(camera.0) {
-            projection.set_viewport(window_size.size);
+    for (window_size, render_sources) in windows {
+        for entity in render_sources.iter() {
+            if let Ok(mut projection) = cameras.get_mut(entity) {
+                projection.set_viewport(window_size.size);
+            }
         }
     }
 }
 
 fn update_camera_matrices(
-    cameras: Populated<(Ref<CameraProjection>, Ref<GlobalTransform>)>,
-    frame_uniforms: Populated<(&mut FrameUniform, Ref<AttachedCamera>)>,
+    cameras: Populated<
+        (&CameraProjection, &GlobalTransform, &RenderTarget),
+        Or<(
+            Changed<CameraProjection>,
+            Changed<GlobalTransform>,
+            Changed<RenderTarget>,
+        )>,
+    >,
+    mut frame_uniforms: Populated<&mut FrameUniform>,
 ) {
-    for (mut frame_uniform, attached_camera) in frame_uniforms {
-        if let Ok((projection, transform)) = cameras.get(attached_camera.0) {
-            if attached_camera.is_changed() || projection.is_changed() || transform.is_changed() {
-                let camera_matrix = {
-                    let transform = transform.isometry().inverse().to_homogeneous();
+    for (projection, transform, render_target) in cameras {
+        if let Ok(mut frame_uniform) = frame_uniforms.get_mut(render_target.0) {
+            let camera_matrix = {
+                let transform = transform.isometry().inverse().to_homogeneous();
 
-                    let projection = {
-                        let mut projection = projection.projection.to_homogeneous();
-                        // nalgebra assumes we're using a right-handed world coordinate system and a
-                        // left-handed NDC and thus flips the z-axis. Undo this here.
-                        projection[(2, 2)] *= -1.0;
-                        projection[(3, 2)] = 1.0;
-                        projection
-                    };
-
-                    projection * transform
+                let projection = {
+                    let mut projection = projection.projection.to_homogeneous();
+                    // nalgebra assumes we're using a right-handed world coordinate system and a
+                    // left-handed NDC and thus flips the z-axis. Undo this here.
+                    projection[(2, 2)] *= -1.0;
+                    projection[(3, 2)] = 1.0;
+                    projection
                 };
 
-                frame_uniform.set_camera_matrix(camera_matrix);
-            }
+                projection * transform
+            };
+
+            frame_uniform.set_camera_matrix(camera_matrix);
         }
     }
 }
@@ -183,7 +191,11 @@ fn update_camera_matrices(
 fn update_camera_frustrums(
     changed: Populated<
         (Entity, &CameraProjection, Option<&mut CameraFrustrum>),
-        Or<(Changed<CameraProjection>, Changed<GlobalTransform>)>,
+        Or<(
+            Changed<CameraProjection>,
+            Changed<GlobalTransform>,
+            Without<CameraFrustrum>,
+        )>,
     >,
     mut commands: Commands,
 ) {
@@ -201,7 +213,7 @@ fn update_camera_frustrums(
 
 #[derive(Clone, Copy, Debug, Component)]
 pub struct CameraFrustrum {
-    frustrum: Frustrum,
+    pub frustrum: Frustrum,
 }
 
 impl CameraFrustrum {
