@@ -206,7 +206,7 @@ fn create_pipeline(
         let pipeline = wgpu
             .device
             .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("text rendering"),
+                label: Some("ui/text"),
                 layout: Some(&text_pipeline_layout.pipeline_layout),
                 vertex: wgpu::VertexState {
                     module: &text_pipeline_layout.shader,

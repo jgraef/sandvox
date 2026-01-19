@@ -1,18 +1,3 @@
-
-struct VertexInput {
-    @location(0)
-    position: vec4f,
-
-    @location(1)
-    color: vec4f,
-
-    @location(2)
-    uv: vec2f,
-
-    @location(3)
-    glyph_id: u32,
-}
-
 struct VertexOutput {
     @builtin(position)
     fragment_position: vec4f,

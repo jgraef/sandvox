@@ -36,6 +36,7 @@ use crate::{
             LayoutConfig,
             setup_layout_systems,
         },
+        render::setup_render_systems,
         text::{
             TextLeafMeasure,
             setup_text_systems,
@@ -59,6 +60,7 @@ where
                 leaf_measure: self.leaf_measure.clone(),
             },
         );
+        setup_render_systems(builder);
         setup_text_systems(builder);
 
         builder
@@ -83,12 +85,6 @@ pub enum UiSystems {
     Render,
 }
 
-// note: we're just using layout::Style now
-// /// This marks something as an UI node.
-// #[derive(Clone, Copy, Debug, Default, Component)]
-// pub struct UiNode;
-
-///
 #[derive(Clone, Copy, Debug, Default, Component)]
 pub struct UiSurface {
     pub size: Vector2<f32>,
@@ -102,25 +98,6 @@ pub struct UiSurface {
 pub struct AttachedUiTree {
     pub root: Entity,
 }
-
-/* note: we might want to have our own types
-pub struct Rect<T>
-where
-    T: Scalar,
-{
-    pub top_left: Point2<T>,
-    pub bottom_right: Point2<T>,
-}
-
-impl<T> Rect<T>
-where
-    T: Scalar + ClosedSubAssign,
-{
-    pub fn size(&self) -> Vector2<T> {
-        &self.bottom_right - &self.top_left
-    }
-}
-*/
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct DefaultLeafMeasure {

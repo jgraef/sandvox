@@ -78,6 +78,10 @@ impl Plugin for RenderPlugin {
                 ),
             )
             .configure_system_sets(
+                schedule::Startup,
+                RenderSystems::Setup.after(WgpuSystems::CreateContext),
+            )
+            .configure_system_sets(
                 schedule::Render,
                 RenderSystems::RenderWorld
                     .after(RenderSystems::BeginFrame)
