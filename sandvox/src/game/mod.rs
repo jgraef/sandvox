@@ -212,7 +212,7 @@ impl Plugin for GamePlugin {
             .add_systems(
                 schedule::Startup,
                 (
-                    load_block_types.in_set(AtlasSystems::InsertTextures),
+                    load_block_types.in_set(AtlasSystems::CollectTextures),
                     create_terrain_generator.after(load_block_types),
                     init_player,
                     init_debug_overlay,

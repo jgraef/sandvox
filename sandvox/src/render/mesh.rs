@@ -60,6 +60,7 @@ use crate::{
             Frame,
             FrameBindGroupLayout,
         },
+        staging::Staging,
         surface::{
             AttachedCamera,
             Surface,
@@ -73,11 +74,7 @@ use crate::{
         WgpuContext,
         WgpuContextBuilder,
         WgpuSystems,
-        buffer::{
-            WriteStaging,
-            WriteStagingCommit,
-            WriteStagingTransaction,
-        },
+        buffer::TypedArrayBuffer,
     },
 };
 
@@ -93,9 +90,12 @@ impl Plugin for MeshPlugin {
             )
             .add_systems(
                 schedule::Startup,
-                create_mesh_render_pipeline_shared
-                    .after(RenderSystems::Setup)
-                    .after(AtlasSystems::BuildAtlas),
+                (
+                    create_mesh_render_pipeline_shared
+                        .in_set(RenderSystems::Setup)
+                        .after(AtlasSystems::BuildAtlas),
+                    create_instance_buffer.in_set(RenderSystems::Setup),
+                ),
             )
             .add_systems(
                 schedule::Render,
@@ -260,8 +260,7 @@ impl Mesh {
 
 #[derive(Debug, Resource)]
 struct InstanceBuffer {
-    buffer: wgpu::Buffer,
-    size: u64,
+    buffer: TypedArrayBuffer<Instance>,
 }
 
 #[derive(Clone, Copy, Debug, Component)]
@@ -405,12 +404,22 @@ fn create_mesh_render_pipeline_for_surfaces(
     }
 }
 
+fn create_instance_buffer(wgpu: Res<WgpuContext>, mut commands: Commands) {
+    commands.insert_resource(InstanceBuffer {
+        buffer: TypedArrayBuffer::new(
+            wgpu.device.clone(),
+            "mesh instance buffer",
+            wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        ),
+    });
+}
+
 fn update_instance_buffer(
-    wgpu: Res<WgpuContext>,
-    instance_buffer: Option<ResMut<InstanceBuffer>>,
+    mut instance_buffer: ResMut<InstanceBuffer>,
     meshes: Populated<(Entity, &GlobalTransform, Option<&mut InstanceId>), With<Mesh>>,
     mut commands: Commands,
     mut instance_data: Local<Vec<Instance>>,
+    mut staging: ResMut<Staging>,
 ) {
     // I always forget to clear this! keep this assert :3
     assert!(instance_data.is_empty());
@@ -431,69 +440,9 @@ fn update_instance_buffer(
         }
     }
 
-    let instance_data_bytes = bytemuck::cast_slice(&**instance_data);
-    let instance_data_size = instance_data_bytes.len() as wgpu::BufferAddress;
-
-    let create_and_fill_buffer = |allocate_size: u64| {
-        let buffer = wgpu.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("mesh instance"),
-            size: allocate_size,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: true,
-        });
-
-        let mut view = buffer.get_mapped_range_mut(..instance_data_size);
-        view.copy_from_slice(instance_data_bytes);
-
-        drop(view);
-        buffer.unmap();
-
-        InstanceBuffer {
-            buffer,
-            size: allocate_size,
-        }
-    };
-
-    if let Some(mut instance_buffer) = instance_buffer {
-        // instance buffer already exists. we'll try to reuse it
-
-        if instance_buffer.size < instance_data_size {
-            // new instance data is larger than already existing buffer. allocate a new one
-
-            // double the previous size, but atleast enough for the instance data
-            let allocate_size = instance_data_size.max(2 * instance_buffer.size);
-
-            *instance_buffer = create_and_fill_buffer(allocate_size);
-        }
-        else {
-            // new instance data fits into buffer. use staging pool to upload the data
-
-            let mut command_encoder =
-                wgpu.device
-                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                        label: Some("upload mesh instance data"),
-                    });
-
-            let mut staging = WriteStagingTransaction::new(
-                wgpu.staging_pool.belt(),
-                &wgpu.device,
-                &mut command_encoder,
-            );
-
-            staging.write_buffer_from_slice(
-                instance_buffer.buffer.slice(..instance_data_size),
-                instance_data_bytes,
-            );
-
-            staging.commit();
-            wgpu.queue.submit([command_encoder.finish()]);
-        }
-    }
-    else {
-        // we don't have a instance buffer yet. create one.
-
-        commands.insert_resource(create_and_fill_buffer(instance_data_size));
-    }
+    instance_buffer
+        .buffer
+        .write_all(&instance_data, |_buffer| {}, &mut *staging);
 
     // don't forget!!!!111
     instance_data.clear();
@@ -507,42 +456,45 @@ fn render_meshes_with(
     instance_buffer: Res<InstanceBuffer>,
     get_pipeline: impl Fn(&MeshRenderPipelinePerSurface) -> &wgpu::RenderPipeline,
 ) {
-    let mut count_rendered = 0;
-    let mut count_culled = 0;
+    if let Some(instance_buffer) = instance_buffer.buffer.try_buffer() {
+        let mut count_rendered = 0;
+        let mut count_culled = 0;
 
-    for (mut frame, pipeline, camera) in frames {
-        let mut render_pass = frame.render_pass_mut();
+        for (mut frame, pipeline, camera) in frames {
+            let mut render_pass = frame.render_pass_mut();
 
-        render_pass.set_pipeline(get_pipeline(pipeline));
-        render_pass.set_bind_group(1, Some(atlas.bind_group()), &[]);
-        render_pass.set_vertex_buffer(1, instance_buffer.buffer.slice(..));
+            render_pass.set_pipeline(get_pipeline(pipeline));
+            render_pass.set_bind_group(1, Some(atlas.bind_group()), &[]);
+            render_pass.set_vertex_buffer(1, instance_buffer.slice(..));
 
-        let frustrum_culling =
-            camera_frustrums
-                .get(camera.0)
-                .ok()
-                .map(|(camera_frustrum, camera_transform)| {
-                    (camera_frustrum, camera_transform.isometry().inverse())
-                });
+            let frustrum_culling =
+                camera_frustrums
+                    .get(camera.0)
+                    .ok()
+                    .map(|(camera_frustrum, camera_transform)| {
+                        (camera_frustrum, camera_transform.isometry().inverse())
+                    });
 
-        for (mesh, instance_id, cull_aabb) in &meshes {
-            let cull = frustrum_culling.is_some_and(|(camera_frustrum, camera_transform_inv)| {
-                cull_aabb.is_some_and(|cull_aabb| {
-                    camera_frustrum.cull(&camera_transform_inv, &cull_aabb.aabb)
-                })
-            });
+            for (mesh, instance_id, cull_aabb) in &meshes {
+                let cull =
+                    frustrum_culling.is_some_and(|(camera_frustrum, camera_transform_inv)| {
+                        cull_aabb.is_some_and(|cull_aabb| {
+                            camera_frustrum.cull(&camera_transform_inv, &cull_aabb.aabb)
+                        })
+                    });
 
-            if cull {
-                count_culled += 1;
-            }
-            else {
-                mesh.draw(&mut render_pass, 0, instance_id.0..(instance_id.0 + 1));
-                count_rendered += 1;
+                if cull {
+                    count_culled += 1;
+                }
+                else {
+                    mesh.draw(&mut render_pass, 0, instance_id.0..(instance_id.0 + 1));
+                    count_rendered += 1;
+                }
             }
         }
-    }
 
-    tracing::trace!(count_rendered, count_culled, "rendered meshes");
+        tracing::trace!(count_rendered, count_culled, "rendered meshes");
+    }
 }
 
 fn render_meshes(

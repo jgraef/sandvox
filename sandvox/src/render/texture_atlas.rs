@@ -68,15 +68,13 @@ impl Plugin for AtlasPlugin {
                 create_atlas_builder
                     // we need a wgpu context
                     .after(WgpuSystems::CreateContext)
-                    .in_set(AtlasSystems::CreateBuilder)
-                    .before(AtlasSystems::InsertTextures),
+                    .before(AtlasSystems::CollectTextures),
             )
             .add_systems(
                 schedule::Startup,
                 create_atlas
                     .in_set(AtlasSystems::BuildAtlas)
-                    .after(AtlasSystems::CreateBuilder)
-                    .after(AtlasSystems::InsertTextures),
+                    .after(AtlasSystems::CollectTextures),
             );
 
         Ok(())
@@ -118,8 +116,7 @@ fn create_atlas(mut commands: Commands) {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, SystemSet)]
 pub enum AtlasSystems {
-    CreateBuilder,
-    InsertTextures,
+    CollectTextures,
     BuildAtlas,
 }
 

@@ -4,7 +4,6 @@ mod text;
 
 use bevy_ecs::{
     component::Component,
-    entity::Entity,
     query::{
         AnyOf,
         QueryData,
@@ -88,15 +87,6 @@ pub enum UiSystems {
 #[derive(Clone, Copy, Debug, Default, Component)]
 pub struct UiSurface {
     pub size: Vector2<f32>,
-}
-
-/// Component to attach an UI tree to a
-/// [`Surface`][crate::render::surface::Surface]
-///
-/// TODO: better reverse this relationship so we can have multiple UIs per
-/// surface. But cameras work the same right now.
-pub struct AttachedUiTree {
-    pub root: Entity,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
