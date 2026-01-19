@@ -96,10 +96,7 @@ use crate::{
         texture_atlas::AtlasPlugin,
     },
     sound::SoundPlugin,
-    ui::{
-        DefaultUiPlugin,
-        UiPlugin,
-    },
+    ui::DefaultUiPlugin,
     wgpu::WgpuPlugin,
 };
 

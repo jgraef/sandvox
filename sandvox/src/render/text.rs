@@ -266,12 +266,12 @@ impl Default for TextColor {
 
 #[derive(Clone, Copy, Debug, Component)]
 pub struct TextSize {
-    pub height: f32,
+    pub scaling: f32,
 }
 
 impl Default for TextSize {
     fn default() -> Self {
-        Self { height: 1.0 }
+        Self { scaling: 1.0 }
     }
 }
 
@@ -280,18 +280,21 @@ pub struct Font {
     glyphs: Vec<Glyph>,
     codepoints: HashMap<char, u32>,
     replacement_glyph: Option<u32>,
-
     glyph_displacement: Vector2<f32>,
-
     atlas_size: Vector2<u32>,
 }
 
 impl Font {
     pub fn glyph_id(&self, character: char) -> Option<u32> {
-        self.codepoints
-            .get(&character)
-            .copied()
-            .or(self.replacement_glyph)
+        self.codepoints.get(&character).copied()
+    }
+
+    pub fn glyph_id_or_replacement(&self, character: char) -> Option<u32> {
+        self.glyph_id(character).or(self.replacement_glyph)
+    }
+
+    pub fn replacement_glyph(&self) -> Option<u32> {
+        self.replacement_glyph
     }
 
     pub fn contains(&self, character: char) -> bool {

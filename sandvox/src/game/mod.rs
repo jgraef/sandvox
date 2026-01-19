@@ -7,6 +7,7 @@ use std::{
     f32::consts::FRAC_PI_4,
     fmt::Write,
     path::PathBuf,
+    time::Duration,
 };
 
 use bevy_ecs::{
@@ -287,9 +288,8 @@ fn init_player(config: Res<GameConfig>, mut commands: Commands) {
 #[derive(Clone, Copy, Debug, Default, Component)]
 struct DebugOverlay;
 
-fn init_debug_overlay(mut _fps_counter_config: ResMut<FpsCounterConfig>, mut commands: Commands) {
-    //fps_counter_config.measurement_inverval = Duration::from_millis(100);
-    //commands.spawn((Text::default(), TextSize { height: 2.0 }, DebugOverlay));
+fn init_debug_overlay(mut fps_counter_config: ResMut<FpsCounterConfig>, mut commands: Commands) {
+    fps_counter_config.measurement_inverval = Duration::from_millis(100);
 
     commands
         .spawn((
@@ -303,16 +303,15 @@ fn init_debug_overlay(mut _fps_counter_config: ResMut<FpsCounterConfig>, mut com
             },
         ))
         .with_children(|spawner| {
-            /*spawner.spawn((
+            spawner.spawn((
                 Text::from("Hello World!"),
-                TextSize { height: 2.0 },
+                TextSize { scaling: 2.0 },
                 Style::default(),
-                LeafMeasure::default(),
-            ));*/
+            ));
 
             spawner.spawn((
                 Text::default(),
-                TextSize { height: 2.0 },
+                TextSize { scaling: 2.0 },
                 Style::default(),
                 DebugOverlay,
             ));

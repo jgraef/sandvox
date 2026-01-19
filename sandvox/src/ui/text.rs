@@ -17,6 +17,7 @@ use bevy_ecs::{
         Local,
         Populated,
         Res,
+        ResMut,
     },
 };
 use bytemuck::{
@@ -40,6 +41,7 @@ use crate::{
             Frame,
             FrameBindGroupLayout,
         },
+        staging::Staging,
         surface::Surface,
         text::{
             Font,
@@ -51,7 +53,9 @@ use crate::{
         },
     },
     ui::{
+        LayoutCache,
         LeafMeasure,
+        RoundedLayout,
         UiSystems,
     },
     wgpu::{
@@ -59,100 +63,6 @@ use crate::{
         buffer::TypedArrayBuffer,
     },
 };
-
-#[derive(Clone, Copy, Debug, Default)]
-pub struct TextLeafMeasure;
-
-impl LeafMeasure for TextLeafMeasure {
-    type Data = Res<'static, Font>;
-    type Node = (&'static TextSize, &'static TextLayout);
-
-    fn measure(
-        &self,
-        leaf: &<Self::Node as QueryData>::Item<'_, '_>,
-        data: &<Self::Data as bevy_ecs::system::SystemParam>::Item<'_, '_>,
-        known_dimensions: Size<Option<f32>>,
-        available_space: Size<AvailableSpace>,
-    ) -> Size<f32> {
-        tracing::debug!(?known_dimensions, ?available_space);
-
-        let (text_size, layout) = *leaf;
-        let font = &**data;
-
-        let displacement = font.glyph_displacement();
-        let displacement = Vector2::new(
-            text_size.height * displacement.x / displacement.y,
-            text_size.height,
-        );
-
-        let width_constraint = known_dimensions.width.or(match available_space.width {
-            AvailableSpace::MinContent | AvailableSpace::MaxContent => None,
-            AvailableSpace::Definite(width) => Some(width),
-        });
-        let width_constraint = width_constraint
-            .map(|width_constraint| (width_constraint / displacement.x).floor().max(1.0) as usize);
-
-        let mut line_width = 0;
-        let mut max_line_width = 0;
-        let mut num_lines = 0;
-        let mut is_first_chunk_on_line = true;
-
-        for chunk in &layout.chunks {
-            match chunk {
-                TextLayoutChunk::Glyphs {
-                    span: _,
-                    num_glyphs,
-                } => {
-                    if !is_first_chunk_on_line
-                        && width_constraint.is_some_and(|width_constraint| {
-                            line_width + *num_glyphs > width_constraint
-                        })
-                    {
-                        num_lines += 1;
-                        line_width = *num_glyphs;
-                    }
-                    else {
-                        line_width += *num_glyphs;
-                    }
-
-                    is_first_chunk_on_line = false;
-                    max_line_width = max_line_width.max(line_width);
-                }
-                TextLayoutChunk::Spaces { num_spaces } => {
-                    let num_spaces_on_this_line =
-                        width_constraint.map_or(*num_spaces, |width_constraint| {
-                            let min_spaces_on_this_line =
-                                if is_first_chunk_on_line { 1 } else { 0 };
-
-                            (width_constraint - line_width).max(min_spaces_on_this_line)
-                        });
-
-                    let num_spaces_on_next_line = *num_spaces - num_spaces_on_this_line;
-
-                    line_width += num_spaces_on_this_line;
-
-                    if num_spaces_on_next_line > 0 {
-                        max_line_width = max_line_width.max(line_width);
-                        num_lines += 1;
-                        line_width = num_spaces_on_next_line;
-                    }
-
-                    is_first_chunk_on_line = false;
-                }
-                TextLayoutChunk::Newlines { num_newlines } => {
-                    line_width = 0;
-                    num_lines += *num_newlines;
-                    is_first_chunk_on_line = true;
-                }
-            }
-        }
-
-        Size {
-            width: max_line_width as f32 * displacement.x,
-            height: num_lines as f32 * displacement.y,
-        }
-    }
-}
 
 pub(super) fn setup_text_systems(builder: &mut WorldBuilder) {
     builder
@@ -165,14 +75,80 @@ pub(super) fn setup_text_systems(builder: &mut WorldBuilder) {
         .add_systems(
             schedule::Render,
             (
-                //text_layout.in_set(UiSystems::Layout),
-                compute_text_layouts.before(UiSystems::Layout),
                 create_pipeline.in_set(RenderSystems::BeginFrame),
+                compute_text_layouts.before(UiSystems::Layout),
+                update_glyph_buffers
+                    .after(compute_text_layouts)
+                    .before(render_text),
                 render_text.in_set(UiSystems::Render),
             ),
         );
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+pub struct TextLeafMeasure;
+
+impl LeafMeasure for TextLeafMeasure {
+    type Data = Res<'static, Font>;
+    type Node = (Option<&'static TextSize>, &'static TextBuffer);
+
+    fn measure(
+        &self,
+        (text_size, text_buffer): &mut <Self::Node as QueryData>::Item<'_, '_>,
+        font: &mut <Self::Data as bevy_ecs::system::SystemParam>::Item<'_, '_>,
+        known_dimensions: Size<Option<f32>>,
+        available_space: Size<AvailableSpace>,
+    ) -> Size<f32> {
+        // this is basically the size of a glyph.
+        //
+        // technically glyphs are all different sizes (their minimal bounding boxes),
+        // but since we are using a monospace font each glyph will move the cursor the
+        // same amount.
+        //
+        // this is needed to calculate the width constraint (in "characters") and at the
+        // end when we return the measure
+        let displacement =
+            font.glyph_displacement() * text_size.copied().unwrap_or_default().scaling;
+
+        // calculate width constraint in number of "characters"
+        let width_constraint = known_dimensions.width.or(match available_space.width {
+            AvailableSpace::MinContent | AvailableSpace::MaxContent => None,
+            AvailableSpace::Definite(width) => Some(width),
+        });
+        let width_constraint = width_constraint
+            .map(|width_constraint| (width_constraint / displacement.x).floor().max(1.0) as usize);
+
+        let size = text_buffer.calculate_positions(width_constraint).fold(
+            Vector2::<usize>::zeros(),
+            |mut accu, positioned| {
+                match positioned {
+                    PositionedTextChunk::Glyphs {
+                        span: _,
+                        offset,
+                        num_glyphs,
+                    } => {
+                        accu.x = accu.x.max(offset.x + num_glyphs);
+                        accu.y = accu.y.max(offset.y + 1);
+                    }
+                    PositionedTextChunk::Spaces { offset, num_spaces } => {
+                        accu.x = accu.x.max(offset.x + num_spaces);
+                        accu.y = accu.y.max(offset.y + 1);
+                    }
+                }
+                accu
+            },
+        );
+
+        let size = size.cast::<f32>().component_mul(&displacement);
+
+        Size {
+            width: size.x,
+            height: size.y,
+        }
+    }
+}
+
+/// System that creates the pipeline layout for text rendering
 fn create_pipeline_layout(
     wgpu: Res<WgpuContext>,
     frame_bind_group_layout: Res<FrameBindGroupLayout>,
@@ -225,7 +201,7 @@ fn create_pipeline(
     mut commands: Commands,
 ) {
     for (entity, surface) in surfaces {
-        tracing::debug!(surface = %entity, "creating text render pipeline for surface");
+        tracing::trace!(surface = %entity, "creating text render pipeline for surface");
 
         let pipeline = wgpu
             .device
@@ -275,17 +251,21 @@ fn create_pipeline(
     }
 }
 
+/// System that calculates text layouts
+///
+/// The layout doesn't contain positions for the glyphs yet. This is done when
+/// the text measure function runs.
 fn compute_text_layouts(
     font: Res<Font>,
     texts: Populated<
-        (Entity, &Text, Option<&mut TextLayout>),
-        Or<(Changed<Text>, Without<TextLayout>)>,
+        (Entity, &Text, Option<&mut TextBuffer>, &mut LayoutCache),
+        Or<(Changed<Text>, Without<TextBuffer>)>,
     >,
     mut commands: Commands,
-    mut layout_run_buffer: Local<Vec<TextLayoutChunk>>,
+    mut layout_run_buffer: Local<Vec<TextBufferChunk>>,
 ) {
-    for (entity, text, computed_text_layout) in texts {
-        tracing::debug!(?entity, text = text.text, "layout text");
+    for (entity, text, computed_text_layout, mut layout_cache) in texts {
+        tracing::trace!(?entity, text = text.text, "layout text");
 
         assert!(layout_run_buffer.is_empty());
 
@@ -294,26 +274,26 @@ fn compute_text_layouts(
         while let Some((start_index, character)) = characters.next() {
             match character {
                 ' ' => {
-                    if let Some(TextLayoutChunk::Spaces { num_spaces }) =
+                    if let Some(TextBufferChunk::Spaces { num_spaces }) =
                         layout_run_buffer.last_mut()
                     {
                         *num_spaces += 1;
                     }
                     else {
-                        layout_run_buffer.push(TextLayoutChunk::Spaces { num_spaces: 1 });
+                        layout_run_buffer.push(TextBufferChunk::Spaces { num_spaces: 1 });
                     }
                 }
                 '\r' => {
                     // nop
                 }
                 '\n' => {
-                    if let Some(TextLayoutChunk::Newlines { num_newlines }) =
+                    if let Some(TextBufferChunk::Newlines { num_newlines }) =
                         layout_run_buffer.last_mut()
                     {
                         *num_newlines += 1;
                     }
                     else {
-                        layout_run_buffer.push(TextLayoutChunk::Newlines { num_newlines: 1 });
+                        layout_run_buffer.push(TextBufferChunk::Newlines { num_newlines: 1 });
                     }
                 }
                 _ => {
@@ -322,14 +302,14 @@ fn compute_text_layouts(
                             .peek()
                             .map_or_else(|| text.text.len(), |(index, _)| *index);
 
-                        if let Some(TextLayoutChunk::Glyphs { span, num_glyphs }) =
+                        if let Some(TextBufferChunk::Glyphs { span, num_glyphs }) =
                             layout_run_buffer.last_mut()
                         {
                             span.end = end_index;
                             *num_glyphs += 1;
                         }
                         else {
-                            layout_run_buffer.push(TextLayoutChunk::Glyphs {
+                            layout_run_buffer.push(TextBufferChunk::Glyphs {
                                 span: start_index..end_index,
                                 num_glyphs: 1,
                             });
@@ -346,20 +326,37 @@ fn compute_text_layouts(
                 .extend(layout_run_buffer.drain(..));
         }
         else {
-            commands.entity(entity).insert(TextLayout {
+            commands.entity(entity).insert(TextBuffer {
                 chunks: std::mem::take(&mut *layout_run_buffer),
             });
         }
+
+        // clear tree layout cache
+        layout_cache.clear();
     }
 }
 
 #[derive(Debug, Component)]
-pub struct TextLayout {
-    chunks: Vec<TextLayoutChunk>,
+pub struct TextBuffer {
+    chunks: Vec<TextBufferChunk>,
 }
 
-#[derive(Debug)]
-enum TextLayoutChunk {
+impl TextBuffer {
+    fn calculate_positions(
+        &self,
+        width_constraint: Option<usize>,
+    ) -> impl Iterator<Item = PositionedTextChunk> {
+        PositionedTextChunks {
+            chunks: self.chunks.iter(),
+            width_constraint,
+            cursor: Vector2::zeros(),
+            buffered_spaces: 0,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+enum TextBufferChunk {
     Glyphs {
         span: Range<usize>,
         num_glyphs: usize,
@@ -372,158 +369,227 @@ enum TextLayoutChunk {
     },
 }
 
-/*
-/// System that performs text layout.
-///
-/// This will do the leaf measurement and update glyph buffers for texts
-fn text_layout(
+struct PositionedTextChunks<'a> {
+    chunks: std::slice::Iter<'a, TextBufferChunk>,
+    width_constraint: Option<usize>,
+    cursor: Vector2<usize>,
+    buffered_spaces: usize,
+}
+
+impl<'a> Iterator for PositionedTextChunks<'a> {
+    type Item = PositionedTextChunk;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            while self.buffered_spaces > 0 {
+                let mut num_spaces =
+                    self.width_constraint
+                        .map_or(self.buffered_spaces, |width_constraint| {
+                            width_constraint
+                                .saturating_sub(self.cursor.x)
+                                .min(self.buffered_spaces)
+                        });
+
+                if num_spaces == 0 {
+                    if self.cursor.x == 0 {
+                        num_spaces = 1;
+                    }
+                    else {
+                        self.cursor.y += 1;
+                        self.cursor.x = 0;
+                        continue;
+                    }
+                }
+
+                self.buffered_spaces -= num_spaces;
+                let positioned = PositionedTextChunk::Spaces {
+                    offset: self.cursor,
+                    num_spaces,
+                };
+
+                self.cursor.x += num_spaces;
+
+                return Some(positioned);
+            }
+
+            match self.chunks.next()? {
+                TextBufferChunk::Glyphs { span, num_glyphs } => {
+                    // a span of glyphs that are always on the same line
+
+                    if self.cursor.x > 0
+                        && self.width_constraint.is_some_and(|width_constraint| {
+                            self.cursor.x + *num_glyphs > width_constraint
+                        })
+                    {
+                        // this bit of text would overflow the line and we can move it to the
+                        // next line (we don't move it to the next
+                        // line if it's the first chunk of text on a
+                        // line)
+                        self.cursor.y += 1;
+                        self.cursor.x = 0;
+                    }
+
+                    let positioned = PositionedTextChunk::Glyphs {
+                        span: span.clone(),
+                        offset: self.cursor,
+                        num_glyphs: *num_glyphs,
+                    };
+
+                    self.cursor.x += *num_glyphs;
+
+                    return Some(positioned);
+                }
+                TextBufferChunk::Spaces { num_spaces } => {
+                    // a bunch of spaces. they can be split whever.
+
+                    self.buffered_spaces = *num_spaces;
+                }
+                TextBufferChunk::Newlines { num_newlines } => {
+                    // new lines
+
+                    self.cursor.x = 0;
+                    self.cursor.y += *num_newlines;
+                }
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+enum PositionedTextChunk {
+    Glyphs {
+        span: Range<usize>,
+        offset: Vector2<usize>,
+        num_glyphs: usize,
+    },
+    Spaces {
+        offset: Vector2<usize>,
+        num_spaces: usize,
+    },
+}
+
+fn update_glyph_buffers(
     font: Res<Font>,
-    texts: Populated<(
-        Entity,
-        Ref<Text>,
-        &mut LeafMeasure,
-        Option<&mut GlyphBuffer>,
-    )>,
+    texts: Populated<
+        (
+            Entity,
+            &Text,
+            &TextBuffer,
+            &TextSize,
+            &RoundedLayout,
+            Option<&mut GlyphBuffer>,
+        ),
+        Or<(
+            Changed<TextBuffer>,
+            Changed<RoundedLayout>,
+            Without<GlyphBuffer>,
+        )>,
+    >,
     mut glyph_buffer_data: Local<Vec<GlyphData>>,
     wgpu: Res<WgpuContext>,
     text_pipeline_layout: Res<TextPipelineLayout>,
     mut staging: ResMut<Staging>,
     mut commands: Commands,
 ) {
-    for (entity, text, mut leaf_measure, glyph_buffer) in texts {
-        // todo
-        let scaling = 2.0;
+    let displacement = font.glyph_displacement();
 
+    for (entity, text, text_buffer, text_size, rounded_layout, glyph_buffer) in texts {
         assert!(glyph_buffer_data.is_empty());
-        let mut update_glyph_buffer = false;
 
-        leaf_measure.respond_with(
-            |known_dimensions: Size<Option<f32>>, available_space: Size<AvailableSpace>| {
-                if text.is_changed() {
-                    tracing::debug!(?known_dimensions, ?available_space);
-
-                    let width_constraint = known_dimensions.width.or(match available_space.width {
-                        AvailableSpace::MinContent | AvailableSpace::MaxContent => None,
-                        AvailableSpace::Definite(width) => Some(width),
-                    });
-
-                    // todo
-                    //let _ = (known_dimensions, available_space);
-                    //let width_constraint = None;
-
-                    tracing::debug!(?entity, text = text.text, ?width_constraint, "layout text");
-
-                    let mut offset = Vector2::zeros();
-                    let displacement = font.glyph_displacement() * scaling;
-                    let mut word_width = 0.0;
-                    let mut is_first_word_on_line = true;
-                    let mut max_width: f32 = 0.0;
-
-                    for (_index, character) in text.text.char_indices() {
-                        if character == '\n' {
-                            // new line
-                            offset.x = 0.0;
-                            offset.y += displacement.y;
-                            is_first_word_on_line = true;
-                        }
-                        else if character == ' ' {
-                            // space
-
-                            is_first_word_on_line = false;
-                            offset.x += displacement.x;
-
-                            if width_constraint
-                                .is_some_and(|width_constraint| offset.x > width_constraint)
-                            {
-                                // if the space would overflow the width we just go to the next line
-                                offset.x = 0.0;
-                                offset.y += displacement.y;
-                            }
-                        }
-                        else if let Some(glyph_id) = font.glyph_id(character) {
-                            // text character
-
-                            offset.x += displacement.x;
-                            word_width += displacement.x;
-
-                            if width_constraint
-                                .is_some_and(|width_constraint| offset.x > width_constraint)
-                                && !is_first_word_on_line
-                            {
-                                // move the whole word to the next line
-                                offset.x = word_width;
-                                offset.y += displacement.y;
-                            }
-
-                            glyph_buffer_data.push(GlyphData {
-                                offset: offset,
-                                glyph_id,
-                                scaling,
-                            })
-                        }
-
-                        max_width = max_width.max(offset.x);
-                    }
-
-                    update_glyph_buffer = true;
-
-                    Some(Size {
-                        width: max_width,
-                        height: offset.y + displacement.y,
-                    })
-                }
-                else {
-                    None
-                }
-            },
+        let content_offset = Vector2::new(
+            rounded_layout.content_box_x(),
+            rounded_layout.content_box_y(),
+        );
+        let content_size = Vector2::new(
+            rounded_layout.content_box_width(),
+            rounded_layout.content_box_height(),
         );
 
-        if update_glyph_buffer {
-            if glyph_buffer_data.is_empty() {
-                commands.entity(entity).try_remove::<GlyphBuffer>();
-            }
-            else {
-                if let Some(mut glyph_buffer) = glyph_buffer {
-                    let glyph_buffer = &mut *glyph_buffer;
+        let displacement = displacement * text_size.scaling;
+        let width_constraint = (content_size.x / displacement.x).floor().max(0.0) as usize;
 
-                    glyph_buffer.buffer.write_all(
-                        &glyph_buffer_data,
-                        |buffer| {
-                            glyph_buffer.bind_group = create_glyph_buffer_bind_group(
-                                &wgpu.device,
-                                &text_pipeline_layout.text_bind_group_layout,
-                                buffer,
-                            );
-                        },
-                        &mut *staging,
-                    );
+        tracing::trace!(?entity, text = ?text.text, ?content_offset, ?content_size, "update glyph buffer");
+
+        for positioned in text_buffer.calculate_positions(Some(width_constraint)) {
+            match positioned {
+                PositionedTextChunk::Glyphs {
+                    span,
+                    offset,
+                    num_glyphs: _,
+                } => {
+                    let mut offset =
+                        offset.cast::<f32>().component_mul(&displacement) + content_offset;
+
+                    for character in text.text[span.clone()].chars() {
+                        if let Some(glyph_id) = font.glyph_id_or_replacement(character) {
+                            glyph_buffer_data.push(GlyphData {
+                                offset,
+                                glyph_id,
+                                scaling: text_size.scaling,
+                            });
+
+                            offset.x += displacement.x;
+                        }
+                    }
                 }
-                else {
-                    let buffer = TypedArrayBuffer::from_slice(
-                        wgpu.device.clone(),
-                        "text/glyphs",
-                        wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                        &glyph_buffer_data,
-                    );
-
-                    let bind_group = create_glyph_buffer_bind_group(
-                        &wgpu.device,
-                        &text_pipeline_layout.text_bind_group_layout,
-                        buffer.buffer(),
-                    );
-
-                    commands.entity(entity).insert(GlyphBuffer {
-                        buffer,
-                        bind_group,
-                        num_glyphs: glyph_buffer_data.len().try_into().unwrap(),
-                    });
+                PositionedTextChunk::Spaces {
+                    offset: _,
+                    num_spaces: _,
+                } => {
+                    // nop
                 }
-
-                glyph_buffer_data.clear();
             }
         }
+
+        // write glyph buffer data
+        let num_glyphs = glyph_buffer_data.len().try_into().unwrap();
+        if num_glyphs == 0 {
+            if glyph_buffer.is_some() {
+                commands.entity(entity).try_remove::<GlyphBuffer>();
+            }
+        }
+        else {
+            if let Some(mut glyph_buffer) = glyph_buffer {
+                let glyph_buffer = &mut *glyph_buffer;
+
+                glyph_buffer.buffer.write_all(
+                    &glyph_buffer_data,
+                    |buffer| {
+                        glyph_buffer.bind_group = create_glyph_buffer_bind_group(
+                            &wgpu.device,
+                            &text_pipeline_layout.text_bind_group_layout,
+                            buffer,
+                        );
+                    },
+                    &mut *staging,
+                );
+                glyph_buffer.num_glyphs = num_glyphs;
+            }
+            else {
+                let buffer = TypedArrayBuffer::from_slice(
+                    wgpu.device.clone(),
+                    "text/glyphs",
+                    wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                    &glyph_buffer_data,
+                );
+
+                let bind_group = create_glyph_buffer_bind_group(
+                    &wgpu.device,
+                    &text_pipeline_layout.text_bind_group_layout,
+                    buffer.buffer(),
+                );
+
+                commands.entity(entity).insert(GlyphBuffer {
+                    buffer,
+                    bind_group,
+                    num_glyphs,
+                });
+            }
+
+            glyph_buffer_data.clear();
+        }
     }
-} */
+}
 
 fn render_text(
     font: Res<FontBindGroup>,

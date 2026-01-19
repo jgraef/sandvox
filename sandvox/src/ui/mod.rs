@@ -18,6 +18,7 @@ use color_eyre::eyre::Error;
 use nalgebra::Vector2;
 
 pub use crate::ui::layout::{
+    LayoutCache,
     LeafMeasure,
     RoundedLayout,
 };
@@ -41,18 +42,6 @@ use crate::{
         },
     },
 };
-
-/*
-
-# TODO for tomorrow:
-
-- the text module (in render) should probably only handle fonts and define the components.
-- then we need to have a system that does the leaf measure for text. it will probably need to shape the text.
-- all ui elements (including text) will then have to generate meshes (maybe we can only do 1?). they'll either use the font atlas or a texture atlas for UI elements
-- the ui mesh is then rendered.
-- if we want to embed text in the world we need render it in the world. keep this in mind so we can easily reuse code later.
-
-*/
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct UiPlugin<L = DefaultLeafMeasure> {
@@ -144,8 +133,8 @@ impl LeafMeasure for DefaultLeafMeasure {
 
     fn measure(
         &self,
-        leaf: &<Self::Node as QueryData>::Item<'_, '_>,
-        data: &<Self::Data as bevy_ecs::system::SystemParam>::Item<'_, '_>,
+        leaf: &mut <Self::Node as QueryData>::Item<'_, '_>,
+        data: &mut <Self::Data as bevy_ecs::system::SystemParam>::Item<'_, '_>,
         known_dimensions: taffy::Size<Option<f32>>,
         available_space: taffy::Size<taffy::AvailableSpace>,
     ) -> taffy::Size<f32> {
