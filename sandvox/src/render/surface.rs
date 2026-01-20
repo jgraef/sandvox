@@ -34,7 +34,7 @@ pub(super) fn create_surfaces(
     mut commands: Commands,
 ) {
     for (entity, window_handle, window_size) in windows {
-        tracing::info!(?entity, "creating surface");
+        tracing::info!(%entity, "creating surface");
 
         let surface = Surface::new(&wgpu, &window_handle, window_size.size, &config);
         commands.entity(entity.entity).insert(surface);

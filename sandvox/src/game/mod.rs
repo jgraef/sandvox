@@ -37,7 +37,6 @@ use bevy_ecs::{
 use color_eyre::eyre::Error;
 use nalgebra::{
     Point3,
-    Vector2,
     Vector3,
 };
 use palette::WithAlpha;
@@ -97,10 +96,7 @@ use crate::{
             AtlasSystems,
         },
     },
-    ui::{
-        UiSurface,
-        layout::Style,
-    },
+    ui::layout::Style,
     voxel::{
         chunk_generator::ChunkGeneratorPlugin,
         chunk_map::ChunkMapPlugin,
@@ -219,7 +215,6 @@ impl Plugin for GamePlugin {
                     load_block_types.in_set(AtlasSystems::CollectTextures),
                     create_terrain_generator.after(load_block_types),
                     init_player,
-                    init_debug_overlay,
                 ),
             )
             .add_systems(
@@ -250,7 +245,11 @@ fn create_terrain_generator(
     //commands.insert_resource(TestChunkGenerator::new(&block_types));
 }
 
-fn init_player(config: Res<GameConfig>, mut commands: Commands) {
+fn init_player(
+    config: Res<GameConfig>,
+    mut fps_counter_config: ResMut<FpsCounterConfig>,
+    mut commands: Commands,
+) {
     tracing::debug!("initializing world");
 
     let chunk_side_length = CHUNK_SIZE as f32;
@@ -287,25 +286,16 @@ fn init_player(config: Res<GameConfig>, mut commands: Commands) {
             radius: Vector3::repeat(config.chunk_load_distance),
         },
     ));
-}
 
-#[derive(Clone, Copy, Debug, Default, Component)]
-struct DebugOverlay;
-
-fn init_debug_overlay(mut fps_counter_config: ResMut<FpsCounterConfig>, mut commands: Commands) {
+    // create debug ui
     fps_counter_config.measurement_inverval = Duration::from_millis(100);
 
     commands
-        .spawn((
-            UiSurface {
-                size: Vector2::new(400.0, 400.0),
-            },
-            {
-                let mut style = Style::default();
-                style.display = taffy::style::Display::Block;
-                style
-            },
-        ))
+        .spawn((RenderTarget(window), {
+            let mut style = Style::default();
+            style.display = taffy::style::Display::Block;
+            style
+        }))
         .with_children(|spawner| {
             spawner.spawn((
                 Text::from("Hello World!"),
@@ -321,6 +311,9 @@ fn init_debug_overlay(mut fps_counter_config: ResMut<FpsCounterConfig>, mut comm
             ));
         });
 }
+
+#[derive(Clone, Copy, Debug, Default, Component)]
+struct DebugOverlay;
 
 fn update_debug_overlay(
     fps_counter: Res<FpsCounter>,

@@ -53,8 +53,8 @@ use crate::{
         schedule,
     },
     ui::{
-        UiSurface,
         UiSystems,
+        Viewport,
     },
 };
 
@@ -81,7 +81,7 @@ where
             initialize_layout_components,
             purge_dirty_cache_entries,
             layout_trees::<L>
-                .run_if(any_match_filter::<Changed<LayoutCache>>)
+                .run_if(any_match_filter::<Or<(Changed<LayoutCache>, Changed<Viewport>)>>)
                 .after(initialize_layout_components)
                 .after(purge_dirty_cache_entries)
                 .in_set(UiSystems::Layout),
@@ -104,12 +104,12 @@ where
 /// ```
 fn layout_trees<L>(
     mut tree: Tree<L>,
-    roots: Populated<(Entity, &UiSurface), (With<Style>, Without<ChildOf>)>,
+    roots: Populated<(Entity, &Viewport), (With<Style>, Without<ChildOf>)>,
 ) where
     L: LeafMeasure,
 {
     for (entity, surface) in roots.iter() {
-        tree.compute_root_layout(entity, surface.size);
+        tree.compute_root_layout(entity, surface.size.cast());
     }
 }
 
@@ -136,7 +136,7 @@ fn initialize_layout_components(
 
 fn purge_dirty_cache_entries(
     mut params: ParamSet<(
-        Populated<Entity, Changed<LayoutCache>>,
+        Populated<Entity, Or<(Changed<LayoutCache>, Changed<ChildOf>, Changed<Children>)>>,
         Query<(&mut LayoutCache, Option<&ChildOf>)>,
     )>,
     mut purged: Local<EntityHashSet>,

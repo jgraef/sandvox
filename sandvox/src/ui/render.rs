@@ -1,8 +1,9 @@
 use bevy_ecs::{
     component::Component,
-    name::NameOrEntity,
+    entity::Entity,
     query::{
         Changed,
+        With,
         Without,
     },
     resource::Resource,
@@ -42,11 +43,15 @@ use crate::{
             FrameBindGroupLayout,
         },
         staging::Staging,
-        surface::Surface,
+        surface::{
+            RenderTarget,
+            Surface,
+        },
     },
     ui::{
         RoundedLayout,
         UiSystems,
+        Viewport,
     },
     wgpu::{
         WgpuContext,
@@ -101,7 +106,7 @@ fn create_pipeline_layout(
 fn create_pipeline(
     wgpu: Res<WgpuContext>,
     debug_pipeline_layout: Res<DebugPipelineLayout>,
-    surfaces: Populated<(NameOrEntity, &Surface), Without<DebugPipeline>>,
+    surfaces: Populated<(Entity, &Surface), Without<DebugPipeline>>,
     mut commands: Commands,
 ) {
     for (entity, surface) in surfaces {
@@ -147,9 +152,7 @@ fn create_pipeline(
                 cache: None,
             });
 
-        commands
-            .entity(entity.entity)
-            .insert(DebugPipeline { pipeline });
+        commands.entity(entity).insert(DebugPipeline { pipeline });
     }
 }
 
@@ -222,20 +225,26 @@ fn update_debug_mesh(
     index_buffer_data.clear();
 }
 
-fn render_debug_mesh(frames: Populated<(&mut Frame, &DebugPipeline)>, debug_mesh: Res<DebugMesh>) {
+fn render_debug_mesh(
+    viewports: Populated<&RenderTarget, With<Viewport>>,
+    mut frames: Populated<(&mut Frame, &DebugPipeline)>,
+    debug_mesh: Res<DebugMesh>,
+) {
     if let (Some(vertex_buffer), Some(index_buffer)) = (
         debug_mesh.vertex_buffer.try_buffer(),
         debug_mesh.index_buffer.try_buffer(),
     ) {
         let num_indices = debug_mesh.index_buffer.len().try_into().unwrap();
 
-        for (mut frame, text_pipeline) in frames {
-            let render_pass = frame.render_pass_mut();
+        for render_target in viewports {
+            if let Ok((mut frame, debug_pipeline)) = frames.get_mut(render_target.0) {
+                let render_pass = frame.render_pass_mut();
 
-            render_pass.set_pipeline(&text_pipeline.pipeline);
-            render_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
-            render_pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-            render_pass.draw_indexed(0..num_indices, 0, 0..1);
+                render_pass.set_pipeline(&debug_pipeline.pipeline);
+                render_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+                render_pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                render_pass.draw_indexed(0..num_indices, 0, 0..1);
+            }
         }
     }
 }

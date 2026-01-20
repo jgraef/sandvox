@@ -3,11 +3,11 @@ use std::ops::Range;
 use bevy_ecs::{
     component::Component,
     entity::Entity,
-    name::NameOrEntity,
     query::{
         Changed,
         Or,
         QueryData,
+        With,
         Without,
     },
     resource::Resource,
@@ -42,7 +42,10 @@ use crate::{
             FrameBindGroupLayout,
         },
         staging::Staging,
-        surface::Surface,
+        surface::{
+            RenderTarget,
+            Surface,
+        },
         text::{
             Font,
             FontBindGroup,
@@ -57,6 +60,7 @@ use crate::{
         LeafMeasure,
         RoundedLayout,
         UiSystems,
+        Viewport,
     },
     wgpu::{
         WgpuContext,
@@ -197,7 +201,7 @@ fn create_pipeline_layout(
 fn create_pipeline(
     wgpu: Res<WgpuContext>,
     text_pipeline_layout: Res<TextPipelineLayout>,
-    surfaces: Populated<(NameOrEntity, &Surface), Without<TextPipeline>>,
+    surfaces: Populated<(Entity, &Surface), Without<TextPipeline>>,
     mut commands: Commands,
 ) {
     for (entity, surface) in surfaces {
@@ -245,9 +249,7 @@ fn create_pipeline(
                 cache: None,
             });
 
-        commands
-            .entity(entity.entity)
-            .insert(TextPipeline { pipeline });
+        commands.entity(entity).insert(TextPipeline { pipeline });
     }
 }
 
@@ -592,21 +594,24 @@ fn update_glyph_buffers(
 }
 
 fn render_text(
+    viewports: Populated<&RenderTarget, With<Viewport>>,
+    mut frames: Populated<(&mut Frame, &TextPipeline)>,
     font: Res<FontBindGroup>,
-    frames: Populated<(&mut Frame, &TextPipeline)>,
     texts: Populated<&GlyphBuffer>,
 ) {
-    for (mut frame, text_pipeline) in frames {
-        let render_pass = frame.render_pass_mut();
+    for render_target in viewports {
+        if let Ok((mut frame, text_pipeline)) = frames.get_mut(render_target.0) {
+            let render_pass = frame.render_pass_mut();
 
-        render_pass.set_pipeline(&text_pipeline.pipeline);
-        render_pass.set_bind_group(1, Some(&font.bind_group), &[]);
+            render_pass.set_pipeline(&text_pipeline.pipeline);
+            render_pass.set_bind_group(1, Some(&font.bind_group), &[]);
 
-        for glyph_buffer in &texts {
-            render_pass.set_bind_group(2, Some(&glyph_buffer.bind_group), &[]);
+            for glyph_buffer in &texts {
+                render_pass.set_bind_group(2, Some(&glyph_buffer.bind_group), &[]);
 
-            let num_vertices = glyph_buffer.num_glyphs * 6;
-            render_pass.draw(0..num_vertices, 0..1);
+                let num_vertices = glyph_buffer.num_glyphs * 6;
+                render_pass.draw(0..num_vertices, 0..1);
+            }
         }
     }
 }

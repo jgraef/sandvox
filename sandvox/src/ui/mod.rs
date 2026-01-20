@@ -4,13 +4,24 @@ mod text;
 
 use bevy_ecs::{
     component::Component,
+    entity::Entity,
+    hierarchy::ChildOf,
+    name::NameOrEntity,
     query::{
         AnyOf,
+        Changed,
         QueryData,
+        With,
+        Without,
     },
+    relationship::RelationshipTarget,
     schedule::{
         IntoScheduleConfigs,
         SystemSet,
+    },
+    system::{
+        Commands,
+        Populated,
     },
 };
 use color_eyre::eyre::Error;
@@ -22,6 +33,7 @@ pub use crate::ui::layout::{
     RoundedLayout,
 };
 use crate::{
+    app::WindowSize,
     ecs::{
         plugin::{
             Plugin,
@@ -29,10 +41,17 @@ use crate::{
         },
         schedule,
     },
-    render::RenderSystems,
+    render::{
+        RenderSystems,
+        surface::{
+            RenderSources,
+            RenderTarget,
+        },
+    },
     ui::{
         layout::{
             LayoutConfig,
+            Style,
             setup_layout_systems,
         },
         render::setup_render_systems,
@@ -63,6 +82,14 @@ where
         setup_text_systems(builder);
 
         builder
+            .add_systems(
+                schedule::Render,
+                (
+                    create_viewports_from_render_targets,
+                    update_viewport_from_surfaces,
+                )
+                    .before(UiSystems::Layout),
+            )
             .configure_system_sets(
                 schedule::Render,
                 UiSystems::Layout.before(UiSystems::Render),
@@ -85,8 +112,37 @@ pub enum UiSystems {
 }
 
 #[derive(Clone, Copy, Debug, Default, Component)]
-pub struct UiSurface {
-    pub size: Vector2<f32>,
+pub struct Viewport {
+    pub size: Vector2<u32>,
+}
+
+fn create_viewports_from_render_targets(
+    windows: Populated<(NameOrEntity, &WindowSize), Changed<WindowSize>>,
+    roots: Populated<(Entity, &RenderTarget), (With<Style>, Without<ChildOf>, Without<Viewport>)>,
+    mut commands: Commands,
+) {
+    for (entity, render_target) in roots {
+        if let Ok((window_name, window_size)) = windows.get(render_target.0) {
+            tracing::debug!(window = %window_name, size = ?window_size.size, "create ui viewport");
+
+            commands.entity(entity).insert(Viewport {
+                size: window_size.size,
+            });
+        }
+    }
+}
+
+fn update_viewport_from_surfaces(
+    windows: Populated<(&WindowSize, &RenderSources), Changed<WindowSize>>,
+    mut viewports: Populated<&mut Viewport>,
+) {
+    for (window_size, render_sources) in windows {
+        for entity in render_sources.iter() {
+            if let Ok(mut viewport) = viewports.get_mut(entity) {
+                viewport.size = window_size.size;
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]

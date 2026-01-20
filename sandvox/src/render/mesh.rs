@@ -11,7 +11,6 @@ use bevy_ecs::{
         With,
         Without,
     },
-    relationship::RelationshipTarget,
     resource::Resource,
     schedule::{
         IntoScheduleConfigs,
@@ -25,7 +24,6 @@ use bevy_ecs::{
         Commands,
         Local,
         Populated,
-        Query,
         Res,
         ResMut,
     },
@@ -55,6 +53,7 @@ use crate::{
         RenderSystems,
         camera::{
             CameraFrustrum,
+            CameraProjection,
             FrustrumCulled,
         },
         frame::{
@@ -63,7 +62,7 @@ use crate::{
         },
         staging::Staging,
         surface::{
-            RenderSources,
+            RenderTarget,
             Surface,
         },
         texture_atlas::{
@@ -92,7 +91,7 @@ impl Plugin for MeshPlugin {
             .add_systems(
                 schedule::Startup,
                 (
-                    create_mesh_render_pipeline_shared
+                    create_mesh_pipeline_layout
                         .in_set(RenderSystems::Setup)
                         .after(AtlasSystems::BuildAtlas),
                     create_instance_buffer.in_set(RenderSystems::Setup),
@@ -101,7 +100,7 @@ impl Plugin for MeshPlugin {
             .add_systems(
                 schedule::Render,
                 (
-                    create_mesh_render_pipeline_for_surfaces.in_set(RenderSystems::BeginFrame),
+                    create_mesh_pipeline.in_set(RenderSystems::BeginFrame),
                     update_instance_buffer
                         .in_set(RenderSystems::BeginFrame)
                         .run_if(
@@ -268,18 +267,18 @@ struct InstanceBuffer {
 struct InstanceId(u32);
 
 #[derive(Debug, Resource)]
-struct MeshRenderPipelineShared {
+struct MeshPipelineLayout {
     layout: wgpu::PipelineLayout,
     shader: wgpu::ShaderModule,
 }
 
 #[derive(Debug, Component)]
-struct MeshRenderPipelinePerSurface {
+struct MeshPipeline {
     pipeline: wgpu::RenderPipeline,
     wireframe_pipeline: wgpu::RenderPipeline,
 }
 
-fn create_mesh_render_pipeline_shared(
+fn create_mesh_pipeline_layout(
     wgpu: Res<WgpuContext>,
     frame_bind_group_layout: Res<FrameBindGroupLayout>,
     atlas: Res<Atlas>,
@@ -300,13 +299,13 @@ fn create_mesh_render_pipeline_shared(
         .device
         .create_shader_module(wgpu::include_wgsl!("mesh.wgsl"));
 
-    commands.insert_resource(MeshRenderPipelineShared { layout, shader });
+    commands.insert_resource(MeshPipelineLayout { layout, shader });
 }
 
-fn create_mesh_render_pipeline_for_surfaces(
+fn create_mesh_pipeline(
     wgpu: Res<WgpuContext>,
-    shared: Res<MeshRenderPipelineShared>,
-    surfaces: Populated<(Entity, NameOrEntity, &Surface), Without<MeshRenderPipelinePerSurface>>,
+    pipeline_layout: Res<MeshPipelineLayout>,
+    surfaces: Populated<(Entity, NameOrEntity, &Surface), Without<MeshPipeline>>,
     mut commands: Commands,
 ) {
     for (entity, name, surface) in surfaces {
@@ -316,9 +315,9 @@ fn create_mesh_render_pipeline_for_surfaces(
             .device
             .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("mesh"),
-                layout: Some(&shared.layout),
+                layout: Some(&pipeline_layout.layout),
                 vertex: wgpu::VertexState {
-                    module: &shared.shader,
+                    module: &pipeline_layout.shader,
                     entry_point: Some("vertex_main"),
                     compilation_options: Default::default(),
                     buffers: &[Vertex::LAYOUT, Instance::LAYOUT],
@@ -341,7 +340,7 @@ fn create_mesh_render_pipeline_for_surfaces(
                 }),
                 multisample: Default::default(),
                 fragment: Some(wgpu::FragmentState {
-                    module: &shared.shader,
+                    module: &pipeline_layout.shader,
                     entry_point: Some("fragment_main"),
                     compilation_options: Default::default(),
                     targets: &[Some(wgpu::ColorTargetState {
@@ -358,9 +357,9 @@ fn create_mesh_render_pipeline_for_surfaces(
             wgpu.device
                 .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                     label: Some("wireframe mesh"),
-                    layout: Some(&shared.layout),
+                    layout: Some(&pipeline_layout.layout),
                     vertex: wgpu::VertexState {
-                        module: &shared.shader,
+                        module: &pipeline_layout.shader,
                         entry_point: Some("vertex_main_wireframe"),
                         compilation_options: Default::default(),
                         buffers: &[Vertex::LAYOUT, Instance::LAYOUT],
@@ -383,7 +382,7 @@ fn create_mesh_render_pipeline_for_surfaces(
                     }),
                     multisample: Default::default(),
                     fragment: Some(wgpu::FragmentState {
-                        module: &shared.shader,
+                        module: &pipeline_layout.shader,
                         entry_point: Some("fragment_main_wireframe"),
                         compilation_options: Default::default(),
                         targets: &[Some(wgpu::ColorTargetState {
@@ -396,12 +395,10 @@ fn create_mesh_render_pipeline_for_surfaces(
                     cache: None,
                 });
 
-        commands
-            .entity(entity)
-            .insert(MeshRenderPipelinePerSurface {
-                pipeline,
-                wireframe_pipeline,
-            });
+        commands.entity(entity).insert(MeshPipeline {
+            pipeline,
+            wireframe_pipeline,
+        });
     }
 }
 
@@ -451,46 +448,46 @@ fn update_instance_buffer(
 
 fn render_meshes_with(
     atlas: Res<Atlas>,
-    frames: Populated<(&mut Frame, &MeshRenderPipelinePerSurface, &RenderSources)>,
-    camera_frustrums: Query<(&CameraFrustrum, &GlobalTransform)>,
+    cameras: Populated<
+        (Option<&CameraFrustrum>, &GlobalTransform, &RenderTarget),
+        With<CameraProjection>,
+    >,
+    mut frames: Populated<(&mut Frame, &MeshPipeline)>,
     meshes: Populated<(&Mesh, &InstanceId, Option<&FrustrumCulled>)>,
     instance_buffer: Res<InstanceBuffer>,
-    get_pipeline: impl Fn(&MeshRenderPipelinePerSurface) -> &wgpu::RenderPipeline,
+    get_pipeline: impl Fn(&MeshPipeline) -> &wgpu::RenderPipeline,
 ) {
     if let Some(instance_buffer) = instance_buffer.buffer.try_buffer() {
         let mut count_rendered = 0;
         let mut count_culled = 0;
 
-        for (mut frame, pipeline, render_sources) in frames {
-            let mut render_pass = frame.render_pass_mut();
+        for (camera_frustrum, camera_transform, render_target) in cameras {
+            if let Ok((mut frame, pipeline)) = frames.get_mut(render_target.0) {
+                let mut render_pass = frame.render_pass_mut();
 
-            render_pass.set_pipeline(get_pipeline(pipeline));
-            render_pass.set_bind_group(1, Some(atlas.bind_group()), &[]);
-            render_pass.set_vertex_buffer(1, instance_buffer.slice(..));
+                render_pass.set_pipeline(get_pipeline(pipeline));
+                render_pass.set_bind_group(1, Some(atlas.bind_group()), &[]);
+                render_pass.set_vertex_buffer(1, instance_buffer.slice(..));
 
-            let frustrum_culling = render_sources.iter().next().and_then(|camera| {
-                camera_frustrums
-                    .get(camera)
-                    .ok()
-                    .map(|(camera_frustrum, camera_transform)| {
-                        (camera_frustrum, camera_transform.isometry().inverse())
-                    })
-            });
+                let frustrum_culling = camera_frustrum.map(|camera_frustrum| {
+                    (camera_frustrum, camera_transform.isometry().inverse())
+                });
 
-            for (mesh, instance_id, cull_aabb) in &meshes {
-                let cull =
-                    frustrum_culling.is_some_and(|(camera_frustrum, camera_transform_inv)| {
-                        cull_aabb.is_some_and(|cull_aabb| {
-                            camera_frustrum.cull(&camera_transform_inv, &cull_aabb.aabb)
-                        })
-                    });
+                for (mesh, instance_id, cull_aabb) in &meshes {
+                    let cull =
+                        frustrum_culling.is_some_and(|(camera_frustrum, camera_transform_inv)| {
+                            cull_aabb.is_some_and(|cull_aabb| {
+                                camera_frustrum.cull(&camera_transform_inv, &cull_aabb.aabb)
+                            })
+                        });
 
-                if cull {
-                    count_culled += 1;
-                }
-                else {
-                    mesh.draw(&mut render_pass, 0, instance_id.0..(instance_id.0 + 1));
-                    count_rendered += 1;
+                    if cull {
+                        count_culled += 1;
+                    }
+                    else {
+                        mesh.draw(&mut render_pass, 0, instance_id.0..(instance_id.0 + 1));
+                        count_rendered += 1;
+                    }
                 }
             }
         }
@@ -501,15 +498,18 @@ fn render_meshes_with(
 
 fn render_meshes(
     atlas: Res<Atlas>,
-    frames: Populated<(&mut Frame, &MeshRenderPipelinePerSurface, &RenderSources)>,
-    camera_frustrums: Query<(&CameraFrustrum, &GlobalTransform)>,
+    cameras: Populated<
+        (Option<&CameraFrustrum>, &GlobalTransform, &RenderTarget),
+        With<CameraProjection>,
+    >,
+    frames: Populated<(&mut Frame, &MeshPipeline)>,
     meshes: Populated<(&Mesh, &InstanceId, Option<&FrustrumCulled>)>,
     instance_buffer: Res<InstanceBuffer>,
 ) {
     render_meshes_with(
         atlas,
+        cameras,
         frames,
-        camera_frustrums,
         meshes,
         instance_buffer,
         |per_surface| &per_surface.pipeline,
@@ -518,15 +518,18 @@ fn render_meshes(
 
 fn render_wireframes(
     atlas: Res<Atlas>,
-    frames: Populated<(&mut Frame, &MeshRenderPipelinePerSurface, &RenderSources)>,
-    camera_frustrums: Query<(&CameraFrustrum, &GlobalTransform)>,
+    cameras: Populated<
+        (Option<&CameraFrustrum>, &GlobalTransform, &RenderTarget),
+        With<CameraProjection>,
+    >,
+    frames: Populated<(&mut Frame, &MeshPipeline)>,
     meshes: Populated<(&Mesh, &InstanceId, Option<&FrustrumCulled>)>,
     instance_buffer: Res<InstanceBuffer>,
 ) {
     render_meshes_with(
         atlas,
+        cameras,
         frames,
-        camera_frustrums,
         meshes,
         instance_buffer,
         |per_surface| &per_surface.wireframe_pipeline,
