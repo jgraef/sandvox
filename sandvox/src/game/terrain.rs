@@ -35,7 +35,7 @@ use crate::{
             BlockTypes,
         },
     },
-    render::texture_atlas::AtlasId,
+    render::atlas::AtlasId,
     util::noise::{
         FractalNoise,
         NoiseFn,

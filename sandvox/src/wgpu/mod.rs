@@ -1,3 +1,4 @@
+pub mod blit;
 pub mod buffer;
 pub mod image;
 

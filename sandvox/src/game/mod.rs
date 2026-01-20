@@ -77,12 +77,19 @@ use crate::{
     },
     input::Keys,
     render::{
+        RenderSystems,
+        atlas::{
+            Padding,
+            SamplerMode,
+        },
         camera::CameraProjection,
         fps_counter::{
             FpsCounter,
             FpsCounterConfig,
         },
+        frame::FrameAtlas,
         mesh::RenderWireframes,
+        staging::Staging,
         surface::{
             ClearColor,
             RenderTarget,
@@ -90,10 +97,6 @@ use crate::{
         text::{
             Text,
             TextSize,
-        },
-        texture_atlas::{
-            AtlasBuilder,
-            AtlasSystems,
         },
     },
     ui::layout::Style,
@@ -109,6 +112,7 @@ use crate::{
             greedy_quads::GreedyMesher,
         },
     },
+    wgpu::WgpuContext,
 };
 
 pub const CHUNK_SIZE: usize = 32;
@@ -212,7 +216,7 @@ impl Plugin for GamePlugin {
             .add_systems(
                 schedule::Startup,
                 (
-                    load_block_types.in_set(AtlasSystems::CollectTextures),
+                    load_block_types.in_set(RenderSystems::Setup),
                     create_terrain_generator.after(load_block_types),
                     init_player,
                 ),
@@ -231,8 +235,22 @@ impl Plugin for GamePlugin {
     }
 }
 
-fn load_block_types(mut atlas_builder: ResMut<AtlasBuilder>, mut commands: Commands) {
-    let block_types = BlockTypes::load("assets/blocks.toml", &mut atlas_builder).unwrap();
+fn load_block_types(
+    mut atlas: ResMut<FrameAtlas>,
+    wgpu: Res<WgpuContext>,
+    mut staging: ResMut<Staging>,
+    mut commands: Commands,
+) {
+    let block_types = BlockTypes::load("assets/blocks.toml", |image| {
+        Ok(atlas.insert_image(
+            image,
+            Padding::uniform(2),
+            SamplerMode::both(wgpu::AddressMode::Repeat),
+            &wgpu.device,
+            &mut *staging,
+        )?)
+    })
+    .unwrap();
     commands.insert_resource(block_types);
 }
 

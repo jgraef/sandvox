@@ -183,7 +183,7 @@ fn update_camera_matrices(
                 projection * transform
             };
 
-            frame_uniform.set_camera_matrix(camera_matrix);
+            frame_uniform.data.camera_matrix = camera_matrix;
         }
     }
 }

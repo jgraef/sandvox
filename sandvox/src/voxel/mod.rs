@@ -8,7 +8,7 @@ use std::fmt::Debug;
 
 use bevy_ecs::system::SystemParam;
 
-use crate::render::texture_atlas::AtlasId;
+use crate::render::atlas::AtlasId;
 
 pub trait Voxel: Clone + Debug + Send + Sync + 'static {
     type FetchData: SystemParam;

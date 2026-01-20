@@ -93,7 +93,6 @@ use crate::{
         fps_counter::FpsCounterPlugin,
         mesh::MeshPlugin,
         text::FontPlugin,
-        texture_atlas::AtlasPlugin,
     },
     sound::SoundPlugin,
     ui::DefaultUiPlugin,
@@ -149,7 +148,6 @@ impl App {
                 font: PathBuf::from("assets/cozette.bdf"),
             })?
             .add_plugin(CameraPlugin)?
-            .add_plugin(AtlasPlugin)?
             .add_plugin(DefaultUiPlugin::default())?;
 
         if !config.sound.disabled {

@@ -53,22 +53,24 @@ struct FrameUniform {
 @binding(0)
 var<uniform> frame_uniform: FrameUniform;
 
-@group(1)
-@binding(0)
-var texture_albedo: texture_2d<f32>;
-
-@group(1)
+@group(0)
 @binding(1)
-var sampler_albedo: sampler;
+var atlas_texture: texture_2d<f32>;
 
-struct AtlasSlot {
-    offset: vec2f,
-    size: vec2f,
+struct AtlasEntry {
+    uv_offset: vec2f,
+    uv_size: vec2f,
 }
 
-@group(1)
+@group(0)
 @binding(2)
-var<storage, read> atlas_data: array<AtlasSlot>;
+var<storage, read> atlas_data: array<AtlasEntry>;
+
+
+@group(0)
+@binding(3)
+var default_sampler: sampler;
+
 
 
 @vertex
@@ -96,7 +98,7 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4f {
     let attenuation = mix(0.6, 1.0, dot(normal, light_dir));
 
     let uv = atlas_map_uv(input.texture_id, input.uv);
-    var color = textureSample(texture_albedo, sampler_albedo, uv);
+    var color = textureSample(atlas_texture, default_sampler, uv);
 
     color = vec4f(color.rgb * attenuation, 1);
     return color;
@@ -122,5 +124,5 @@ fn fragment_main_wireframe(input: VertexOutputWireframe) -> @location(0) vec4f {
 
 fn atlas_map_uv(texture_id: u32, uv: vec2f) -> vec2f {
     let entry = atlas_data[texture_id];
-    return mix(entry.offset, entry.offset + entry.size, uv % vec2f(1));
+    return entry.uv_offset + (uv % vec2f(1)) * entry.uv_size;
 }

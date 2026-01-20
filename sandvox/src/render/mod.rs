@@ -1,3 +1,4 @@
+pub mod atlas;
 pub mod camera;
 pub mod fps_counter;
 pub mod frame;
@@ -5,13 +6,13 @@ pub mod mesh;
 pub mod staging;
 pub mod surface;
 pub mod text;
-pub mod texture_atlas;
 
 use bevy_ecs::{
     resource::Resource,
     schedule::{
         IntoScheduleConfigs,
         SystemSet,
+        common_conditions::resource_changed,
     },
 };
 use color_eyre::eyre::Error;
@@ -30,10 +31,15 @@ use crate::{
     },
     render::{
         frame::{
+            FrameAtlas,
             begin_frames,
+            create_default_sampler,
             create_frame_bind_group_layout,
             create_frames,
+            create_shared_atlas,
             end_frames,
+            update_frame_bind_groups,
+            update_frame_uniform,
         },
         staging::{
             flush_staging,
@@ -60,7 +66,12 @@ impl Plugin for RenderPlugin {
             .add_systems(
                 schedule::Startup,
                 (
-                    (initialize_staging, create_frame_bind_group_layout)
+                    (
+                        initialize_staging,
+                        create_frame_bind_group_layout,
+                        create_shared_atlas,
+                        create_default_sampler,
+                    )
                         .after(WgpuSystems::CreateContext)
                         .before(RenderSystems::Setup),
                     flush_staging.after(RenderSystems::Setup),
@@ -74,6 +85,12 @@ impl Plugin for RenderPlugin {
                     (create_frames, begin_frames)
                         .chain()
                         .in_set(RenderSystems::BeginFrame),
+                    (
+                        update_frame_bind_groups.run_if(resource_changed::<FrameAtlas>),
+                        update_frame_uniform,
+                    )
+                        .in_set(RenderSystems::EndFrame)
+                        .before(end_frames),
                     end_frames.in_set(RenderSystems::EndFrame),
                 ),
             )

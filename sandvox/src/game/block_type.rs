@@ -19,10 +19,7 @@ use color_eyre::{
 use image::RgbaImage;
 
 use crate::{
-    render::texture_atlas::{
-        AtlasBuilder,
-        AtlasId,
-    },
+    render::atlas::AtlasId,
     util::image::ImageLoadExt,
     voxel::BlockFace,
 };
@@ -49,7 +46,10 @@ struct Inner {
 }
 
 impl BlockTypes {
-    pub fn load(path: impl AsRef<Path>, atlas_builder: &mut AtlasBuilder) -> Result<Self, Error> {
+    pub fn load(
+        path: impl AsRef<Path>,
+        mut insert_image: impl FnMut(&RgbaImage) -> Result<AtlasId, Error>,
+    ) -> Result<Self, Error> {
         let toml_directory = path.as_ref().parent().unwrap();
         let toml = std::fs::read(&path)?;
         let block_defs: config::BlockDefs = toml::from_slice(&toml)?;
@@ -79,7 +79,7 @@ impl BlockTypes {
                         let image = RgbaImage::from_path(&full_path)
                             .with_note(|| full_path.display().to_string())?;
 
-                        let texture_id = atlas_builder.insert(&image)?;
+                        let texture_id = insert_image(&image)?;
 
                         tracing::debug!(path = ?full_path, ?texture_id, "loaded texture");
 

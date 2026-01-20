@@ -35,6 +35,10 @@ use palette::Srgba;
 
 use crate::{
     render::{
+        atlas::{
+            Atlas,
+            AtlasResources,
+        },
         staging::Staging,
         surface::{
             ClearColor,
@@ -52,16 +56,48 @@ pub(super) fn create_frame_bind_group_layout(wgpu: Res<WgpuContext>, mut command
         wgpu.device
             .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("frame uniform"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                entries: &[
+                    // frame uniform. contains viewport size, camera matrix, etc.
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                }],
+                    // atlas texture
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    // atlas data
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // default sampler
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
             });
 
     commands.insert_resource(FrameBindGroupLayout { bind_group_layout });
@@ -71,39 +107,47 @@ pub(super) fn create_frames(
     wgpu: Res<WgpuContext>,
     frame_bind_group_layout: Res<FrameBindGroupLayout>,
     surfaces: Populated<Entity, (With<Surface>, Without<Frame>)>,
+    frame_atlas: Res<FrameAtlas>,
+    default_sampler: Res<DefaultSampler>,
     mut commands: Commands,
 ) {
     for entity in surfaces {
-        let uniform_buffer = wgpu.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("frame uniform"),
-            size: size_of::<FrameUniformData>() as wgpu::BufferAddress,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::UNIFORM,
-            mapped_at_creation: false,
-        });
+        let frame_uniform = {
+            let buffer = wgpu.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("frame uniform"),
+                size: size_of::<FrameUniformData>() as wgpu::BufferAddress,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::UNIFORM,
+                mapped_at_creation: false,
+            });
 
-        let uniform_bind_group = wgpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("frame uniform"),
-            layout: &frame_bind_group_layout.bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: uniform_buffer.as_entire_binding(),
-            }],
-        });
-
-        commands.entity(entity).insert((
-            Frame { inner: None },
             FrameUniform {
-                bind_group: uniform_bind_group,
-                buffer: uniform_buffer,
+                buffer,
                 data: Zeroable::zeroed(),
-            },
-        ));
+            }
+        };
+
+        let frame_bind_group = FrameBindGroup::new(
+            &wgpu.device,
+            &frame_bind_group_layout,
+            &frame_uniform,
+            frame_atlas.0.resources(),
+            &default_sampler,
+        );
+
+        commands
+            .entity(entity)
+            .insert((Frame { inner: None }, frame_uniform, frame_bind_group));
     }
 }
 
 pub(super) fn begin_frames(
     wgpu: Res<WgpuContext>,
-    surfaces: Populated<(&Surface, Option<&ClearColor>, &mut Frame, Ref<FrameUniform>)>,
+    surfaces: Populated<(
+        &Surface,
+        Option<&ClearColor>,
+        &mut Frame,
+        Ref<FrameBindGroup>,
+    )>,
 ) {
     let start_time = Instant::now();
 
@@ -167,7 +211,6 @@ pub(super) fn begin_frames(
 
 pub fn end_frames(
     wgpu: Res<WgpuContext>,
-    changed_frame_uniforms: Query<&FrameUniform, Changed<FrameUniform>>,
     frames: Query<(NameOrEntity, &mut Frame)>,
     mut command_buffers: Local<Vec<wgpu::CommandBuffer>>,
     mut present_surfaces: Local<Vec<wgpu::SurfaceTexture>>,
@@ -176,14 +219,10 @@ pub fn end_frames(
     assert!(command_buffers.is_empty());
     assert!(present_surfaces.is_empty());
 
-    for frame_uniform in changed_frame_uniforms {
-        // update frame uniform buffer
-        staging.write_buffer_from_slice(
-            frame_uniform.buffer.slice(..),
-            bytemuck::bytes_of(&frame_uniform.data),
-        );
-    }
-
+    // todo: put this in its own systems.
+    // we can just collect command buffers in a resource (i.e. this one and the ones
+    // from the frames) and submit them to the queue in another system that runs
+    // last. or we could submit stuff immediately i guess.
     if staging.is_changed() {
         // flush staging. this also submits the command encoder
         command_buffers.push(staging.flush(&wgpu).finish());
@@ -265,26 +304,111 @@ pub struct FrameBindGroupLayout {
 }
 
 #[derive(Debug, Component)]
-pub struct FrameUniform {
+pub struct FrameBindGroup {
     bind_group: wgpu::BindGroup,
-    buffer: wgpu::Buffer,
-    data: FrameUniformData,
 }
 
-impl FrameUniform {
-    pub fn set_viewport_size(&mut self, viewport_size: Vector2<u32>) {
-        self.data.viewport_size = viewport_size;
-    }
+impl FrameBindGroup {
+    fn new(
+        device: &wgpu::Device,
+        frame_bind_group_layout: &FrameBindGroupLayout,
+        frame_uniform: &FrameUniform,
+        atlas_resources: AtlasResources,
+        default_sampler: &DefaultSampler,
+    ) -> Self {
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("frame bind group"),
+            layout: &frame_bind_group_layout.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: frame_uniform.buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(atlas_resources.texture),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Buffer(
+                        atlas_resources.data_buffer.as_entire_buffer_binding(),
+                    ),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::Sampler(&default_sampler.0),
+                },
+            ],
+        });
 
-    pub fn set_camera_matrix(&mut self, camera_matrix: Matrix4<f32>) {
-        self.data.camera_matrix = camera_matrix;
+        Self { bind_group }
     }
+}
+
+#[derive(Debug, Component)]
+pub struct FrameUniform {
+    buffer: wgpu::Buffer,
+    pub data: FrameUniformData,
 }
 
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 #[repr(C)]
-struct FrameUniformData {
-    viewport_size: Vector2<u32>,
+pub struct FrameUniformData {
+    pub viewport_size: Vector2<u32>,
     _padding: [u32; 2],
-    camera_matrix: Matrix4<f32>,
+    pub camera_matrix: Matrix4<f32>,
 }
+
+pub(super) fn create_shared_atlas(wgpu: Res<WgpuContext>, mut commands: Commands) {
+    let atlas = Atlas::new(&wgpu.device, Default::default());
+    commands.insert_resource(FrameAtlas(atlas));
+}
+
+#[derive(Debug, Resource, derive_more::Deref, derive_more::DerefMut)]
+pub struct FrameAtlas(pub Atlas);
+
+pub(super) fn update_frame_uniform(
+    changed_frame_uniforms: Populated<&FrameUniform, Changed<FrameUniform>>,
+    mut staging: ResMut<Staging>,
+) {
+    for frame_uniform in changed_frame_uniforms {
+        // update frame uniform buffer
+        staging.write_buffer_from_slice(
+            frame_uniform.buffer.slice(..),
+            bytemuck::bytes_of(&frame_uniform.data),
+        );
+    }
+}
+
+pub(super) fn update_frame_bind_groups(
+    wgpu: Res<WgpuContext>,
+    frame_bind_groups: Query<(&mut FrameBindGroup, &FrameUniform)>,
+    mut atlas: ResMut<FrameAtlas>,
+    default_sampler: Res<DefaultSampler>,
+    mut staging: ResMut<Staging>,
+    frame_bind_group_layout: Res<FrameBindGroupLayout>,
+) {
+    if atlas.0.flush(&wgpu.device, &mut *staging) {
+        let atlas_resources = atlas.0.resources();
+
+        for (mut frame_bind_group, frame_uniform) in frame_bind_groups {
+            // recreate the bind group
+            *frame_bind_group = FrameBindGroup::new(
+                &wgpu.device,
+                &frame_bind_group_layout,
+                frame_uniform,
+                atlas_resources,
+                &default_sampler,
+            )
+        }
+    }
+}
+
+pub(super) fn create_default_sampler(wgpu: Res<WgpuContext>, mut commands: Commands) {
+    let sampler = wgpu.device.create_sampler(&Default::default());
+    commands.insert_resource(DefaultSampler(sampler));
+}
+
+// todo: make this a resource that contains all the samplers we use
+#[derive(Clone, Debug, Resource)]
+pub struct DefaultSampler(pub wgpu::Sampler);
