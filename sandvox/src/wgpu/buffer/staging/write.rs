@@ -547,6 +547,8 @@ impl StagingBufferProvider for WriteStagingBelt {
                     state.total_allocated_bytes += size;
                     drop(state);
 
+                    tracing::debug!(?size, "allocating staging buffer");
+
                     Chunk {
                         buffer: device.create_buffer(&wgpu::BufferDescriptor {
                             label: Some(&self.pool.inner.chunk_label),

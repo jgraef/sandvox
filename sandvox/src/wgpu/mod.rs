@@ -77,6 +77,7 @@ pub struct WgpuConfig {
     pub backends: wgpu::Backends,
     #[serde(with = "crate::util::serde::power_preference")]
     pub power_preference: wgpu::PowerPreference,
+    #[serde(default = "default_staging_chunk_size")]
     pub staging_chunk_size: wgpu::BufferSize,
     pub memory_hints: MemoryHints,
 }
@@ -86,10 +87,15 @@ impl Default for WgpuConfig {
         Self {
             backends: wgpu::Backends::VULKAN,
             power_preference: Default::default(),
-            staging_chunk_size: const { wgpu::BufferSize::new(0x4000).unwrap() },
+            staging_chunk_size: default_staging_chunk_size(),
             memory_hints: Default::default(),
         }
     }
+}
+
+fn default_staging_chunk_size() -> wgpu::BufferSize {
+    // 1 MiB
+    const { wgpu::BufferSize::new(0x100_000).unwrap() }
 }
 
 #[derive(Debug, Resource)]
