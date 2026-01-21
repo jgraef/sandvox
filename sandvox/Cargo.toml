@@ -36,6 +36,7 @@ derive_more = { version = "2.1.1", features = [
 ] }
 dotenvy = "0.15.7"
 guillotiere = "0.6.2"
+humansize = "2.1.3"
 image = "0.25.9"
 indexmap = { version = "2.13.0", features = ["serde"] }
 morton-encoding = "2.0.1"

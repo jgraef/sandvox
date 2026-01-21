@@ -2,6 +2,7 @@ pub mod image;
 pub mod noise;
 pub mod oneshot;
 pub mod serde;
+pub mod stats_alloc;
 
 use std::ops::{
     Add,
@@ -34,4 +35,11 @@ where
     T: Mul<f32, Output = T> + Add<T, Output = T>,
 {
     x0 * (1.0 - t) + x1 * t
+}
+
+pub fn format_size<T>(value: T) -> humansize::SizeFormatter<T, humansize::FormatSizeOptions>
+where
+    T: humansize::ToF64 + humansize::Unsigned,
+{
+    humansize::SizeFormatter::new(value, humansize::BINARY)
 }

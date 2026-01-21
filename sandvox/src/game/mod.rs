@@ -100,6 +100,10 @@ use crate::{
         },
     },
     ui::layout::Style,
+    util::{
+        format_size,
+        stats_alloc::bytes_allocated,
+    },
     voxel::{
         chunk_generator::ChunkGeneratorPlugin,
         chunk_map::ChunkMapPlugin,
@@ -335,10 +339,27 @@ struct DebugOverlay;
 
 fn update_debug_overlay(
     fps_counter: Res<FpsCounter>,
+    wgpu: Res<WgpuContext>,
     mut debug_overlay: Single<&mut Text, With<DebugOverlay>>,
 ) {
     debug_overlay.text.clear();
-    write!(&mut debug_overlay.text, "FPS: {:.1}", fps_counter.fps).unwrap();
+    writeln!(&mut debug_overlay.text, "FPS: {:.1}", fps_counter.fps).unwrap();
+
+    writeln!(
+        &mut debug_overlay.text,
+        "MEM/CPU: {}",
+        format_size(bytes_allocated())
+    )
+    .unwrap();
+
+    if let Some(allocator_report) = wgpu.device.generate_allocator_report() {
+        writeln!(
+            &mut debug_overlay.text,
+            "MEM/GPU: {}",
+            format_size(allocator_report.total_allocated_bytes)
+        )
+        .unwrap();
+    }
 }
 
 fn handle_keys(
