@@ -360,6 +360,17 @@ fn update_debug_overlay(
         )
         .unwrap();
     }
+
+    let staging_info = wgpu.staging_pool.info();
+    writeln!(
+        &mut debug_overlay.text,
+        "STAGING: INFLIGHT={}, FREE={}, TOTAL={}/{}",
+        staging_info.in_flight_count,
+        staging_info.free_count,
+        staging_info.total_allocation_count,
+        format_size(staging_info.total_allocation_bytes)
+    )
+    .unwrap();
 }
 
 fn handle_keys(
