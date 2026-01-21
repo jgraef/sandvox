@@ -38,6 +38,7 @@ use crate::{
     render::{
         RenderSystems,
         frame::{
+            DefaultFont,
             Frame,
             FrameBindGroupLayout,
         },
@@ -47,10 +48,6 @@ use crate::{
             Surface,
         },
         text::{
-            Font,
-            FontBindGroup,
-            FontBindGroupLayout,
-            FontSystems,
             Text,
             TextSize,
         },
@@ -72,9 +69,7 @@ pub(super) fn setup_text_systems(builder: &mut WorldBuilder) {
     builder
         .add_systems(
             schedule::Startup,
-            create_pipeline_layout
-                .in_set(RenderSystems::Setup)
-                .after(FontSystems::Setup),
+            create_pipeline_layout.in_set(RenderSystems::Setup),
         )
         .add_systems(
             schedule::Render,
@@ -93,7 +88,7 @@ pub(super) fn setup_text_systems(builder: &mut WorldBuilder) {
 pub struct TextLeafMeasure;
 
 impl LeafMeasure for TextLeafMeasure {
-    type Data = Res<'static, Font>;
+    type Data = Res<'static, DefaultFont>;
     type Node = (Option<&'static TextSize>, &'static TextBuffer);
 
     fn measure(
@@ -156,7 +151,6 @@ impl LeafMeasure for TextLeafMeasure {
 fn create_pipeline_layout(
     wgpu: Res<WgpuContext>,
     frame_bind_group_layout: Res<FrameBindGroupLayout>,
-    font_bind_group_layout: Res<FontBindGroupLayout>,
     mut commands: Commands,
 ) {
     let text_bind_group_layout =
@@ -181,7 +175,6 @@ fn create_pipeline_layout(
             label: Some("text rendering"),
             bind_group_layouts: &[
                 &frame_bind_group_layout.bind_group_layout,
-                &font_bind_group_layout.bind_group_layout,
                 &text_bind_group_layout,
             ],
             immediate_size: 0,
@@ -258,7 +251,7 @@ fn create_pipeline(
 /// The layout doesn't contain positions for the glyphs yet. This is done when
 /// the text measure function runs.
 fn compute_text_layouts(
-    font: Res<Font>,
+    font: Res<DefaultFont>,
     texts: Populated<
         (Entity, &Text, Option<&mut TextBuffer>, &mut LayoutCache),
         Or<(Changed<Text>, Without<TextBuffer>)>,
@@ -471,7 +464,7 @@ enum PositionedTextChunk {
 }
 
 fn update_glyph_buffers(
-    font: Res<Font>,
+    font: Res<DefaultFont>,
     texts: Populated<
         (
             Entity,
@@ -596,7 +589,6 @@ fn update_glyph_buffers(
 fn render_text(
     viewports: Populated<&RenderTarget, With<Viewport>>,
     mut frames: Populated<(&mut Frame, &TextPipeline)>,
-    font: Res<FontBindGroup>,
     texts: Populated<&GlyphBuffer>,
 ) {
     for render_target in viewports {
@@ -604,10 +596,9 @@ fn render_text(
             let render_pass = frame.render_pass_mut();
 
             render_pass.set_pipeline(&text_pipeline.pipeline);
-            render_pass.set_bind_group(1, Some(&font.bind_group), &[]);
 
             for glyph_buffer in &texts {
-                render_pass.set_bind_group(2, Some(&glyph_buffer.bind_group), &[]);
+                render_pass.set_bind_group(1, Some(&glyph_buffer.bind_group), &[]);
 
                 let num_vertices = glyph_buffer.num_glyphs * 6;
                 render_pass.draw(0..num_vertices, 0..1);

@@ -87,7 +87,7 @@ use crate::{
             FpsCounter,
             FpsCounterConfig,
         },
-        frame::FrameAtlas,
+        frame::DefaultAtlas,
         mesh::RenderWireframes,
         staging::Staging,
         surface::{
@@ -240,7 +240,7 @@ impl Plugin for GamePlugin {
 }
 
 fn load_block_types(
-    mut atlas: ResMut<FrameAtlas>,
+    mut atlas: ResMut<DefaultAtlas>,
     wgpu: Res<WgpuContext>,
     mut staging: ResMut<Staging>,
     mut commands: Commands,

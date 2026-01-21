@@ -35,6 +35,7 @@ use palette::Srgba;
 
 use crate::{
     render::{
+        RenderConfig,
         atlas::{
             Atlas,
             AtlasResources,
@@ -43,6 +44,10 @@ use crate::{
         surface::{
             ClearColor,
             Surface,
+        },
+        text::{
+            Font,
+            FontResources,
         },
     },
     wgpu::{
@@ -68,9 +73,16 @@ pub(super) fn create_frame_bind_group_layout(wgpu: Res<WgpuContext>, mut command
                         },
                         count: None,
                     },
-                    // atlas texture
+                    // default sampler
                     wgpu::BindGroupLayoutEntry {
                         binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                    // atlas texture
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Texture {
                             sample_type: wgpu::TextureSampleType::Float { filterable: true },
@@ -81,7 +93,7 @@ pub(super) fn create_frame_bind_group_layout(wgpu: Res<WgpuContext>, mut command
                     },
                     // atlas data
                     wgpu::BindGroupLayoutEntry {
-                        binding: 2,
+                        binding: 3,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Storage { read_only: true },
@@ -90,11 +102,26 @@ pub(super) fn create_frame_bind_group_layout(wgpu: Res<WgpuContext>, mut command
                         },
                         count: None,
                     },
-                    // default sampler
+                    // font texture
                     wgpu::BindGroupLayoutEntry {
-                        binding: 3,
+                        binding: 4,
                         visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    // font glyph data
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 5,
+                        visibility: wgpu::ShaderStages::VERTEX,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
                         count: None,
                     },
                 ],
@@ -107,8 +134,9 @@ pub(super) fn create_frames(
     wgpu: Res<WgpuContext>,
     frame_bind_group_layout: Res<FrameBindGroupLayout>,
     surfaces: Populated<Entity, (With<Surface>, Without<Frame>)>,
-    frame_atlas: Res<FrameAtlas>,
     default_sampler: Res<DefaultSampler>,
+    default_atlas: Res<DefaultAtlas>,
+    default_font: Res<DefaultFont>,
     mut commands: Commands,
 ) {
     for entity in surfaces {
@@ -130,8 +158,9 @@ pub(super) fn create_frames(
             &wgpu.device,
             &frame_bind_group_layout,
             &frame_uniform,
-            frame_atlas.0.resources(),
             &default_sampler,
+            default_atlas.0.resources(),
+            default_font.0.resources(),
         );
 
         commands
@@ -313,8 +342,9 @@ impl FrameBindGroup {
         device: &wgpu::Device,
         frame_bind_group_layout: &FrameBindGroupLayout,
         frame_uniform: &FrameUniform,
-        atlas_resources: AtlasResources,
         default_sampler: &DefaultSampler,
+        atlas_resources: AtlasResources,
+        font_resources: FontResources,
     ) -> Self {
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("frame bind group"),
@@ -326,17 +356,27 @@ impl FrameBindGroup {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(atlas_resources.texture),
+                    resource: wgpu::BindingResource::Sampler(&default_sampler.0),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
+                    resource: wgpu::BindingResource::TextureView(atlas_resources.texture),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
                     resource: wgpu::BindingResource::Buffer(
                         atlas_resources.data_buffer.as_entire_buffer_binding(),
                     ),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::Sampler(&default_sampler.0),
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(font_resources.texture),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::Buffer(
+                        font_resources.data_buffer.as_entire_buffer_binding(),
+                    ),
                 },
             ],
         });
@@ -359,14 +399,6 @@ pub struct FrameUniformData {
     pub camera_matrix: Matrix4<f32>,
 }
 
-pub(super) fn create_shared_atlas(wgpu: Res<WgpuContext>, mut commands: Commands) {
-    let atlas = Atlas::new(&wgpu.device, Default::default());
-    commands.insert_resource(FrameAtlas(atlas));
-}
-
-#[derive(Debug, Resource, derive_more::Deref, derive_more::DerefMut)]
-pub struct FrameAtlas(pub Atlas);
-
 pub(super) fn update_frame_uniform(
     changed_frame_uniforms: Populated<&FrameUniform, Changed<FrameUniform>>,
     mut staging: ResMut<Staging>,
@@ -383,13 +415,15 @@ pub(super) fn update_frame_uniform(
 pub(super) fn update_frame_bind_groups(
     wgpu: Res<WgpuContext>,
     frame_bind_groups: Query<(&mut FrameBindGroup, &FrameUniform)>,
-    mut atlas: ResMut<FrameAtlas>,
+    mut atlas: ResMut<DefaultAtlas>,
+    font: Res<DefaultFont>,
     default_sampler: Res<DefaultSampler>,
     mut staging: ResMut<Staging>,
     frame_bind_group_layout: Res<FrameBindGroupLayout>,
 ) {
     if atlas.0.flush(&wgpu.device, &mut *staging) {
         let atlas_resources = atlas.0.resources();
+        let font_resources = font.0.resources();
 
         for (mut frame_bind_group, frame_uniform) in frame_bind_groups {
             // recreate the bind group
@@ -397,18 +431,42 @@ pub(super) fn update_frame_bind_groups(
                 &wgpu.device,
                 &frame_bind_group_layout,
                 frame_uniform,
-                atlas_resources,
                 &default_sampler,
+                atlas_resources,
+                font_resources,
             )
         }
     }
 }
 
-pub(super) fn create_default_sampler(wgpu: Res<WgpuContext>, mut commands: Commands) {
+pub(super) fn create_default_resources(
+    wgpu: Res<WgpuContext>,
+    config: Res<RenderConfig>,
+    mut commands: Commands,
+    mut staging: ResMut<Staging>,
+) {
     let sampler = wgpu.device.create_sampler(&Default::default());
+
+    let atlas = Atlas::new(&wgpu.device, Default::default());
+
+    let font = Font::open(&config.default_font, &wgpu.device, &mut *staging).unwrap_or_else(|e| {
+        panic!(
+            "Error while loading font: {e}: {}",
+            config.default_font.display()
+        )
+    });
+
     commands.insert_resource(DefaultSampler(sampler));
+    commands.insert_resource(DefaultAtlas(atlas));
+    commands.insert_resource(DefaultFont(font));
 }
 
 // todo: make this a resource that contains all the samplers we use
 #[derive(Clone, Debug, Resource)]
 pub struct DefaultSampler(pub wgpu::Sampler);
+
+#[derive(Debug, Resource, derive_more::Deref, derive_more::DerefMut)]
+pub struct DefaultAtlas(pub Atlas);
+
+#[derive(Debug, Resource, derive_more::Deref, derive_more::DerefMut)]
+pub struct DefaultFont(pub Font);

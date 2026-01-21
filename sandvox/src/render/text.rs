@@ -1,236 +1,30 @@
 use std::{
     collections::HashMap,
-    path::PathBuf,
+    path::Path,
 };
 
-use bevy_ecs::{
-    component::Component,
-    resource::Resource,
-    schedule::{
-        IntoScheduleConfigs,
-        SystemSet,
-    },
-    system::{
-        Commands,
-        InMut,
-        IntoSystem,
-        Res,
-    },
-};
+use bevy_ecs::component::Component;
 use bytemuck::{
     Pod,
     Zeroable,
 };
 use color_eyre::eyre::Error;
-use image::GrayImage;
 use nalgebra::Vector2;
 use palette::{
     Srgba,
     WithAlpha,
 };
-use wgpu::util::DeviceExt;
 
 use crate::{
-    ecs::{
-        plugin::{
-            Plugin,
-            WorldBuilder,
-        },
-        schedule,
-    },
     render::{
-        RenderSystems,
+        staging::Staging,
         text::bdf::make_font_sheet,
     },
-    wgpu::WgpuContext,
+    wgpu::{
+        TextureSourceLayout,
+        buffer::WriteStaging,
+    },
 };
-
-#[derive(Clone, Debug, Default)]
-pub struct FontPlugin {
-    pub font: PathBuf,
-}
-
-impl Plugin for FontPlugin {
-    fn setup(&self, builder: &mut WorldBuilder) -> Result<(), Error> {
-        let bdf_data = std::fs::read(&self.font)?;
-        let (font_data, font_image) = make_font_sheet(&bdf_data)?;
-
-        // for debugging
-        let _ = font_image.save("tmp/font.png");
-
-        builder.insert_resource(font_data).add_systems(
-            schedule::Startup,
-            (
-                setup_bind_group_layout.in_set(FontSystems::Setup),
-                create_font_texture
-                    .with_input(font_image)
-                    .in_set(FontSystems::LoadFonts)
-                    .after(FontSystems::Setup),
-            )
-                .in_set(RenderSystems::Setup),
-        );
-
-        Ok(())
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, SystemSet)]
-pub enum FontSystems {
-    Setup,
-    LoadFonts,
-}
-
-fn setup_bind_group_layout(wgpu: Res<WgpuContext>, mut commands: Commands) {
-    let bind_group_layout =
-        wgpu.device
-            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("text rendering"),
-                entries: &[
-                    // font glyph data
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::VERTEX,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    // texture
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    // sampler
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-            });
-
-    commands.insert_resource(FontBindGroupLayout { bind_group_layout });
-}
-
-#[derive(Debug, Resource)]
-pub struct FontBindGroupLayout {
-    pub bind_group_layout: wgpu::BindGroupLayout,
-}
-
-/// system that creates a bind group for the font
-///
-/// todo: make fonts entities/components so we can have multiple
-fn create_font_texture(
-    InMut(font_image): InMut<GrayImage>,
-    font_data: Res<Font>,
-    wgpu: Res<WgpuContext>,
-    font_bind_group_layout: Res<FontBindGroupLayout>,
-    mut commands: Commands,
-) {
-    // create data buffer containing offsets and uvs for glyphs
-    let data_buffer = {
-        let data_buffer_size = (size_of::<FontDataBufferHeader>()
-            + size_of::<Glyph>() * font_data.glyphs.len())
-            as wgpu::BufferAddress;
-
-        let buffer = wgpu.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("font"),
-            size: data_buffer_size,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: true,
-        });
-
-        {
-            // fill buffer
-            let mut view = buffer.get_mapped_range_mut(..);
-
-            let view_header: &mut FontDataBufferHeader =
-                bytemuck::from_bytes_mut(&mut view[..size_of::<FontDataBufferHeader>()]);
-            *view_header = FontDataBufferHeader {
-                num_glyphs: font_data.glyphs.len().try_into().unwrap(),
-                _padding: 0,
-                atlas_size: font_data.atlas_size,
-            };
-
-            let view_glyphs: &mut [Glyph] =
-                bytemuck::cast_slice_mut(&mut view[size_of::<FontDataBufferHeader>()..]);
-            view_glyphs.copy_from_slice(&*font_data.glyphs);
-        }
-
-        buffer.unmap();
-
-        buffer
-    };
-
-    // create texture of glyph atlas
-    // todo: use staging
-    let texture = wgpu.device.create_texture_with_data(
-        &wgpu.queue,
-        &wgpu::TextureDescriptor {
-            label: Some("font"),
-            size: wgpu::Extent3d {
-                width: font_image.width(),
-                height: font_image.height(),
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::R8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        },
-        wgpu::util::TextureDataOrder::LayerMajor,
-        &font_image,
-    );
-
-    let texture_view = texture.create_view(&wgpu::TextureViewDescriptor {
-        label: Some("font"),
-        ..Default::default()
-    });
-
-    let sampler = wgpu.device.create_sampler(&wgpu::SamplerDescriptor {
-        label: Some("font"),
-        mag_filter: wgpu::FilterMode::Nearest,
-        min_filter: wgpu::FilterMode::Linear,
-        ..Default::default()
-    });
-
-    let bind_group = wgpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("font"),
-        layout: &font_bind_group_layout.bind_group_layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: data_buffer.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::TextureView(&texture_view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: wgpu::BindingResource::Sampler(&sampler),
-            },
-        ],
-    });
-
-    commands.insert_resource(FontBindGroup { bind_group });
-}
-
-#[derive(Debug, Resource)]
-pub struct FontBindGroup {
-    pub bind_group: wgpu::BindGroup,
-}
 
 #[derive(Clone, Debug, Default, Component)]
 pub struct Text {
@@ -275,35 +69,146 @@ impl Default for TextSize {
     }
 }
 
-#[derive(Clone, Debug, Resource)]
+#[derive(Debug)]
 pub struct Font {
+    data: FontData,
+    texture: wgpu::TextureView,
+    data_buffer: wgpu::Buffer,
+}
+
+impl Font {
+    pub fn open(
+        path: impl AsRef<Path>,
+        device: &wgpu::Device,
+        staging: &mut Staging,
+    ) -> Result<Self, Error> {
+        let bdf_data = std::fs::read(&path)?;
+        let (data, image) = make_font_sheet(&bdf_data)?;
+
+        // create data buffer containing offsets and uvs for glyphs
+        let data_buffer = {
+            let data_buffer_size = (size_of::<FontDataBufferHeader>()
+                + size_of::<Glyph>() * data.glyphs.len())
+                as wgpu::BufferAddress;
+
+            let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("font"),
+                size: data_buffer_size,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: true,
+            });
+
+            {
+                // fill buffer
+                let mut view = buffer.get_mapped_range_mut(..);
+
+                let view_header: &mut FontDataBufferHeader =
+                    bytemuck::from_bytes_mut(&mut view[..size_of::<FontDataBufferHeader>()]);
+                *view_header = FontDataBufferHeader {
+                    num_glyphs: data.glyphs.len().try_into().unwrap(),
+                    _padding: 0,
+                    atlas_size: data.atlas_size,
+                };
+
+                let view_glyphs: &mut [Glyph] =
+                    bytemuck::cast_slice_mut(&mut view[size_of::<FontDataBufferHeader>()..]);
+                view_glyphs.copy_from_slice(&*data.glyphs);
+            }
+
+            buffer.unmap();
+
+            buffer
+        };
+
+        // create texture of glyph atlas
+        let texture = {
+            let size = wgpu::Extent3d {
+                width: image.width(),
+                height: image.height(),
+                depth_or_array_layers: 1,
+            };
+
+            let texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("font"),
+                size,
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::R8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+
+            let mut view = staging.write_texture(
+                TextureSourceLayout {
+                    bytes_per_row: image.width(),
+                    rows_per_image: None,
+                },
+                wgpu::TexelCopyTextureInfo {
+                    texture: &texture,
+                    mip_level: 0,
+                    origin: Default::default(),
+                    aspect: Default::default(),
+                },
+                size,
+            );
+
+            view.copy_from_slice(&image);
+
+            texture.create_view(&wgpu::TextureViewDescriptor {
+                label: Some("font"),
+                ..Default::default()
+            })
+        };
+
+        Ok(Self {
+            data,
+            texture,
+            data_buffer,
+        })
+    }
+
+    pub fn glyph_id(&self, character: char) -> Option<u32> {
+        self.data.codepoints.get(&character).copied()
+    }
+
+    pub fn glyph_id_or_replacement(&self, character: char) -> Option<u32> {
+        self.glyph_id(character).or(self.data.replacement_glyph)
+    }
+
+    pub fn replacement_glyph(&self) -> Option<u32> {
+        self.data.replacement_glyph
+    }
+
+    pub fn contains(&self, character: char) -> bool {
+        self.data.codepoints.contains_key(&character)
+    }
+
+    pub fn glyph_displacement(&self) -> Vector2<f32> {
+        self.data.glyph_displacement
+    }
+
+    pub fn resources(&self) -> FontResources<'_> {
+        FontResources {
+            texture: &self.texture,
+            data_buffer: &self.data_buffer,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct FontResources<'a> {
+    pub texture: &'a wgpu::TextureView,
+    pub data_buffer: &'a wgpu::Buffer,
+}
+
+#[derive(Clone, Debug)]
+struct FontData {
     glyphs: Vec<Glyph>,
     codepoints: HashMap<char, u32>,
     replacement_glyph: Option<u32>,
     glyph_displacement: Vector2<f32>,
     atlas_size: Vector2<u32>,
-}
-
-impl Font {
-    pub fn glyph_id(&self, character: char) -> Option<u32> {
-        self.codepoints.get(&character).copied()
-    }
-
-    pub fn glyph_id_or_replacement(&self, character: char) -> Option<u32> {
-        self.glyph_id(character).or(self.replacement_glyph)
-    }
-
-    pub fn replacement_glyph(&self) -> Option<u32> {
-        self.replacement_glyph
-    }
-
-    pub fn contains(&self, character: char) -> bool {
-        self.codepoints.contains_key(&character)
-    }
-
-    pub fn glyph_displacement(&self) -> Vector2<f32> {
-        self.glyph_displacement
-    }
 }
 
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -338,7 +243,7 @@ mod bdf {
     };
 
     use crate::render::text::{
-        Font,
+        FontData,
         Glyph,
     };
 
@@ -388,14 +293,15 @@ mod bdf {
 
             let mut sheet_size = Vector2::new(glyphs_per_row * padded_cell_size.x, 0);
 
-            // make sure width is a multiple of 512 as GPUs tend to use a multiple of it as
+            // make sure width is a multiple of 256 as GPUs tend to use a multiple of it as
             // row-stride (I think)
-            sheet_size.x = sheet_size.x.next_multiple_of(512);
+            sheet_size.x = sheet_size
+                .x
+                .next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
 
-            glyphs_per_row = sheet_size.x / padded_cell_size.x;
+            glyphs_per_row = (sheet_size.x - padding.x) / padded_cell_size.x;
             let num_rows = (num_glyphs as u32).div_ceil(glyphs_per_row);
-            sheet_size.y = num_rows * padded_cell_size.y;
-            sheet_size += padding;
+            sheet_size.y = num_rows * padded_cell_size.y + padding.y;
 
             Self {
                 padding,
@@ -411,7 +317,7 @@ mod bdf {
         }
     }
 
-    pub(super) fn make_font_sheet(bdf_data: &[u8]) -> Result<(Font, GrayImage), Error> {
+    pub(super) fn make_font_sheet(bdf_data: &[u8]) -> Result<(FontData, GrayImage), Error> {
         const LUMA_FG: Luma<u8> = Luma([255]);
         const LUMA_BG: Luma<u8> = Luma([0]);
 
@@ -439,7 +345,7 @@ mod bdf {
         );
 
         // create font data
-        let mut font_data = Font {
+        let mut font_data = FontData {
             glyphs: Vec::with_capacity(num_glyphs as usize),
             codepoints: HashMap::with_capacity(num_glyphs as usize),
             atlas_size: sheet_layout.sheet_size,

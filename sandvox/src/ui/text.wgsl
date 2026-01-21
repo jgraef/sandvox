@@ -20,6 +20,9 @@ struct FrameUniform {
 @binding(0)
 var<uniform> frame_uniform: FrameUniform;
 
+@group(0)
+@binding(1)
+var default_sampler: sampler;
 
 
 struct FontData {
@@ -35,17 +38,18 @@ struct FontGlyph {
     offset: vec2u,
 }
 
-@group(1)
-@binding(0)
-var<storage, read> font_data: FontData;
-
-@group(1)
-@binding(1)
+@group(0)
+@binding(4)
 var font_texture: texture_2d<f32>;
 
+@group(0)
+@binding(5)
+var<storage, read> font_data: FontData;
+
+
 @group(1)
-@binding(2)
-var font_sampler: sampler;
+@binding(0)
+var<storage, read> text_glyphs: array<TextGlyph>;
 
 
 struct TextGlyph {
@@ -54,9 +58,7 @@ struct TextGlyph {
     scaling: f32,
 }
 
-@group(2)
-@binding(0)
-var<storage, read> text_glyphs: array<TextGlyph>;
+
 
 
 const quad_vertices = array(
@@ -92,7 +94,7 @@ fn text_vertex(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
 
 @fragment
 fn text_fragment(input: VertexOutput) -> @location(0) vec4f {
-    let pixel = textureSample(font_texture, font_sampler, input.uv).r;
+    let pixel = textureSample(font_texture, default_sampler, input.uv).r;
 
     if pixel > 0.5 {
         return input.color;

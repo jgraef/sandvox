@@ -7,6 +7,8 @@ pub mod staging;
 pub mod surface;
 pub mod text;
 
+use std::path::PathBuf;
+
 use bevy_ecs::{
     resource::Resource,
     schedule::{
@@ -31,12 +33,11 @@ use crate::{
     },
     render::{
         frame::{
-            FrameAtlas,
+            DefaultAtlas,
             begin_frames,
-            create_default_sampler,
+            create_default_resources,
             create_frame_bind_group_layout,
             create_frames,
-            create_shared_atlas,
             end_frames,
             update_frame_bind_groups,
             update_frame_uniform,
@@ -69,8 +70,7 @@ impl Plugin for RenderPlugin {
                     (
                         initialize_staging,
                         create_frame_bind_group_layout,
-                        create_shared_atlas,
-                        create_default_sampler,
+                        create_default_resources.after(initialize_staging),
                     )
                         .after(WgpuSystems::CreateContext)
                         .before(RenderSystems::Setup),
@@ -86,7 +86,7 @@ impl Plugin for RenderPlugin {
                         .chain()
                         .in_set(RenderSystems::BeginFrame),
                     (
-                        update_frame_bind_groups.run_if(resource_changed::<FrameAtlas>),
+                        update_frame_bind_groups.run_if(resource_changed::<DefaultAtlas>),
                         update_frame_uniform,
                     )
                         .in_set(RenderSystems::EndFrame)
@@ -131,14 +131,24 @@ pub enum RenderSystems {
     EndFrame,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, Resource)]
+#[derive(Clone, Debug, Serialize, Deserialize, Resource)]
 pub struct RenderConfig {
     #[serde(default = "default_true")]
     pub vsync: bool,
+
+    #[serde(default = "default_font")]
+    pub default_font: PathBuf,
 }
 
 impl Default for RenderConfig {
     fn default() -> Self {
-        Self { vsync: true }
+        Self {
+            vsync: true,
+            default_font: default_font(),
+        }
     }
+}
+
+fn default_font() -> PathBuf {
+    "assets/cozette.bdf".into()
 }

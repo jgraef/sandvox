@@ -55,6 +55,10 @@ var<uniform> frame_uniform: FrameUniform;
 
 @group(0)
 @binding(1)
+var default_sampler: sampler;
+
+@group(0)
+@binding(2)
 var atlas_texture: texture_2d<f32>;
 
 struct AtlasEntry {
@@ -63,13 +67,9 @@ struct AtlasEntry {
 }
 
 @group(0)
-@binding(2)
+@binding(3)
 var<storage, read> atlas_data: array<AtlasEntry>;
 
-
-@group(0)
-@binding(3)
-var default_sampler: sampler;
 
 
 
