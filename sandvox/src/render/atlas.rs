@@ -318,37 +318,22 @@ impl Atlas {
         {
             let atlas_size_inv = 1.0 / (self.size as f32);
 
-            let fill_buffer = |view: &mut [DataBufferItem]| {
-                for (target, source) in view
-                    .iter_mut()
-                    .zip(self.entries.iter().filter_map(|entry| entry.as_ref()))
-                {
-                    *target = DataBufferItem {
-                        uv_offset: atlas_size_inv * source.inner_offset.cast::<f32>(),
-                        uv_size: atlas_size_inv * source.inner_size.cast::<f32>(),
-                    };
-                }
-            };
-
-            new_data_buffer = self.data_buffer.reallocate_for_size(
+            new_data_buffer = self.data_buffer.write_all_with(
                 self.entries.len(),
-                Some(
-                    |_old_view: Option<&[DataBufferItem]>,
-                     new_view: &mut [DataBufferItem],
-                     _new_buffer: &wgpu::Buffer| {
-                        fill_buffer(new_view);
-                    },
-                ),
-                None,
+                |view: &mut [DataBufferItem]| {
+                    for (target, source) in view
+                        .iter_mut()
+                        .zip(self.entries.iter().filter_map(|entry| entry.as_ref()))
+                    {
+                        *target = DataBufferItem {
+                            uv_offset: atlas_size_inv * source.inner_offset.cast::<f32>(),
+                            uv_size: atlas_size_inv * source.inner_size.cast::<f32>(),
+                        };
+                    }
+                },
+                |_new_buffer| {},
+                &mut staging,
             );
-
-            if !new_data_buffer {
-                // still need to write the data
-                let mut view = self
-                    .data_buffer
-                    .write_view(..self.num_entries, &mut staging);
-                fill_buffer(&mut *view);
-            }
         }
 
         // dump atlas texture for debugging

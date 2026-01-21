@@ -322,6 +322,24 @@ where
     pub fn write_all<S>(
         &mut self,
         data: &[T],
+        on_reallocate: impl FnMut(&wgpu::Buffer),
+        staging: S,
+    ) -> bool
+    where
+        S: WriteStaging,
+    {
+        self.write_all_with(
+            data.len(),
+            |view| view.copy_from_slice(data),
+            on_reallocate,
+            staging,
+        )
+    }
+
+    pub fn write_all_with<S>(
+        &mut self,
+        size: usize,
+        mut write: impl FnMut(&mut [T]),
         mut on_reallocate: impl FnMut(&wgpu::Buffer),
         staging: S,
     ) -> bool
@@ -329,10 +347,11 @@ where
         S: WriteStaging,
     {
         let did_reallocate = self.reallocate_for_size(
-            data.len(),
+            size,
             Some(
                 |_old_view: Option<&[T]>, new_view: &mut [T], new_buffer: &wgpu::Buffer| {
-                    new_view.copy_from_slice(data);
+                    write(new_view);
+
                     on_reallocate(new_buffer);
                 },
             ),
@@ -341,8 +360,8 @@ where
 
         if !did_reallocate {
             // still need to write the data
-            let mut view = self.write_view(..data.len(), staging);
-            view.copy_from_slice(data);
+            let mut view = self.write_view(..size, staging);
+            write(&mut *view);
         }
 
         did_reallocate

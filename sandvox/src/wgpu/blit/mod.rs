@@ -219,34 +219,18 @@ impl<'a> BlitterTransaction<'a> {
             offset / size_of::<BlitData>()
         };
 
-        let mut fill_buffer = |destination: &mut [BlitData]| {
-            for (_, blit_set) in &mut self.blitter.transaction_workspace.blits {
-                destination[blit_set.buffer_offset / size_of::<BlitData>()..]
-                    [..blit_set.buffer_size / size_of::<BlitData>()]
-                    .copy_from_slice(&blit_set.data);
-            }
-        };
-
-        let did_reallocate = self.blitter.blit_data_buffer.reallocate_for_size(
+        self.blitter.blit_data_buffer.write_all_with(
             buffer_size,
-            Some(
-                |_old_view: Option<&[BlitData]>,
-                 new_view: &mut [BlitData],
-                 _new_buffer: &wgpu::Buffer| {
-                    fill_buffer(new_view);
-                },
-            ),
-            None,
+            |destination: &mut [BlitData]| {
+                for (_, blit_set) in &mut self.blitter.transaction_workspace.blits {
+                    destination[blit_set.buffer_offset / size_of::<BlitData>()..]
+                        [..blit_set.buffer_size / size_of::<BlitData>()]
+                        .copy_from_slice(&blit_set.data);
+                }
+            },
+            |_new_buffer| {},
+            &mut staging,
         );
-
-        if !did_reallocate {
-            // still need to write the data
-            let mut view = self
-                .blitter
-                .blit_data_buffer
-                .write_view(..self.num_blits, &mut staging);
-            fill_buffer(&mut *view);
-        }
 
         let mut render_pass =
             staging
