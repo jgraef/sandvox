@@ -2,6 +2,7 @@
 #![feature(allocator_api)]
 
 pub mod app;
+pub mod build_info;
 pub mod collide;
 pub mod config;
 pub mod ecs;

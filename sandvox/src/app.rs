@@ -67,6 +67,7 @@ use winit::{
 };
 
 use crate::{
+    build_info::BUILD_INFO,
     config::Config,
     ecs::{
         background_tasks::BackgroundTaskPlugin,
@@ -120,6 +121,8 @@ pub struct App {
 
 impl App {
     pub fn new(args: Args) -> Result<Self, Error> {
+        tracing::info!(?BUILD_INFO);
+
         // todo: load from proper location
         let config = Config::load("config.toml")?;
 

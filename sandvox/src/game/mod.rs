@@ -51,6 +51,7 @@ use crate::{
         CloseApp,
         WindowConfig,
     },
+    build_info::BUILD_INFO,
     ecs::{
         background_tasks::BackgroundTaskConfig,
         plugin::{
@@ -320,7 +321,7 @@ fn init_player(
         }))
         .with_children(|spawner| {
             spawner.spawn((
-                Text::from("Hello World!"),
+                Text::from(format_build_tag()),
                 TextSize { scaling: 2.0 },
                 Style::default(),
             ));
@@ -332,6 +333,22 @@ fn init_player(
                 DebugOverlay,
             ));
         });
+}
+
+fn format_build_tag() -> String {
+    match BUILD_INFO.profile {
+        "release" => {
+            format!("SANDVOX: {}", BUILD_INFO.version)
+        }
+        _ => {
+            if let Some(commit) = BUILD_INFO.git_commit {
+                format!("SANDVOX: DEV/{}", &commit[..7])
+            }
+            else {
+                format!("SANDVOX: DEV/UNKNOWN")
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Component)]
