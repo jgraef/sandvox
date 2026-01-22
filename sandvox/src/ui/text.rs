@@ -10,19 +10,13 @@ use bevy_ecs::{
         With,
         Without,
     },
-    resource::Resource,
     schedule::IntoScheduleConfigs,
     system::{
         Commands,
         Local,
         Populated,
         Res,
-        ResMut,
     },
-};
-use bytemuck::{
-    Pod,
-    Zeroable,
 };
 use nalgebra::Vector2;
 use taffy::{
@@ -36,17 +30,7 @@ use crate::{
         schedule,
     },
     render::{
-        RenderSystems,
-        frame::{
-            DefaultFont,
-            Frame,
-            FrameBindGroupLayout,
-        },
-        staging::Staging,
-        surface::{
-            RenderTarget,
-            Surface,
-        },
+        frame::DefaultFont,
         text::{
             Text,
             TextSize,
@@ -55,33 +39,23 @@ use crate::{
     ui::{
         LayoutCache,
         LeafMeasure,
+        RedrawRequested,
+        Root,
         RoundedLayout,
         UiSystems,
-        Viewport,
-    },
-    wgpu::{
-        WgpuContext,
-        buffer::TypedArrayBuffer,
+        render::RenderBufferBuilder,
     },
 };
 
 pub(super) fn setup_text_systems(builder: &mut WorldBuilder) {
-    builder
-        .add_systems(
-            schedule::Startup,
-            create_pipeline_layout.in_set(RenderSystems::Setup),
-        )
-        .add_systems(
-            schedule::Render,
-            (
-                create_pipeline.in_set(RenderSystems::BeginFrame),
-                compute_text_layouts.before(UiSystems::Layout),
-                update_glyph_buffers
-                    .after(compute_text_layouts)
-                    .before(render_text),
-                render_text.in_set(UiSystems::Render),
-            ),
-        );
+    builder.add_systems(
+        schedule::Render,
+        (
+            compute_text_layouts.in_set(UiSystems::Layout),
+            request_redraw.before(UiSystems::Render),
+            render_texts.in_set(UiSystems::Render),
+        ),
+    );
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -147,102 +121,89 @@ impl LeafMeasure for TextLeafMeasure {
     }
 }
 
-/// System that creates the pipeline layout for text rendering
-fn create_pipeline_layout(
-    wgpu: Res<WgpuContext>,
-    frame_bind_group_layout: Res<FrameBindGroupLayout>,
+fn request_redraw(
+    nodes: Populated<&Root, Or<(Changed<TextBuffer>, Changed<TextSize>)>>,
     mut commands: Commands,
 ) {
-    let text_bind_group_layout =
-        wgpu.device
-            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("text rendering"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-            });
-
-    let pipeline_layout = wgpu
-        .device
-        .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("text rendering"),
-            bind_group_layouts: &[
-                &frame_bind_group_layout.bind_group_layout,
-                &text_bind_group_layout,
-            ],
-            immediate_size: 0,
-        });
-
-    let shader = wgpu
-        .device
-        .create_shader_module(wgpu::include_wgsl!("text.wgsl"));
-
-    commands.insert_resource(TextPipelineLayout {
-        text_bind_group_layout,
-        pipeline_layout,
-        shader,
-    });
+    for root in nodes {
+        commands.entity(root.viewport).insert(RedrawRequested);
+    }
 }
 
-fn create_pipeline(
-    wgpu: Res<WgpuContext>,
-    text_pipeline_layout: Res<TextPipelineLayout>,
-    surfaces: Populated<(Entity, &Surface), Without<TextPipeline>>,
-    mut commands: Commands,
+fn render_texts(
+    font: Res<DefaultFont>,
+    nodes: Populated<(
+        Entity,
+        &Text,
+        &TextBuffer,
+        Option<&TextSize>,
+        &RoundedLayout,
+        &Root,
+    )>,
+    requested_redraw: Populated<(), With<RedrawRequested>>,
+    mut surfaces: Populated<&mut RenderBufferBuilder>,
 ) {
-    for (entity, surface) in surfaces {
-        tracing::trace!(surface = %entity, "creating text render pipeline for surface");
+    let displacement = font.glyph_displacement();
 
-        let pipeline = wgpu
-            .device
-            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("ui/text"),
-                layout: Some(&text_pipeline_layout.pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &text_pipeline_layout.shader,
-                    entry_point: Some("text_vertex"),
-                    compilation_options: Default::default(),
-                    buffers: &[],
-                },
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    strip_index_format: None,
-                    front_face: wgpu::FrontFace::Ccw,
-                    cull_mode: None,
-                    unclipped_depth: false,
-                    polygon_mode: wgpu::PolygonMode::Fill,
-                    conservative: false,
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: surface.depth_texture_format(),
-                    depth_write_enabled: false,
-                    depth_compare: wgpu::CompareFunction::Always,
-                    stencil: Default::default(),
-                    bias: Default::default(),
-                }),
-                multisample: Default::default(),
-                fragment: Some(wgpu::FragmentState {
-                    module: &text_pipeline_layout.shader,
-                    entry_point: Some("text_fragment"),
-                    compilation_options: Default::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: surface.surface_texture_format(),
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                multiview_mask: None,
-                cache: None,
-            });
+    for (entity, text, text_buffer, text_size, rounded_layout, root) in nodes {
+        // - check if the root of the ui tree is requested to be redrawn
+        // - get the render target
+        // - get the render buffer builder for the render target
+        if let Ok(()) = requested_redraw.get(root.viewport)
+            && let Some(render_target) = root.render_target
+            && let Ok(mut render_buffer_builder) = surfaces.get_mut(render_target)
+        {
+            let content_offset = Vector2::new(
+                rounded_layout.content_box_x(),
+                rounded_layout.content_box_y(),
+            );
+            let content_size = Vector2::new(
+                rounded_layout.content_box_width(),
+                rounded_layout.content_box_height(),
+            );
 
-        commands.entity(entity).insert(TextPipeline { pipeline });
+            let text_size = text_size.copied().unwrap_or_default().scaling;
+            let displacement = displacement * text_size;
+            let width_constraint = (content_size.x / displacement.x).floor().max(0.0) as usize;
+
+            tracing::trace!(?entity, text = ?text.text, ?content_offset, ?content_size, "render text");
+
+            for positioned in text_buffer.calculate_positions(Some(width_constraint)) {
+                match positioned {
+                    PositionedTextChunk::Glyphs {
+                        span,
+                        offset,
+                        num_glyphs: _,
+                    } => {
+                        let mut offset =
+                            offset.cast::<f32>().component_mul(&displacement) + content_offset;
+
+                        for character in text.text[span.clone()].chars() {
+                            if let Some(glyph_id) = font.glyph_id_or_replacement(character) {
+                                // we have these available in the shader, so we could add this there
+                                // (we used to do this).
+                                let (glyph_offset, glyph_size) = font.glyph_bbox(glyph_id);
+
+                                render_buffer_builder
+                                    .push_quad(
+                                        glyph_offset.cast::<f32>() * text_size + offset,
+                                        glyph_size.cast::<f32>() * text_size,
+                                    )
+                                    .set_glyph_texture(glyph_id);
+
+                                offset.x += displacement.x;
+                            }
+                        }
+                    }
+                    PositionedTextChunk::Spaces {
+                        offset: _,
+                        num_spaces: _,
+                    } => {
+                        // nop
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -461,190 +422,4 @@ enum PositionedTextChunk {
         offset: Vector2<usize>,
         num_spaces: usize,
     },
-}
-
-fn update_glyph_buffers(
-    font: Res<DefaultFont>,
-    texts: Populated<
-        (
-            Entity,
-            &Text,
-            &TextBuffer,
-            &TextSize,
-            &RoundedLayout,
-            Option<&mut GlyphBuffer>,
-        ),
-        Or<(
-            Changed<TextBuffer>,
-            Changed<RoundedLayout>,
-            Without<GlyphBuffer>,
-        )>,
-    >,
-    mut glyph_buffer_data: Local<Vec<GlyphData>>,
-    wgpu: Res<WgpuContext>,
-    text_pipeline_layout: Res<TextPipelineLayout>,
-    mut staging: ResMut<Staging>,
-    mut commands: Commands,
-) {
-    let displacement = font.glyph_displacement();
-
-    for (entity, text, text_buffer, text_size, rounded_layout, glyph_buffer) in texts {
-        assert!(glyph_buffer_data.is_empty());
-
-        let content_offset = Vector2::new(
-            rounded_layout.content_box_x(),
-            rounded_layout.content_box_y(),
-        );
-        let content_size = Vector2::new(
-            rounded_layout.content_box_width(),
-            rounded_layout.content_box_height(),
-        );
-
-        let displacement = displacement * text_size.scaling;
-        let width_constraint = (content_size.x / displacement.x).floor().max(0.0) as usize;
-
-        tracing::trace!(?entity, text = ?text.text, ?content_offset, ?content_size, "update glyph buffer");
-
-        for positioned in text_buffer.calculate_positions(Some(width_constraint)) {
-            match positioned {
-                PositionedTextChunk::Glyphs {
-                    span,
-                    offset,
-                    num_glyphs: _,
-                } => {
-                    let mut offset =
-                        offset.cast::<f32>().component_mul(&displacement) + content_offset;
-
-                    for character in text.text[span.clone()].chars() {
-                        if let Some(glyph_id) = font.glyph_id_or_replacement(character) {
-                            glyph_buffer_data.push(GlyphData {
-                                offset,
-                                glyph_id,
-                                scaling: text_size.scaling,
-                            });
-
-                            offset.x += displacement.x;
-                        }
-                    }
-                }
-                PositionedTextChunk::Spaces {
-                    offset: _,
-                    num_spaces: _,
-                } => {
-                    // nop
-                }
-            }
-        }
-
-        // write glyph buffer data
-        let num_glyphs = glyph_buffer_data.len().try_into().unwrap();
-        if num_glyphs == 0 {
-            if glyph_buffer.is_some() {
-                commands.entity(entity).try_remove::<GlyphBuffer>();
-            }
-        }
-        else {
-            if let Some(mut glyph_buffer) = glyph_buffer {
-                let glyph_buffer = &mut *glyph_buffer;
-
-                glyph_buffer.buffer.write_all(
-                    &glyph_buffer_data,
-                    |buffer| {
-                        glyph_buffer.bind_group = create_glyph_buffer_bind_group(
-                            &wgpu.device,
-                            &text_pipeline_layout.text_bind_group_layout,
-                            buffer,
-                        );
-                    },
-                    &mut *staging,
-                );
-                glyph_buffer.num_glyphs = num_glyphs;
-            }
-            else {
-                let buffer = TypedArrayBuffer::from_slice(
-                    wgpu.device.clone(),
-                    "text/glyphs",
-                    wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                    &glyph_buffer_data,
-                );
-
-                let bind_group = create_glyph_buffer_bind_group(
-                    &wgpu.device,
-                    &text_pipeline_layout.text_bind_group_layout,
-                    buffer.buffer(),
-                );
-
-                commands.entity(entity).insert(GlyphBuffer {
-                    buffer,
-                    bind_group,
-                    num_glyphs,
-                });
-            }
-
-            glyph_buffer_data.clear();
-        }
-    }
-}
-
-fn render_text(
-    viewports: Populated<&RenderTarget, With<Viewport>>,
-    mut frames: Populated<(&mut Frame, &TextPipeline)>,
-    texts: Populated<&GlyphBuffer>,
-) {
-    for render_target in viewports {
-        if let Ok((mut frame, text_pipeline)) = frames.get_mut(render_target.0) {
-            let render_pass = frame.render_pass_mut();
-
-            render_pass.set_pipeline(&text_pipeline.pipeline);
-
-            for glyph_buffer in &texts {
-                render_pass.set_bind_group(1, Some(&glyph_buffer.bind_group), &[]);
-
-                let num_vertices = glyph_buffer.num_glyphs * 6;
-                render_pass.draw(0..num_vertices, 0..1);
-            }
-        }
-    }
-}
-
-#[derive(Debug, Resource)]
-struct TextPipelineLayout {
-    text_bind_group_layout: wgpu::BindGroupLayout,
-    shader: wgpu::ShaderModule,
-    pipeline_layout: wgpu::PipelineLayout,
-}
-
-#[derive(Debug, Component)]
-struct TextPipeline {
-    pipeline: wgpu::RenderPipeline,
-}
-
-#[derive(Debug, Component)]
-struct GlyphBuffer {
-    buffer: TypedArrayBuffer<GlyphData>,
-    bind_group: wgpu::BindGroup,
-    num_glyphs: u32,
-}
-
-#[derive(Clone, Copy, Debug, Pod, Zeroable)]
-#[repr(C)]
-struct GlyphData {
-    offset: Vector2<f32>,
-    glyph_id: u32,
-    scaling: f32,
-}
-
-fn create_glyph_buffer_bind_group(
-    device: &wgpu::Device,
-    bind_group_layout: &wgpu::BindGroupLayout,
-    buffer: &wgpu::Buffer,
-) -> wgpu::BindGroup {
-    device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("text/glyphs"),
-        layout: bind_group_layout,
-        entries: &[wgpu::BindGroupEntry {
-            binding: 0,
-            resource: buffer.as_entire_binding(),
-        }],
-    })
 }

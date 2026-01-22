@@ -9,7 +9,10 @@ use bytemuck::{
     Zeroable,
 };
 use color_eyre::eyre::Error;
-use nalgebra::Vector2;
+use nalgebra::{
+    Point2,
+    Vector2,
+};
 use palette::{
     Srgba,
     WithAlpha,
@@ -168,15 +171,15 @@ impl Font {
         })
     }
 
-    pub fn glyph_id(&self, character: char) -> Option<u32> {
+    pub fn glyph_id(&self, character: char) -> Option<GlyphId> {
         self.data.codepoints.get(&character).copied()
     }
 
-    pub fn glyph_id_or_replacement(&self, character: char) -> Option<u32> {
+    pub fn glyph_id_or_replacement(&self, character: char) -> Option<GlyphId> {
         self.glyph_id(character).or(self.data.replacement_glyph)
     }
 
-    pub fn replacement_glyph(&self) -> Option<u32> {
+    pub fn replacement_glyph(&self) -> Option<GlyphId> {
         self.data.replacement_glyph
     }
 
@@ -186,6 +189,11 @@ impl Font {
 
     pub fn glyph_displacement(&self) -> Vector2<f32> {
         self.data.glyph_displacement
+    }
+
+    pub fn glyph_bbox(&self, glyph_id: GlyphId) -> (Point2<u32>, Vector2<u32>) {
+        let glyph = &self.data.glyphs[glyph_id.to_index()];
+        (glyph.offset.into(), glyph.size)
     }
 
     pub fn resources(&self) -> FontResources<'_> {
@@ -205,8 +213,8 @@ pub struct FontResources<'a> {
 #[derive(Clone, Debug)]
 struct FontData {
     glyphs: Vec<Glyph>,
-    codepoints: HashMap<char, u32>,
-    replacement_glyph: Option<u32>,
+    codepoints: HashMap<char, GlyphId>,
+    replacement_glyph: Option<GlyphId>,
     glyph_displacement: Vector2<f32>,
     atlas_size: Vector2<u32>,
 }
@@ -227,6 +235,15 @@ struct Glyph {
     offset: Vector2<u32>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, derive_more::Into)]
+pub struct GlyphId(u32);
+
+impl GlyphId {
+    fn to_index(&self) -> usize {
+        self.0 as usize
+    }
+}
+
 mod bdf {
     // this might be helpful: https://www.x.org/releases/X11R7.6/doc/xorg-docs/specs/XLFD/xlfd.html#pixel_size
 
@@ -245,6 +262,7 @@ mod bdf {
     use crate::render::text::{
         FontData,
         Glyph,
+        GlyphId,
     };
 
     #[derive(Clone, Copy, Debug, Default)]
@@ -361,7 +379,7 @@ mod bdf {
                 .properties
                 .try_get::<i32>(bdf_parser::Property::DefaultChar)
                 .ok()
-                .map(|glyph_id| glyph_id as u32),
+                .map(|glyph_id| GlyphId(glyph_id as u32)),
         };
         let mut i = 0;
 
@@ -389,9 +407,7 @@ mod bdf {
                     offset: glyph_offset,
                 });
 
-                font_data
-                    .codepoints
-                    .insert(character, i.try_into().unwrap());
+                font_data.codepoints.insert(character, GlyphId(i));
 
                 for y in 0..glyph_size.y {
                     for x in 0..glyph_size.x {

@@ -116,7 +116,7 @@ pub(super) fn create_frame_bind_group_layout(wgpu: Res<WgpuContext>, mut command
                     // font glyph data
                     wgpu::BindGroupLayoutEntry {
                         binding: 5,
-                        visibility: wgpu::ShaderStages::VERTEX,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Storage { read_only: true },
                             has_dynamic_offset: false,

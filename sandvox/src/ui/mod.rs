@@ -27,10 +27,17 @@ use bevy_ecs::{
 use color_eyre::eyre::Error;
 use nalgebra::Vector2;
 
-pub use crate::ui::layout::{
-    LayoutCache,
-    LeafMeasure,
-    RoundedLayout,
+pub use crate::ui::{
+    layout::{
+        LayoutCache,
+        LeafMeasure,
+        RoundedLayout,
+    },
+    render::{
+        QuadBuilder,
+        RenderBufferBuilder,
+        ShowDebugOutlines,
+    },
 };
 use crate::{
     app::WindowSize,
@@ -63,19 +70,14 @@ use crate::{
 };
 
 #[derive(Clone, Copy, Debug, Default)]
-pub struct UiPlugin<L = DefaultLeafMeasure> {
-    pub leaf_measure: L,
-}
+pub struct UiPlugin;
 
-impl<L> Plugin for UiPlugin<L>
-where
-    L: LeafMeasure + Clone,
-{
+impl Plugin for UiPlugin {
     fn setup(&self, builder: &mut WorldBuilder) -> Result<(), Error> {
         setup_layout_systems(
             builder,
             LayoutConfig {
-                leaf_measure: self.leaf_measure.clone(),
+                leaf_measure: DefaultLeafMeasure::default(),
             },
         );
         setup_render_systems(builder);
@@ -103,8 +105,6 @@ where
     }
 }
 
-pub type DefaultUiPlugin = UiPlugin<DefaultLeafMeasure>;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, SystemSet)]
 pub enum UiSystems {
     Layout,
@@ -117,7 +117,7 @@ pub struct Viewport {
 }
 
 fn create_viewports_from_render_targets(
-    windows: Populated<(NameOrEntity, &WindowSize), Changed<WindowSize>>,
+    windows: Populated<(NameOrEntity, &WindowSize)>,
     roots: Populated<(Entity, &RenderTarget), (With<Style>, Without<ChildOf>, Without<Viewport>)>,
     mut commands: Commands,
 ) {
@@ -145,9 +145,18 @@ fn update_viewport_from_surfaces(
     }
 }
 
+#[derive(Clone, Copy, Debug, Component)]
+pub struct RedrawRequested;
+
+#[derive(Clone, Copy, Debug, Component, PartialEq, Eq)]
+pub struct Root {
+    pub viewport: Entity,
+    pub render_target: Option<Entity>,
+}
+
 #[derive(Clone, Copy, Debug, Default)]
-pub struct DefaultLeafMeasure {
-    pub text: TextLeafMeasure,
+struct DefaultLeafMeasure {
+    text: TextLeafMeasure,
 }
 
 impl LeafMeasure for DefaultLeafMeasure {

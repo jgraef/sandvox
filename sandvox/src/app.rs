@@ -94,7 +94,7 @@ use crate::{
         mesh::MeshPlugin,
     },
     sound::SoundPlugin,
-    ui::DefaultUiPlugin,
+    ui::UiPlugin,
     wgpu::WgpuPlugin,
 };
 
@@ -144,7 +144,7 @@ impl App {
             .add_plugin(FpsCounterPlugin::default())?
             .add_plugin(MeshPlugin)?
             .add_plugin(CameraPlugin)?
-            .add_plugin(DefaultUiPlugin::default())?;
+            .add_plugin(UiPlugin)?;
 
         if !config.sound.disabled {
             world_builder.add_plugin(SoundPlugin {
