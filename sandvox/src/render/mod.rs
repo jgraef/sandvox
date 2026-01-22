@@ -67,6 +67,7 @@ impl Plugin for RenderPlugin {
             .add_systems(
                 schedule::Startup,
                 (
+                    // initialize rendering
                     (
                         initialize_staging,
                         create_frame_bind_group_layout,
@@ -74,6 +75,11 @@ impl Plugin for RenderPlugin {
                     )
                         .after(WgpuSystems::CreateContext)
                         .before(RenderSystems::Setup),
+                    // update frame uniform
+                    (update_frame_bind_groups, update_frame_uniform)
+                        .after(RenderSystems::Setup)
+                        .before(flush_staging),
+                    // flush staging
                     flush_staging.after(RenderSystems::Setup),
                 ),
             )

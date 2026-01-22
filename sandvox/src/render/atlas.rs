@@ -280,6 +280,8 @@ impl Atlas {
             return false;
         }
 
+        tracing::debug!("flushing texture atlas");
+
         // blit any changes
         {
             let old_atlas_size = self.atlas_texture.texture().width();
