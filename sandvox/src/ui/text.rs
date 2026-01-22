@@ -188,6 +188,7 @@ fn render_texts(
                                     .push_quad(
                                         glyph_offset.cast::<f32>() * text_size + offset,
                                         glyph_size.cast::<f32>() * text_size,
+                                        rounded_layout.order,
                                     )
                                     .set_glyph_texture(glyph_id);
 

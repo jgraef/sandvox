@@ -51,7 +51,7 @@ struct Quad {
     position: vec2f,
     size: vec2f,
     texture_id: u32,
-    // padding: 4 bytes
+    depth: f32,
 }
 
 @group(1)
@@ -74,7 +74,7 @@ fn debug_vertex(@builtin(vertex_index) vertex_index: u32) -> DebugVertexOutput {
     let vertex = DEBUG_VERTICES[vertex_index % 8];
 
     let position = vertex * quad.size + quad.position;
-    let clip_position = vec4f(vec2f(2, -2) * position / vec2f(frame_uniform.viewport_size) + vec2f(-1, 1), 0.0, 1.0);
+    let clip_position = vec4f(vec2f(2, -2) * position / vec2f(frame_uniform.viewport_size) + vec2f(-1, 1), quad.depth, 1.0);
 
     return DebugVertexOutput(
         clip_position,
@@ -116,7 +116,7 @@ fn quad_vertex(@builtin(vertex_index) vertex_index: u32) -> QuadVertexOutput {
     let vertex = QUAD_VERTICES[vertex_index % 6];
 
     let position = vertex * quad.size + quad.position;
-    let clip_position = vec4f(vec2f(2, -2) * position / vec2f(frame_uniform.viewport_size) + vec2f(-1, 1), 0.0, 1.0);
+    let clip_position = vec4f(vec2f(2, -2) * position / vec2f(frame_uniform.viewport_size) + vec2f(-1, 1), quad.depth, 1.0);
 
     return QuadVertexOutput(
         clip_position,
@@ -176,4 +176,21 @@ fn atlas_map_uv(atlas_id: u32, uv: vec2f) -> vec2f {
 fn glyph_map_uv(glyph_id: u32, uv: vec2f) -> vec2f {
     let glyph = font_data.glyphs[glyph_id];
     return (vec2f(glyph.atlas_offset) + uv * vec2f(glyph.size)) / vec2f(font_data.atlas_size);
+}
+
+
+
+@vertex
+fn clear_depth_vertex(@builtin(vertex_index) vertex_index: u32) -> @builtin(position) vec4f {
+    return vec4f(
+        f32((vertex_index & 1) << 2) - 1,
+        f32((vertex_index & 2) << 1) - 1,
+        1,
+        1,
+    );
+}
+
+@fragment
+fn clear_depth_fragment(@builtin(position) position: vec4f) -> @location(0) vec4f {
+    return vec4f(0, 0, 0, 0);
 }

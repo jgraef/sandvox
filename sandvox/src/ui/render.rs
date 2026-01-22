@@ -66,12 +66,6 @@ pub(super) fn setup_render_systems(builder: &mut WorldBuilder) {
         .add_systems(
             schedule::Render,
             (
-                /*update_render_buffers::<R>
-                .run_if(
-                    any_component_removed::<RoundedLayout>
-                        .or(any_match_filter::<Changed<RoundedLayout>>),
-                )
-                .before(flush_render_buffers),*/
                 (create_pipeline, create_render_buffer).in_set(RenderSystems::BeginFrame),
                 (
                     flush_render_buffers.after(UiSystems::Render),
@@ -197,8 +191,8 @@ fn create_pipeline(
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: surface.depth_texture_format(),
-                    depth_write_enabled: false,
-                    depth_compare: wgpu::CompareFunction::Always,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::Less,
                     stencil: Default::default(),
                     bias: Default::default(),
                 }),
@@ -209,7 +203,7 @@ fn create_pipeline(
                     compilation_options: Default::default(),
                     targets: &[Some(wgpu::ColorTargetState {
                         format: surface.surface_texture_format(),
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        blend: None,
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
                 }),
@@ -217,9 +211,52 @@ fn create_pipeline(
                 cache: None,
             });
 
+        let clear_depth_pipeline =
+            wgpu.device
+                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("ui/clear-depth"),
+                    layout: Some(&debug_pipeline_layout.pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: &debug_pipeline_layout.shader,
+                        entry_point: Some("clear_depth_vertex"),
+                        compilation_options: Default::default(),
+                        buffers: &[],
+                    },
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        strip_index_format: None,
+                        front_face: wgpu::FrontFace::Ccw,
+                        cull_mode: None,
+                        unclipped_depth: false,
+                        polygon_mode: wgpu::PolygonMode::Fill,
+                        conservative: false,
+                    },
+                    depth_stencil: Some(wgpu::DepthStencilState {
+                        format: surface.depth_texture_format(),
+                        depth_write_enabled: true,
+                        depth_compare: wgpu::CompareFunction::Always,
+                        stencil: Default::default(),
+                        bias: Default::default(),
+                    }),
+                    multisample: Default::default(),
+                    fragment: Some(wgpu::FragmentState {
+                        module: &debug_pipeline_layout.shader,
+                        entry_point: Some("clear_depth_fragment"),
+                        compilation_options: Default::default(),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: surface.surface_texture_format(),
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::empty(),
+                        })],
+                    }),
+                    multiview_mask: None,
+                    cache: None,
+                });
+
         commands.entity(entity).insert(Pipeline {
             debug_pipeline,
             quad_pipeline,
+            clear_depth_pipeline,
         });
     }
 }
@@ -267,11 +304,7 @@ fn flush_render_buffers(
     tracing::trace!("flusing render buffers");
 
     for (mut render_buffer, mut render_buffer_builder) in render_buffers {
-        // sort front to back
-        // note: we don't think this even matters since we're rendering it as one mesh
-        //render_buffer_builder
-        //    .quads
-        //    .sort_unstable_by_key(|quad| (-quad.layer, -quad.z));
+        let max_order_inv = 1.0 / (render_buffer_builder.max_order + 2) as f32;
 
         // upload buffer
         let render_buffer = &mut *render_buffer;
@@ -280,6 +313,9 @@ fn flush_render_buffers(
             |view| {
                 for (target, source) in view.iter_mut().zip(&render_buffer_builder.quads) {
                     *target = source.quad;
+
+                    // set depth value for quad
+                    target.depth = 1.0 - (source.order + 1) as f32 * max_order_inv;
                 }
             },
             |new_buffer| {
@@ -297,7 +333,7 @@ fn flush_render_buffers(
         );
 
         // clear builder
-        render_buffer_builder.quads.clear();
+        render_buffer_builder.clear();
 
         // i know we just cleared it, but we're unlikely to remove and assert.
         assert!(render_buffer_builder.quads.is_empty());
@@ -314,11 +350,18 @@ fn render_ui(
         if let Some(bind_group) = &render_buffer.bind_group {
             let render_pass = frame.render_pass_mut();
 
+            // bind bind group containing the render buffer
             render_pass.set_bind_group(1, Some(bind_group), &[]);
 
+            // clear z buffer
+            render_pass.set_pipeline(&render_pipeline.clear_depth_pipeline);
+            render_pass.draw(0..3, 0..1);
+
+            // draw render buffer (textured quads)
             render_pass.set_pipeline(&render_pipeline.quad_pipeline);
             render_pass.draw(0..(6 * num_quads), 0..1);
 
+            // draw debug outlines for render buffer
             if show_debug_outlines.is_some() {
                 render_pass.set_pipeline(&render_pipeline.debug_pipeline);
                 render_pass.draw(0..(8 * num_quads), 0..1);
@@ -348,6 +391,7 @@ struct PipelineLayout {
 struct Pipeline {
     debug_pipeline: wgpu::RenderPipeline,
     quad_pipeline: wgpu::RenderPipeline,
+    clear_depth_pipeline: wgpu::RenderPipeline,
 }
 
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -356,38 +400,50 @@ struct Quad {
     position: Point2<f32>,
     size: Vector2<f32>,
     texture_id: u32,
-    _padding: u32,
+    depth: f32,
 }
 
 #[derive(Debug)]
 struct LayeredQuad {
-    layer: i16,
-    z: i16,
+    order: u32,
     quad: Quad,
 }
 
 #[derive(Debug, Default, Component)]
 pub struct RenderBufferBuilder {
     quads: Vec<LayeredQuad>,
+    max_order: u32,
 }
 
 impl RenderBufferBuilder {
-    pub fn push_quad(&mut self, position: Point2<f32>, size: Vector2<f32>) -> QuadBuilder<'_> {
+    pub fn push_quad(
+        &mut self,
+        position: Point2<f32>,
+        size: Vector2<f32>,
+        order: u32,
+    ) -> QuadBuilder<'_> {
         let index = self.quads.len();
+
         self.quads.push(LayeredQuad {
-            layer: 0,
-            z: 0,
+            order,
             quad: Quad {
                 position,
                 size,
-                _padding: 0,
                 texture_id: u32::MAX,
+                depth: 0.0,
             },
         });
+
+        self.max_order = self.max_order.max(order);
 
         QuadBuilder {
             quad: &mut self.quads[index],
         }
+    }
+
+    fn clear(&mut self) {
+        self.quads.clear();
+        self.max_order = 0;
     }
 }
 
@@ -397,16 +453,6 @@ pub struct QuadBuilder<'a> {
 }
 
 impl<'a> QuadBuilder<'a> {
-    pub fn set_layer(&mut self, layer: i16) -> &mut Self {
-        self.quad.layer = layer;
-        self
-    }
-
-    pub fn set_z(&mut self, z: i16) -> &mut Self {
-        self.quad.z = z;
-        self
-    }
-
     pub fn set_atlas_texture(&mut self, atlas_id: AtlasId) -> &mut Self {
         self.quad.quad.texture_id = atlas_id.into();
         self
