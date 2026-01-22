@@ -85,7 +85,7 @@ impl Font {
         device: &wgpu::Device,
         staging: &mut Staging,
     ) -> Result<Self, Error> {
-        let bdf_data = std::fs::read(&path)?;
+        let bdf_data = std::fs::read_to_string(&path)?;
         let (data, image) = make_font_sheet(&bdf_data)?;
 
         // create data buffer containing offsets and uvs for glyphs
@@ -335,18 +335,18 @@ mod bdf {
         }
     }
 
-    pub(super) fn make_font_sheet(bdf_data: &[u8]) -> Result<(FontData, GrayImage), Error> {
+    pub(super) fn make_font_sheet(bdf_data: &str) -> Result<(FontData, GrayImage), Error> {
         const LUMA_FG: Luma<u8> = Luma([255]);
         const LUMA_BG: Luma<u8> = Luma([0]);
 
-        let font = bdf_parser::BdfFont::parse(&bdf_data)?;
+        let font = bdf_parser::Font::parse(&bdf_data)?;
         tracing::debug!(metadata = ?font.metadata);
 
         // count glyphs with codepoints
         let num_glyphs = font
             .glyphs
             .iter()
-            .filter(|glyph| glyph.encoding.is_some())
+            .filter(|glyph| matches!(glyph.encoding, bdf_parser::Encoding::Standard(_)))
             .count();
 
         // create sheet layout
@@ -368,23 +368,31 @@ mod bdf {
             codepoints: HashMap::with_capacity(num_glyphs as usize),
             atlas_size: sheet_layout.sheet_size,
             glyph_displacement: Vector2::new(
-                font.properties
+                font.metadata
+                    .properties
                     .try_get::<i32>(bdf_parser::Property::FigureWidth)
+                    .unwrap()
                     .unwrap() as f32,
-                font.properties
+                font.metadata
+                    .properties
                     .try_get::<i32>(bdf_parser::Property::PixelSize)
+                    .unwrap()
                     .unwrap() as f32,
             ),
             replacement_glyph: font
+                .metadata
                 .properties
                 .try_get::<i32>(bdf_parser::Property::DefaultChar)
                 .ok()
+                .flatten()
                 .map(|glyph_id| GlyphId(glyph_id as u32)),
         };
         let mut i = 0;
 
         for glyph in font.glyphs.iter() {
-            if let Some(character) = glyph.encoding {
+            if let bdf_parser::Encoding::Standard(encoding) = glyph.encoding
+                && let Some(character) = char::from_u32(encoding)
+            {
                 let glyph_bbox: Bbox = glyph.bounding_box.into();
                 let glyph_size = glyph_bbox.size();
 
@@ -411,7 +419,7 @@ mod bdf {
 
                 for y in 0..glyph_size.y {
                     for x in 0..glyph_size.x {
-                        let pixel = glyph.pixel(x as usize, y as usize);
+                        let pixel = glyph.pixel(x as usize, y as usize).unwrap_or_default();
                         let target_coord = Vector2::new(x, y) + atlas_offset;
 
                         font_image.put_pixel(
