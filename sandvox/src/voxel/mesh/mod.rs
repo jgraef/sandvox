@@ -47,10 +47,7 @@ use crate::{
             WorldBuilder,
         },
         schedule,
-        workspace::{
-            WorkspaceGuard,
-            Workspaces,
-        },
+        workspace::Workspaces,
     },
     render::mesh::{
         MeshBuilder,
@@ -119,7 +116,7 @@ where
     chunk: Chunk<V, CHUNK_SIZE>,
     wgpu: WgpuContext,
     voxel_data: V::Data,
-    workspace: WorkspaceGuard<(MeshBuilder, M)>,
+    workspaces: Workspaces<(MeshBuilder, M)>,
 }
 
 impl<V, M, const CHUNK_SIZE: usize> Task for MeshChunkTask<V, M, CHUNK_SIZE>
@@ -127,8 +124,9 @@ where
     V: Voxel,
     M: ChunkMesher<V, CHUNK_SIZE>,
 {
-    fn run(mut self, world_modifications: &mut CommandQueue) {
-        let (mesh_builder, chunk_mesher) = &mut *self.workspace;
+    fn run(self, world_modifications: &mut CommandQueue) {
+        let mut workspace = self.workspaces.get();
+        let (mesh_builder, chunk_mesher) = &mut *workspace;
 
         let t_start = Instant::now();
         chunk_mesher.mesh_chunk(&self.chunk, mesh_builder, &self.voxel_data);
@@ -176,7 +174,7 @@ fn dispatch_chunk_meshing<V, M, const CHUNK_SIZE: usize>(
             chunk: chunk.clone(),
             wgpu: wgpu.clone(),
             voxel_data: voxel_data.clone(),
-            workspace: workspaces.get(),
+            workspaces: workspaces.clone(),
         }
     }));
 }
