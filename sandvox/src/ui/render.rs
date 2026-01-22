@@ -336,6 +336,12 @@ fn flush_render_buffers(
             &mut *staging,
         );
 
+        // we had a bug that write_all_with didn't update the length
+        assert_eq!(
+            render_buffer.buffer.len(),
+            render_buffer_builder.quads.len()
+        );
+
         // clear builder
         render_buffer_builder.clear();
 
@@ -349,8 +355,6 @@ fn render_ui(
     show_debug_outlines: Option<Res<ShowDebugOutlines>>,
 ) {
     for (mut frame, render_pipeline, render_buffer) in surfaces {
-        let num_quads: u32 = render_buffer.buffer.len().try_into().unwrap();
-
         if let Some(bind_group) = &render_buffer.bind_group {
             let render_pass = frame.render_pass_mut();
 
@@ -363,6 +367,8 @@ fn render_ui(
 
             // draw render buffer (textured quads)
             render_pass.set_pipeline(&render_pipeline.quad_pipeline);
+
+            let num_quads: u32 = render_buffer.buffer.len().try_into().unwrap();
             render_pass.draw(0..(6 * num_quads), 0..1);
 
             // draw debug outlines for render buffer
@@ -465,7 +471,7 @@ pub struct QuadBuilder<'a> {
 }
 
 impl<'a> QuadBuilder<'a> {
-    pub fn set_atlas_texture(&mut self, atlas_handle: AtlasHandle) -> &mut Self {
+    pub fn set_atlas_texture(&mut self, atlas_handle: &AtlasHandle) -> &mut Self {
         self.quad.quad.texture_id = atlas_handle.id();
         self
     }

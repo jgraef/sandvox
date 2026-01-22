@@ -1,5 +1,6 @@
 mod layout;
 mod render;
+mod sprites;
 mod text;
 
 use bevy_ecs::{
@@ -39,6 +40,10 @@ pub use crate::ui::{
         RenderBufferBuilder,
         ShowDebugOutlines,
     },
+    sprites::{
+        Background,
+        Sprites,
+    },
 };
 use crate::{
     app::WindowSize,
@@ -62,6 +67,7 @@ use crate::{
             setup_layout_systems,
         },
         render::setup_render_systems,
+        sprites::setup_sprite_systems,
         text::{
             TextLeafMeasure,
             setup_text_systems,
@@ -82,6 +88,7 @@ impl Plugin for UiPlugin {
         );
         setup_render_systems(builder);
         setup_text_systems(builder);
+        setup_sprite_systems(builder);
 
         builder
             .add_systems(

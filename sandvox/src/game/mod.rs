@@ -108,7 +108,11 @@ use crate::{
             TextSize,
         },
     },
-    ui::Style,
+    ui::{
+        Background,
+        Sprites,
+        Style,
+    },
     util::{
         format_size,
         stats_alloc::bytes_allocated,
@@ -281,6 +285,7 @@ fn create_terrain_generator(
 
 fn init_player(
     config: Res<GameConfig>,
+    sprites: Res<Sprites>,
     mut fps_counter_config: ResMut<FpsCounterConfig>,
     mut commands: Commands,
     mut load_skybox: MessageWriter<LoadSkybox>,
@@ -343,11 +348,22 @@ fn init_player(
         },
     );
     commands
-        .spawn((RenderTarget(window), {
-            let mut style = Style::default();
-            style.display = taffy::style::Display::Block;
-            style
-        }))
+        .spawn((
+            RenderTarget(window),
+            {
+                let mut style = Style::default();
+                style.display = taffy::style::Display::Block;
+                style
+            },
+            Background {
+                sprite: {
+                    let sprite_id = sprites.lookup_ui("normal_panel_round").unwrap();
+                    let sprite = sprites[sprite_id].clone();
+                    tracing::debug!(?sprite, "SPRITE!");
+                    sprite
+                },
+            },
+        ))
         .with_children(|spawner| {
             spawner.spawn((Text::from(format_build_tag()), text_style, Style::default()));
             spawner.spawn((Text::default(), text_style, Style::default(), DebugOverlay));
