@@ -13,6 +13,7 @@ use nalgebra::{
     Point2,
     Vector2,
 };
+use palette::LinSrgba;
 
 use crate::{
     render::staging::Staging,
@@ -215,22 +216,26 @@ impl Atlas {
     pub fn insert_texture(
         &mut self,
         texture_view: wgpu::TextureView,
-        padding: Padding,
-        sampler_mode: SamplerMode,
+        padding_mode: Option<PaddingMode>,
     ) -> Result<AtlasId, Error> {
         let texture_size = texture_view.texture().size();
         let texture_size = Vector2::new(texture_size.width, texture_size.height);
 
         let change_index = self.changes.len();
-        let id = self.allocate(texture_size, padding, Some(change_index))?;
+        let id = self.allocate(
+            texture_size,
+            padding_mode
+                .map(|padding_mode| padding_mode.padding)
+                .unwrap_or_default(),
+            Some(change_index),
+        )?;
 
         self.changes.push(Change::Insert {
             id,
             source_texture: texture_view,
             source_offset: Point2::origin(),
             source_size: texture_size,
-            padding,
-            sampler_mode,
+            padding_mode,
         });
 
         Ok(id)
@@ -239,8 +244,7 @@ impl Atlas {
     pub fn insert_image(
         &mut self,
         image: &RgbaImage,
-        padding: Padding,
-        sampler_mode: SamplerMode,
+        padding_mode: Option<PaddingMode>,
         device: &wgpu::Device,
         staging: &mut Staging,
     ) -> Result<AtlasId, Error> {
@@ -258,7 +262,7 @@ impl Atlas {
             ..Default::default()
         });
 
-        self.insert_texture(texture_view, padding, sampler_mode)
+        self.insert_texture(texture_view, padding_mode)
     }
 
     pub fn remove(&mut self, id: AtlasId) {
@@ -439,7 +443,7 @@ pub struct AtlasResources<'a> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct AtlasVersion(usize);
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 struct Entry {
     alloc_id: guillotiere::AllocId,
     pending_change: Option<usize>,
@@ -463,8 +467,7 @@ enum Change {
         source_texture: wgpu::TextureView,
         source_offset: Point2<u32>,
         source_size: Vector2<u32>,
-        padding: Padding,
-        sampler_mode: SamplerMode,
+        padding_mode: Option<PaddingMode>,
     },
 }
 
@@ -503,6 +506,7 @@ pub struct SamplerMode {
 
 impl SamplerMode {
     pub const RESIZE: Self = Self::both(wgpu::AddressMode::ClampToEdge);
+    pub const REPEAT: Self = Self::both(wgpu::AddressMode::Repeat);
 
     pub const fn both(address_mode: wgpu::AddressMode) -> Self {
         Self {
@@ -510,6 +514,28 @@ impl SamplerMode {
             address_mode_v: address_mode,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct PaddingMode {
+    pub padding: Padding,
+    pub fill: PaddingFill,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum PaddingFill {
+    Color { color: LinSrgba<f32> },
+    Sampler { sampler_mode: SamplerMode },
+}
+
+impl PaddingFill {
+    pub const REPEAT: Self = Self::Sampler {
+        sampler_mode: SamplerMode::REPEAT,
+    };
+
+    pub const TRANSPARENT: Self = Self::Color {
+        color: LinSrgba::new(0.0, 0.0, 0.0, 0.0),
+    };
 }
 
 fn vector2_to_guillotiere(size: Vector2<u32>) -> guillotiere::Size {
@@ -591,46 +617,61 @@ impl<'a> AtlasBlitterTransaction<'a> {
         source_texture: &wgpu::TextureView,
         source_offset: Point2<u32>,
         source_size: Vector2<u32>,
-        padding: Padding,
-        sampler_mode: SamplerMode,
-        outer_offset: Point2<u32>,
-        outer_size: Vector2<u32>,
+        padding_mode: Option<PaddingMode>,
+        entry: Entry,
     ) {
+        let mut sampler_mode = SamplerMode::RESIZE;
+        let mut source_offset = source_offset.cast::<i32>();
+        let mut source_size = source_size;
+        let mut target_offset = entry.inner_offset;
+        let mut target_size = entry.inner_size;
+
+        if let Some(padding_mode) = padding_mode {
+            match padding_mode.fill {
+                PaddingFill::Color { color } => {
+                    self.inner
+                        .fill(color, entry.outer_offset.cast(), entry.outer_size);
+                }
+                PaddingFill::Sampler {
+                    sampler_mode: sampler,
+                } => {
+                    sampler_mode = sampler;
+                    source_offset -= padding_mode.padding.inner_offset().cast::<i32>();
+                    source_size += padding_mode.padding.additional_size();
+                    target_offset = entry.outer_offset;
+                    target_size = entry.outer_size;
+                }
+            }
+        }
+
         let source_sampler = get_sampler(self.samplers, self.device, sampler_mode);
 
         self.inner.blit(
             source_texture,
             source_sampler,
-            source_offset.cast::<i32>() - padding.inner_offset().cast::<i32>(),
-            source_size + padding.additional_size(),
-            outer_offset.cast(),
-            outer_size,
+            source_offset,
+            source_size,
+            target_offset.cast(),
+            target_size,
         );
     }
 
-    fn blit_change<'e>(
-        &mut self,
-        change: &Change,
-        mut get_entry_rect: impl FnMut(AtlasId) -> (Point2<u32>, Vector2<u32>),
-    ) {
+    fn blit_change<'e>(&mut self, change: &Change, mut get_entry: impl FnMut(AtlasId) -> Entry) {
         match change {
             Change::Insert {
                 id,
                 source_texture,
                 source_offset,
                 source_size,
-                padding,
-                sampler_mode,
+                padding_mode,
             } => {
-                let (entry_offset, entry_size) = get_entry_rect(*id);
+                let entry = get_entry(*id);
                 self.insert(
                     source_texture,
                     *source_offset,
                     *source_size,
-                    *padding,
-                    *sampler_mode,
-                    entry_offset,
-                    entry_size,
+                    *padding_mode,
+                    entry,
                 );
             }
         }
@@ -641,7 +682,7 @@ impl<'a> AtlasBlitterTransaction<'a> {
             self.blit_change(change, |id| {
                 let entry = entries[id.to_index()].as_mut().unwrap();
                 entry.pending_change = None;
-                (entry.outer_offset, entry.outer_size)
+                *entry
             })
         }
     }
@@ -656,7 +697,7 @@ impl<'a> AtlasBlitterTransaction<'a> {
             if let Some(entry) = entry {
                 if let Some(change_index) = entry.pending_change.take() {
                     let change = &changes[change_index];
-                    self.blit_change(change, |_id| (entry.outer_offset, entry.outer_size));
+                    self.blit_change(change, |_id| *entry);
                 }
                 else {
                     self.keep(old_altas_texture, entry);

@@ -1,4 +1,4 @@
-pub mod layout;
+mod layout;
 mod render;
 mod text;
 
@@ -32,6 +32,7 @@ pub use crate::ui::{
         LayoutCache,
         LeafMeasure,
         RoundedLayout,
+        Style,
     },
     render::{
         QuadBuilder,
@@ -58,7 +59,6 @@ use crate::{
     ui::{
         layout::{
             LayoutConfig,
-            Style,
             setup_layout_systems,
         },
         render::setup_render_systems,

@@ -81,7 +81,8 @@ use crate::{
         RenderSystems,
         atlas::{
             Padding,
-            SamplerMode,
+            PaddingFill,
+            PaddingMode,
         },
         camera::CameraProjection,
         fps_counter::{
@@ -100,7 +101,7 @@ use crate::{
             TextSize,
         },
     },
-    ui::layout::Style,
+    ui::Style,
     util::{
         format_size,
         stats_alloc::bytes_allocated,
@@ -223,7 +224,7 @@ impl Plugin for GamePlugin {
                 (
                     load_block_types.in_set(RenderSystems::Setup),
                     create_terrain_generator.after(load_block_types),
-                    init_player,
+                    init_player.after(RenderSystems::Setup),
                 ),
             )
             .add_systems(
@@ -249,8 +250,10 @@ fn load_block_types(
     let block_types = BlockTypes::load("assets/blocks.toml", |image| {
         Ok(atlas.insert_image(
             image,
-            Padding::uniform(2),
-            SamplerMode::both(wgpu::AddressMode::Repeat),
+            Some(PaddingMode {
+                padding: Padding::uniform(1),
+                fill: PaddingFill::REPEAT,
+            }),
             &wgpu.device,
             &mut *staging,
         )?)
@@ -310,9 +313,11 @@ fn init_player(
         },
     ));
 
+    // create cursor
+    // todo
+
     // create debug ui
     fps_counter_config.measurement_inverval = Duration::from_millis(100);
-
     commands
         .spawn((RenderTarget(window), {
             let mut style = Style::default();
