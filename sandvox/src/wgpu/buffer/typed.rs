@@ -261,7 +261,7 @@ where
     /// recreate any bind groups if necessary.
     ///
     /// This returns `true` if an reallocation did take place.
-    pub fn reallocate_for_size<F>(
+    pub fn resize<F>(
         &mut self,
         num_elements: usize,
         mut on_reallocate: Option<F>,
@@ -315,6 +315,13 @@ where
             true
         }
         else {
+            if let Some(inner) = &mut self.inner {
+                inner.num_elements = num_elements;
+            }
+            else {
+                assert_eq!(num_elements, 0);
+                assert_eq!(current_capacity, 0);
+            }
             false
         }
     }
@@ -346,7 +353,7 @@ where
     where
         S: WriteStaging,
     {
-        let did_reallocate = self.reallocate_for_size(
+        let did_reallocate = self.resize(
             size,
             Some(
                 |_old_view: Option<&[T]>, new_view: &mut [T], new_buffer: &wgpu::Buffer| {
