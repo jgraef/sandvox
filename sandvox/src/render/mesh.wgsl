@@ -1,3 +1,4 @@
+const PI: f32 = 3.141592653589793;
 
 struct VertexInput {
     // from vertex buffer
@@ -45,7 +46,8 @@ struct VertexOutputWireframe {
 
 struct FrameUniform {
     viewport_size: vec2u,
-    // padding: 8 bytes
+    time: f32,
+    // padding: 4 bytes
     camera_matrix: mat4x4f,
 }
 
@@ -93,14 +95,19 @@ fn vertex_main(input: VertexInput) -> VertexOutput {
 
 @fragment
 fn fragment_main(input: VertexOutput) -> @location(0) vec4f {
+    // todo: figure out where the sun is (https://iurietarlev.github.io/SunpathDiagram/),
+    // but move this out of shader and send light direction/color via frame uniform
+    //let sun_phase = frame_uniform.time / 60.0 * 2.0 * PI;
+    //let light_dir = normalize(vec3f(sin(sun_phase), cos(sun_phase), 0.5));
+    let light_color = vec3f(1);
+    let light_dir = normalize(vec3f(0.5, 1, 0.5));
     let normal = normalize(input.normal.xyz);
-    let light_dir = -normalize(vec3f(0.5, 1, 0.5));
-    let attenuation = mix(0.6, 1.0, dot(normal, light_dir));
+    let brightness = 0.5 * dot(normal, light_dir) + 0.5;
 
     let uv = atlas_map_uv(input.texture_id, input.uv);
     var color = textureSample(atlas_texture, default_sampler, uv);
 
-    color = vec4f(color.rgb * attenuation, 1);
+    color = vec4f(color.rgb * brightness * light_color, 1);
     return color;
 }
 

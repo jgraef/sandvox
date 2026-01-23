@@ -132,8 +132,14 @@ impl App {
             .add_plugin(BackgroundTaskPlugin {
                 num_threads: args.num_threads.or(config.num_threads),
             })?
-            .insert_resource(DeltaTime {
-                delta: Duration::ZERO,
+            .insert_resource({
+                let now = Instant::now();
+                Time {
+                    app_start: now,
+                    tick_start: now,
+                    tick_delta: Duration::ZERO,
+                    tick_count: 0,
+                }
             })
             .add_plugin(AppPlugin)?
             .add_plugin(TransformHierarchyPlugin)?
@@ -223,7 +229,12 @@ impl App {
     }
 
     fn update(&mut self) {
-        let start_time = Instant::now();
+        let tick_start = Instant::now();
+
+        {
+            let mut time = self.world.resource_mut::<Time>();
+            time.tick_start = tick_start;
+        }
 
         self.world.run_schedule(schedule::PreUpdate);
         self.world.run_schedule(schedule::Update);
@@ -231,7 +242,11 @@ impl App {
 
         self.world.run_schedule(schedule::Render);
 
-        self.world.resource_mut::<DeltaTime>().delta = start_time.elapsed();
+        {
+            let mut time = self.world.resource_mut::<Time>();
+            time.tick_delta = tick_start.elapsed();
+            time.tick_count += 1;
+        }
     }
 }
 
@@ -693,13 +708,20 @@ fn ungrab_cursor(world: DeferredWorld, context: HookContext) {
 }
 
 #[derive(Clone, Copy, Debug, Resource)]
-pub struct DeltaTime {
-    pub delta: Duration,
+pub struct Time {
+    pub app_start: Instant,
+    pub tick_start: Instant,
+    pub tick_delta: Duration,
+    pub tick_count: u64,
 }
 
-impl DeltaTime {
-    pub fn seconds(&self) -> f32 {
-        self.delta.as_secs_f32()
+impl Time {
+    pub fn delta_seconds(&self) -> f32 {
+        self.tick_delta.as_secs_f32()
+    }
+
+    pub fn tick_start_seconds(&self) -> f32 {
+        (self.tick_start - self.app_start).as_secs_f32()
     }
 }
 

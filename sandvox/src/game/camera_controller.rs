@@ -41,8 +41,8 @@ use winit::keyboard::KeyCode;
 
 use crate::{
     app::{
-        DeltaTime,
         GrabCursor,
+        Time,
     },
     ecs::{
         plugin::{
@@ -168,7 +168,7 @@ fn grab_cursor(
 }
 
 fn update_camera(
-    delta_time: Res<DeltaTime>,
+    time: Res<Time>,
     windows: Populated<(Option<&MousePosition>, &Keys)>,
     cameras: Populated<(
         &mut LocalTransform,
@@ -183,7 +183,7 @@ fn update_camera(
         }
 
         if let Ok((mouse_position, keys)) = windows.get(render_target.0) {
-            let dt = delta_time.seconds();
+            let dt = time.delta_seconds();
 
             // mouse
             if let Some(mouse_position) = mouse_position {

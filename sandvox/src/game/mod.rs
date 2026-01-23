@@ -49,6 +49,7 @@ use winit::keyboard::KeyCode;
 use crate::{
     app::{
         CloseApp,
+        Time,
         WindowConfig,
     },
     build_info::BUILD_INFO,
@@ -362,9 +363,20 @@ struct DebugOverlay;
 fn update_debug_overlay(
     fps_counter: Res<FpsCounter>,
     wgpu: Res<WgpuContext>,
+    time: Res<Time>,
     mut debug_overlay: Single<&mut Text, With<DebugOverlay>>,
 ) {
     debug_overlay.text.clear();
+
+    writeln!(
+        &mut debug_overlay.text,
+        "TIME: N={}, T={:.1}s, DT={:.1}ms",
+        time.tick_count,
+        time.tick_start_seconds(),
+        time.delta_seconds() * 1000.0
+    )
+    .unwrap();
+
     writeln!(&mut debug_overlay.text, "FPS: {:.1}", fps_counter.fps).unwrap();
 
     writeln!(

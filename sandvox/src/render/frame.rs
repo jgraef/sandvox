@@ -9,7 +9,6 @@ use bevy_ecs::{
     entity::Entity,
     name::NameOrEntity,
     query::{
-        Changed,
         With,
         Without,
     },
@@ -34,6 +33,7 @@ use nalgebra::{
 use palette::Srgba;
 
 use crate::{
+    app::Time,
     render::{
         RenderConfig,
         atlas::{
@@ -318,15 +318,6 @@ struct FrameInner {
     start_time: Instant,
 }
 
-fn srgba_to_wgpu(color: Srgba<f32>) -> wgpu::Color {
-    wgpu::Color {
-        r: color.red as f64,
-        g: color.green as f64,
-        b: color.blue as f64,
-        a: color.alpha as f64,
-    }
-}
-
 #[derive(Debug, Resource)]
 pub struct FrameBindGroupLayout {
     pub bind_group_layout: wgpu::BindGroupLayout,
@@ -395,15 +386,19 @@ pub struct FrameUniform {
 #[repr(C)]
 pub struct FrameUniformData {
     pub viewport_size: Vector2<u32>,
-    _padding: [u32; 2],
+    pub time: f32,
+    _padding: u32,
     pub camera_matrix: Matrix4<f32>,
 }
 
 pub(super) fn update_frame_uniform(
-    changed_frame_uniforms: Populated<&FrameUniform, Changed<FrameUniform>>,
+    frame_uniforms: Populated<&mut FrameUniform>,
     mut staging: ResMut<Staging>,
+    time: Res<Time>,
 ) {
-    for frame_uniform in changed_frame_uniforms {
+    for mut frame_uniform in frame_uniforms {
+        frame_uniform.data.time = time.tick_start_seconds();
+
         // update frame uniform buffer
         staging.write_buffer_from_slice(
             frame_uniform.buffer.slice(..),
@@ -470,3 +465,12 @@ pub struct DefaultAtlas(pub Atlas);
 
 #[derive(Debug, Resource, derive_more::Deref, derive_more::DerefMut)]
 pub struct DefaultFont(pub Font);
+
+fn srgba_to_wgpu(color: Srgba<f32>) -> wgpu::Color {
+    wgpu::Color {
+        r: color.red as f64,
+        g: color.green as f64,
+        b: color.blue as f64,
+        a: color.alpha as f64,
+    }
+}
