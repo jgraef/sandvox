@@ -203,7 +203,7 @@ fn create_pipeline(
                     compilation_options: Default::default(),
                     targets: &[Some(wgpu::ColorTargetState {
                         format: surface.surface_texture_format(),
-                        blend: None,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
                 }),
