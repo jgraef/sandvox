@@ -48,7 +48,7 @@ pub fn naive_mesh<'w, 's, V, const CHUNK_SIZE: usize>(
                     ij1: ij + Vector2::repeat(1),
                     k,
                 };
-                let mesh = quad.mesh(face, texture.into());
+                let mesh = quad.mesh(face, texture.id());
                 mesh_builder.push(mesh.vertices, mesh.faces);
             }
         };

@@ -1,7 +1,14 @@
 use std::{
     collections::HashMap,
+    fmt::Debug,
+    marker::PhantomData,
     num::NonZero,
+    ops::{
+        Index,
+        IndexMut,
+    },
     path::Path,
+    sync::Arc,
 };
 
 use bytemuck::{
@@ -9,11 +16,13 @@ use bytemuck::{
     Zeroable,
 };
 use image::RgbaImage;
+use itertools::Itertools;
 use nalgebra::{
     Point2,
     Vector2,
 };
 use palette::LinSrgba;
+use parking_lot::Mutex;
 
 use crate::{
     render::staging::Staging,
@@ -78,9 +87,10 @@ pub struct Atlas {
     size_limit: u32,
     format: wgpu::TextureFormat,
     usage: wgpu::TextureUsages,
-    entries: Vec<Option<Entry>>,
-    num_entries: usize,
-    free_list: Vec<AtlasId>,
+    allocations: SparseVec<AllocationId, Allocation>,
+    views: SparseVec<ViewId, View>,
+    dropped: Arc<Mutex<Vec<ViewId>>>,
+    dropped_buf: Vec<ViewId>,
     changes: Vec<Change>,
     blitter: Blitter,
     samplers: HashMap<SamplerMode, wgpu::Sampler>,
@@ -133,9 +143,10 @@ impl Atlas {
             size_limit,
             format,
             usage,
-            entries: vec![],
-            num_entries: 0,
-            free_list: vec![],
+            allocations: Default::default(),
+            views: Default::default(),
+            dropped: Default::default(),
+            dropped_buf: vec![],
             changes: vec![],
             blitter,
             samplers: HashMap::default(),
@@ -145,19 +156,30 @@ impl Atlas {
         }
     }
 
-    fn insert_entry(&mut self, entry: Entry) -> AtlasId {
-        self.num_entries += 1;
+    fn handle_drops(&mut self) {
+        assert!(self.dropped_buf.is_empty());
 
-        if let Some(atlas_id) = self.free_list.pop() {
-            let slot = &mut self.entries[atlas_id.to_index()];
-            assert!(slot.is_none());
-            *slot = Some(entry);
-            atlas_id
+        {
+            // swap dropped list with dropped_buf, so we only lock for a brief amount of
+            // time. we do this because freeing allocations might take a bit.
+
+            let mut dropped = self.dropped.lock();
+            std::mem::swap(&mut self.dropped_buf, &mut *dropped);
         }
-        else {
-            let index = self.entries.len();
-            self.entries.push(Some(entry));
-            AtlasId(index.try_into().unwrap())
+
+        for view_id in self.dropped_buf.drain(..) {
+            tracing::debug!(?view_id, "removing view");
+
+            let view = self.views.remove(view_id).unwrap();
+            let allocation = &mut self.allocations[view.allocation_id];
+
+            allocation.ref_count -= 1;
+            if allocation.ref_count == 0 {
+                tracing::debug!(allocation_id = ?view.allocation_id, "removing allocation");
+
+                self.allocator.deallocate(allocation.alloc_id);
+                self.allocations.remove(view.allocation_id);
+            }
         }
     }
 
@@ -166,7 +188,9 @@ impl Atlas {
         size: Vector2<u32>,
         padding: Padding,
         change_index: Option<usize>,
-    ) -> Result<AtlasId, Error> {
+    ) -> Result<(AllocationId, ViewId), Error> {
+        self.handle_drops();
+
         // check if image won't ever fit
         if size.x > self.size_limit || size.y > self.size_limit {
             return Err(Error::TooLarge {
@@ -175,19 +199,20 @@ impl Atlas {
             });
         }
 
-        let padded_size = size + padding.additional_size();
+        let allocation_size = size + padding.additional_size();
 
         // allocate space for image
-        let (outer_offset, alloc_id) = loop {
-            if let Some(allocation) = self.allocator.allocate(vector2_to_guillotiere(padded_size)) {
-                let min = guillotiere_to_point2(allocation.rectangle.min);
-                let max = guillotiere_to_point2(allocation.rectangle.max);
+        let (allocation_offset, alloc_id) = loop {
+            if let Some(allocation) = self
+                .allocator
+                .allocate(vector2_to_guillotiere(allocation_size))
+            {
+                let allocation_offset = guillotiere_to_vector2(allocation.rectangle.min);
+                let max = guillotiere_to_vector2(allocation.rectangle.max);
 
-                let outer_offset = min;
-                let outer_size = max - min;
-                assert_eq!(outer_size, padded_size);
+                assert_eq!(max - allocation_offset, allocation_size);
 
-                break (outer_offset, allocation.id);
+                break (allocation_offset, allocation.id);
             }
             else if self.size < self.size_limit {
                 // todo: make sure the new size fits the requested size
@@ -201,28 +226,44 @@ impl Atlas {
             }
         };
 
-        let atlas_id = self.insert_entry(Entry {
+        let inner_offset = padding.inner_offset();
+
+        let allocation_id = self.allocations.push(Allocation {
             alloc_id,
             pending_change: change_index,
-            outer_offset,
-            outer_size: padded_size,
-            inner_offset: outer_offset + padding.inner_offset(),
+            outer_offset: allocation_offset,
+            outer_size: allocation_size,
+            inner_offset: allocation_offset + inner_offset,
             inner_size: size,
+            ref_count: 1,
         });
 
-        Ok(atlas_id)
+        let _dummy_view_id = self.views.push(View {
+            allocation_id,
+            offset: inner_offset,
+            size,
+        });
+
+        let view_id = self.views.push(View {
+            allocation_id,
+            offset: inner_offset,
+            size,
+        });
+
+        Ok((allocation_id, view_id))
     }
 
     pub fn insert_texture(
         &mut self,
         texture_view: wgpu::TextureView,
         padding_mode: Option<PaddingMode>,
-    ) -> Result<AtlasId, Error> {
+    ) -> Result<AtlasHandle, Error> {
         let texture_size = texture_view.texture().size();
         let texture_size = Vector2::new(texture_size.width, texture_size.height);
 
         let change_index = self.changes.len();
-        let id = self.allocate(
+
+        let (allocation_id, view_id) = self.allocate(
             texture_size,
             padding_mode
                 .map(|padding_mode| padding_mode.padding)
@@ -231,14 +272,20 @@ impl Atlas {
         )?;
 
         self.changes.push(Change::Insert {
-            id,
+            allocation_id,
             source_texture: texture_view,
-            source_offset: Point2::origin(),
+            source_offset: Vector2::zeros(),
             source_size: texture_size,
             padding_mode,
         });
 
-        Ok(id)
+        Ok(AtlasHandle {
+            view_id,
+            dropper: Arc::new(Dropper {
+                view_id,
+                dropped: self.dropped.clone(),
+            }),
+        })
     }
 
     pub fn insert_image(
@@ -247,7 +294,7 @@ impl Atlas {
         padding_mode: Option<PaddingMode>,
         device: &wgpu::Device,
         staging: &mut Staging,
-    ) -> Result<AtlasId, Error> {
+    ) -> Result<AtlasHandle, Error> {
         // upload image to gpu
         let texture = image.create_texture(
             "atlas insert",
@@ -263,14 +310,6 @@ impl Atlas {
         });
 
         self.insert_texture(texture_view, padding_mode)
-    }
-
-    pub fn remove(&mut self, id: AtlasId) {
-        let entry = self.entries[id.to_index()].take().unwrap();
-        self.num_entries -= 1;
-
-        self.free_list.push(id);
-        self.allocator.deallocate(entry.alloc_id);
     }
 
     pub fn flush(&mut self, device: &wgpu::Device, mut staging: &mut Staging) -> bool {
@@ -302,7 +341,11 @@ impl Atlas {
                     device,
                 };
 
-                blitter.blit_all_entries(&mut self.changes, &mut self.entries, &self.atlas_texture);
+                blitter.blit_all_entries(
+                    &mut self.changes,
+                    &mut self.allocations,
+                    &self.atlas_texture,
+                );
                 blitter.finish(device, &mut staging);
 
                 self.atlas_texture = atlas_texture;
@@ -315,7 +358,7 @@ impl Atlas {
                     device,
                 };
 
-                blitter.blit_changes(&self.changes, &mut self.entries);
+                blitter.blit_changes(&self.changes, &mut self.allocations);
                 blitter.finish(device, &mut staging);
             }
         }
@@ -325,15 +368,18 @@ impl Atlas {
             let atlas_size_inv = 1.0 / (self.size as f32);
 
             new_data_buffer = self.data_buffer.write_all_with(
-                self.entries.len(),
-                |view: &mut [DataBufferItem]| {
-                    for (target, source) in view
+                self.views.len(),
+                |buffer: &mut [DataBufferItem]| {
+                    for (buffer_entry, view) in buffer
                         .iter_mut()
-                        .zip(self.entries.iter().filter_map(|entry| entry.as_ref()))
+                        .zip_eq(self.views.iter().map(|(_index, allocation)| allocation))
                     {
-                        *target = DataBufferItem {
-                            uv_offset: atlas_size_inv * source.inner_offset.cast::<f32>(),
-                            uv_size: atlas_size_inv * source.inner_size.cast::<f32>(),
+                        let allocation = &self.allocations[view.allocation_id];
+
+                        *buffer_entry = DataBufferItem {
+                            uv_offset: atlas_size_inv
+                                * (allocation.outer_offset + view.offset).cast::<f32>(),
+                            uv_size: atlas_size_inv * view.size.cast::<f32>(),
                         };
                     }
                 },
@@ -423,15 +469,46 @@ impl Atlas {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, derive_more::Into, Pod, Zeroable)]
-#[repr(C)]
-pub struct AtlasId(u32);
+#[derive(Clone)]
+pub struct AtlasHandle {
+    view_id: ViewId,
+    #[allow(unused)]
+    dropper: Arc<Dropper>,
+}
 
-impl AtlasId {
-    fn to_index(&self) -> usize {
-        self.0.try_into().unwrap()
+impl AtlasHandle {
+    pub fn id(&self) -> u32 {
+        self.view_id.0.try_into().unwrap()
     }
 }
+
+impl Debug for AtlasHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("AtlasHandle").field(&self.view_id).finish()
+    }
+}
+
+struct Dropper {
+    view_id: ViewId,
+    dropped: Arc<Mutex<Vec<ViewId>>>,
+}
+
+impl Drop for Dropper {
+    fn drop(&mut self) {
+        let mut dropped = self.dropped.lock();
+        dropped.push(self.view_id);
+    }
+}
+
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, derive_more::From, derive_more::Into,
+)]
+struct ViewId(usize);
+
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, derive_more::From, derive_more::Into,
+)]
+struct AllocationId(usize);
 
 #[derive(Clone, Copy, Debug)]
 pub struct AtlasResources<'a> {
@@ -444,28 +521,49 @@ pub struct AtlasResources<'a> {
 pub struct AtlasVersion(usize);
 
 #[derive(Clone, Copy, Debug)]
-struct Entry {
+struct Allocation {
     alloc_id: guillotiere::AllocId,
     pending_change: Option<usize>,
-    outer_offset: Point2<u32>,
+
+    /// Offset in the atlas texture with padding
+    outer_offset: Vector2<u32>,
+
+    /// Size of allocation in the atlas texture with padding
     outer_size: Vector2<u32>,
-    inner_offset: Point2<u32>,
+
+    /// Offset in the atlas texture without padding
+    inner_offset: Vector2<u32>,
+
+    /// Size of allocation in the atlas texture without padding
     inner_size: Vector2<u32>,
+
+    /// How many views reference this allocation
+    ref_count: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct View {
+    allocation_id: AllocationId,
+
+    /// offset relative to the allocation
+    offset: Vector2<u32>,
+
+    size: Vector2<u32>,
 }
 
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 #[repr(C)]
 struct DataBufferItem {
-    uv_offset: Point2<f32>,
+    uv_offset: Vector2<f32>,
     uv_size: Vector2<f32>,
 }
 
 #[derive(Debug)]
 enum Change {
     Insert {
-        id: AtlasId,
+        allocation_id: AllocationId,
         source_texture: wgpu::TextureView,
-        source_offset: Point2<u32>,
+        source_offset: Vector2<u32>,
         source_size: Vector2<u32>,
         padding_mode: Option<PaddingMode>,
     },
@@ -545,8 +643,8 @@ fn vector2_to_guillotiere(size: Vector2<u32>) -> guillotiere::Size {
     )
 }
 
-fn guillotiere_to_point2(point: guillotiere::Point) -> Point2<u32> {
-    Point2::new(point.x.try_into().unwrap(), point.y.try_into().unwrap())
+fn guillotiere_to_vector2(point: guillotiere::Point) -> Vector2<u32> {
+    Vector2::new(point.x.try_into().unwrap(), point.y.try_into().unwrap())
 }
 
 fn get_sampler<'a>(
@@ -599,16 +697,16 @@ struct AtlasBlitterTransaction<'a> {
 }
 
 impl<'a> AtlasBlitterTransaction<'a> {
-    fn keep(&mut self, old_atlas_texture: &wgpu::TextureView, entry: &Entry) {
+    fn keep(&mut self, old_atlas_texture: &wgpu::TextureView, allocation: &Allocation) {
         let sampler = get_sampler(self.samplers, self.device, SamplerMode::RESIZE);
 
         self.inner.blit(
             old_atlas_texture,
             sampler,
-            entry.outer_offset.cast::<i32>(),
-            entry.outer_size,
-            entry.outer_offset.cast::<i32>(),
-            entry.outer_size,
+            allocation.outer_offset.cast::<i32>().into(),
+            allocation.outer_size,
+            allocation.outer_offset.cast::<i32>().into(),
+            allocation.outer_size,
         );
     }
 
@@ -618,19 +716,22 @@ impl<'a> AtlasBlitterTransaction<'a> {
         source_offset: Point2<u32>,
         source_size: Vector2<u32>,
         padding_mode: Option<PaddingMode>,
-        entry: Entry,
+        allocation: Allocation,
     ) {
         let mut sampler_mode = SamplerMode::RESIZE;
         let mut source_offset = source_offset.cast::<i32>();
         let mut source_size = source_size;
-        let mut target_offset = entry.inner_offset;
-        let mut target_size = entry.inner_size;
+        let mut target_offset = allocation.inner_offset;
+        let mut target_size = allocation.inner_size;
 
         if let Some(padding_mode) = padding_mode {
             match padding_mode.fill {
                 PaddingFill::Color { color } => {
-                    self.inner
-                        .fill(color, entry.outer_offset.cast(), entry.outer_size);
+                    self.inner.fill(
+                        color,
+                        allocation.outer_offset.cast().into(),
+                        allocation.outer_size,
+                    );
                 }
                 PaddingFill::Sampler {
                     sampler_mode: sampler,
@@ -638,8 +739,8 @@ impl<'a> AtlasBlitterTransaction<'a> {
                     sampler_mode = sampler;
                     source_offset -= padding_mode.padding.inner_offset().cast::<i32>();
                     source_size += padding_mode.padding.additional_size();
-                    target_offset = entry.outer_offset;
-                    target_size = entry.outer_size;
+                    target_offset = allocation.outer_offset;
+                    target_size = allocation.outer_size;
                 }
             }
         }
@@ -651,38 +752,46 @@ impl<'a> AtlasBlitterTransaction<'a> {
             source_sampler,
             source_offset,
             source_size,
-            target_offset.cast(),
+            target_offset.cast().into(),
             target_size,
         );
     }
 
-    fn blit_change<'e>(&mut self, change: &Change, mut get_entry: impl FnMut(AtlasId) -> Entry) {
+    fn blit_change<'e>(
+        &mut self,
+        change: &Change,
+        mut get_allocation: impl FnMut(AllocationId) -> Allocation,
+    ) {
         match change {
             Change::Insert {
-                id,
+                allocation_id,
                 source_texture,
                 source_offset,
                 source_size,
                 padding_mode,
             } => {
-                let entry = get_entry(*id);
+                let allocation = get_allocation(*allocation_id);
                 self.insert(
                     source_texture,
-                    *source_offset,
+                    (*source_offset).into(),
                     *source_size,
                     *padding_mode,
-                    entry,
+                    allocation,
                 );
             }
         }
     }
 
-    fn blit_changes(&mut self, changes: &[Change], entries: &mut [Option<Entry>]) {
+    fn blit_changes(
+        &mut self,
+        changes: &[Change],
+        allocations: &mut SparseVec<AllocationId, Allocation>,
+    ) {
         for change in changes {
-            self.blit_change(change, |id| {
-                let entry = entries[id.to_index()].as_mut().unwrap();
-                entry.pending_change = None;
-                *entry
+            self.blit_change(change, |allocation_id| {
+                let allocation = &mut allocations[allocation_id];
+                allocation.pending_change = None;
+                *allocation
             })
         }
     }
@@ -690,23 +799,121 @@ impl<'a> AtlasBlitterTransaction<'a> {
     fn blit_all_entries(
         &mut self,
         changes: &mut [Change],
-        entries: &mut [Option<Entry>],
+        entries: &mut SparseVec<AllocationId, Allocation>,
         old_altas_texture: &wgpu::TextureView,
     ) {
-        for entry in entries {
-            if let Some(entry) = entry {
-                if let Some(change_index) = entry.pending_change.take() {
-                    let change = &changes[change_index];
-                    self.blit_change(change, |_id| *entry);
-                }
-                else {
-                    self.keep(old_altas_texture, entry);
-                }
+        for (_, allocation) in entries.iter_mut() {
+            if let Some(change_index) = allocation.pending_change.take() {
+                let change = &changes[change_index];
+                self.blit_change(change, |_allocation_id| *allocation);
+            }
+            else {
+                self.keep(old_altas_texture, allocation);
             }
         }
     }
 
     pub fn finish(self, device: &wgpu::Device, staging: &mut Staging) {
         self.inner.finish(device, staging);
+    }
+}
+
+#[derive(Debug)]
+struct SparseVec<I, T> {
+    entries: Vec<Option<T>>,
+    free_list: Vec<usize>,
+    num_entries: usize,
+    _marker: PhantomData<fn(I)>,
+}
+
+impl<I, T> Default for SparseVec<I, T> {
+    fn default() -> Self {
+        Self {
+            entries: vec![],
+            free_list: vec![],
+            num_entries: 0,
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<I, T> SparseVec<I, T> {
+    pub fn len(&self) -> usize {
+        self.num_entries
+    }
+}
+
+impl<I, T> SparseVec<I, T>
+where
+    I: From<usize>,
+{
+    pub fn push(&mut self, value: T) -> I {
+        let index = if let Some(index) = self.free_list.pop() {
+            assert!(self.entries[index].is_none());
+            self.entries[index] = Some(value);
+            index
+        }
+        else {
+            let index = self.entries.len();
+            self.entries.push(Some(value));
+            index
+        };
+
+        self.num_entries += 1;
+        I::from(index)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (I, &T)> {
+        self.entries
+            .iter()
+            .enumerate()
+            .filter_map(|(index, allocation)| Some((I::from(index), allocation.as_ref()?)))
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (I, &mut T)> {
+        self.entries
+            .iter_mut()
+            .enumerate()
+            .filter_map(|(index, allocation)| Some((I::from(index), allocation.as_mut()?)))
+    }
+}
+
+impl<I, T> SparseVec<I, T>
+where
+    usize: From<I>,
+{
+    pub fn remove(&mut self, index: I) -> Option<T> {
+        let index = usize::from(index);
+        let value = self
+            .entries
+            .get_mut(index)
+            .and_then(|allocation| allocation.take());
+        if value.is_some() {
+            self.num_entries -= 1;
+            self.free_list.push(index);
+        }
+        value
+    }
+}
+
+impl<I, T> Index<I> for SparseVec<I, T>
+where
+    usize: From<I>,
+{
+    type Output = T;
+
+    fn index(&self, index: I) -> &Self::Output {
+        let index = usize::from(index);
+        self.entries[index].as_ref().unwrap()
+    }
+}
+
+impl<I, T> IndexMut<I> for SparseVec<I, T>
+where
+    usize: From<I>,
+{
+    fn index_mut(&mut self, index: I) -> &mut Self::Output {
+        let index = usize::from(index);
+        self.entries[index].as_mut().unwrap()
     }
 }

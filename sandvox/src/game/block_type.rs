@@ -3,7 +3,10 @@
 use std::{
     collections::HashMap,
     ops::Index,
-    path::Path,
+    path::{
+        Path,
+        PathBuf,
+    },
     sync::Arc,
 };
 
@@ -19,7 +22,7 @@ use color_eyre::{
 use image::RgbaImage;
 
 use crate::{
-    render::atlas::AtlasId,
+    render::atlas::AtlasHandle,
     util::image::ImageLoadExt,
     voxel::BlockFace,
 };
@@ -48,7 +51,7 @@ struct Inner {
 impl BlockTypes {
     pub fn load(
         path: impl AsRef<Path>,
-        mut insert_image: impl FnMut(&RgbaImage) -> Result<AtlasId, Error>,
+        mut insert_image: impl FnMut(&RgbaImage) -> Result<AtlasHandle, Error>,
     ) -> Result<Self, Error> {
         let toml_directory = path.as_ref().parent().unwrap();
         let toml = std::fs::read(&path)?;
@@ -57,7 +60,7 @@ impl BlockTypes {
         let mut blocks = Vec::with_capacity(block_defs.block_defs.len());
         let mut by_name = HashMap::with_capacity(block_defs.block_defs.len());
 
-        let mut texture_cache = HashMap::new();
+        let mut texture_cache: HashMap<PathBuf, AtlasHandle> = HashMap::new();
 
         for (i, (name, mut block_def)) in block_defs.block_defs.into_iter().enumerate() {
             if block_def.texture.is_none() && block_def.is_opaque {
@@ -71,23 +74,23 @@ impl BlockTypes {
                 let mut faces = ArrayVec::new();
 
                 for path in texture_def.faces() {
-                    let texture_id = if let Some(texture_id) = texture_cache.get(path) {
-                        *texture_id
+                    let atlas_handle = if let Some(atlas_handle) = texture_cache.get(path) {
+                        atlas_handle.clone()
                     }
                     else {
                         let full_path = toml_directory.join(path);
                         let image = RgbaImage::from_path(&full_path)
                             .with_note(|| full_path.display().to_string())?;
 
-                        let texture_id = insert_image(&image)?;
+                        let atlas_handle = insert_image(&image)?;
 
-                        tracing::debug!(path = ?full_path, ?texture_id, "loaded texture");
+                        tracing::debug!(path = ?full_path, ?atlas_handle, "loaded texture");
 
-                        texture_cache.insert(path.to_owned(), texture_id);
-                        texture_id
+                        texture_cache.insert(path.to_owned(), atlas_handle.clone());
+                        atlas_handle
                     };
 
-                    faces.push(texture_id)
+                    faces.push(atlas_handle)
                 }
 
                 textures = Some(faces.into_inner().unwrap());
@@ -132,15 +135,15 @@ impl<'a, 'w> From<&'a Res<'w, BlockTypes>> for BlockTypes {
 #[derive(Clone, Debug)]
 pub struct BlockTypeData {
     pub name: String,
-    pub textures: Option<[AtlasId; 6]>,
+    pub textures: Option<[AtlasHandle; 6]>,
     pub is_opaque: bool,
 }
 
 impl BlockTypeData {
-    pub fn face_texture(&self, face: BlockFace) -> Option<AtlasId> {
+    pub fn face_texture(&self, face: BlockFace) -> Option<&AtlasHandle> {
         self.textures
             .as_ref()
-            .map(|faces| faces[usize::from(face as u8)])
+            .map(|faces| &faces[usize::from(face as u8)])
     }
 }
 

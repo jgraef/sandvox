@@ -35,7 +35,7 @@ use crate::{
             BlockTypes,
         },
     },
-    render::atlas::AtlasId,
+    render::atlas::AtlasHandle,
     util::noise::{
         FractalNoise,
         NoiseFn,
@@ -73,16 +73,20 @@ impl Voxel for TerrainVoxel {
     type FetchData = Res<'static, BlockTypes>;
     type Data = BlockTypes;
 
-    fn texture<'w, 's>(&self, face: BlockFace, block_types: &BlockTypes) -> Option<AtlasId> {
+    fn texture<'a>(
+        &'a self,
+        face: BlockFace,
+        block_types: &'a BlockTypes,
+    ) -> Option<&'a AtlasHandle> {
         block_types[self.block_type].face_texture(face)
     }
 
-    fn is_opaque<'w, 's>(&self, block_types: &BlockTypes) -> bool {
+    fn is_opaque(&self, block_types: &BlockTypes) -> bool {
         let block_type_data = &block_types[self.block_type];
         block_type_data.is_opaque
     }
 
-    fn can_merge<'w, 's>(&self, other: &Self, block_types: &BlockTypes) -> bool {
+    fn can_merge(&self, other: &Self, block_types: &BlockTypes) -> bool {
         let _ = block_types;
         // todo: proper check (e.g. for log textures). this needs to know the face.
         self.block_type == other.block_type

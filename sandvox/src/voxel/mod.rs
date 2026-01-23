@@ -8,7 +8,7 @@ use std::fmt::Debug;
 
 use bevy_ecs::system::SystemParam;
 
-use crate::render::atlas::AtlasId;
+use crate::render::atlas::AtlasHandle;
 
 pub trait Voxel: Clone + Debug + Send + Sync + 'static {
     type FetchData: SystemParam;
@@ -18,11 +18,11 @@ pub trait Voxel: Clone + Debug + Send + Sync + 'static {
         + Sync
         + 'static;
 
-    fn texture<'w, 's>(&self, face: BlockFace, data: &Self::Data) -> Option<AtlasId>;
+    fn texture<'a>(&'a self, face: BlockFace, data: &'a Self::Data) -> Option<&'a AtlasHandle>;
 
-    fn is_opaque<'w, 's>(&self, data: &Self::Data) -> bool;
+    fn is_opaque(&self, data: &Self::Data) -> bool;
 
-    fn can_merge<'w, 's>(&self, other: &Self, data: &Self::Data) -> bool;
+    fn can_merge(&self, other: &Self, data: &Self::Data) -> bool;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

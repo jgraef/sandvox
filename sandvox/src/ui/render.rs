@@ -34,7 +34,7 @@ use crate::{
     },
     render::{
         RenderSystems,
-        atlas::AtlasId,
+        atlas::AtlasHandle,
         frame::{
             Frame,
             FrameBindGroupLayout,
@@ -453,8 +453,8 @@ pub struct QuadBuilder<'a> {
 }
 
 impl<'a> QuadBuilder<'a> {
-    pub fn set_atlas_texture(&mut self, atlas_id: AtlasId) -> &mut Self {
-        self.quad.quad.texture_id = atlas_id.into();
+    pub fn set_atlas_texture(&mut self, atlas_handle: AtlasHandle) -> &mut Self {
+        self.quad.quad.texture_id = atlas_handle.id();
         self
     }
 

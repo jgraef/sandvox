@@ -55,7 +55,7 @@ where
 
         let mut mesh_quad = |quad: &GreedyQuad<V>, face| {
             if let Some(texture) = quad.voxel.texture(face, data) {
-                let mesh = quad.inner.mesh(face, texture.into());
+                let mesh = quad.inner.mesh(face, texture.id());
                 mesh_builder.push(mesh.vertices, mesh.faces);
             }
         };
