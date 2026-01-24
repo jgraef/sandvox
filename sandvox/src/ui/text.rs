@@ -33,6 +33,7 @@ use crate::{
         frame::DefaultFont,
         text::{
             Text,
+            TextColor,
             TextSize,
         },
     },
@@ -137,6 +138,7 @@ fn render_texts(
         &Text,
         &TextBuffer,
         Option<&TextSize>,
+        Option<&TextColor>,
         &RoundedLayout,
         &Root,
     )>,
@@ -145,7 +147,7 @@ fn render_texts(
 ) {
     let displacement = font.glyph_displacement();
 
-    for (entity, text, text_buffer, text_size, rounded_layout, root) in nodes {
+    for (entity, text, text_buffer, text_size, text_color, rounded_layout, root) in nodes {
         // - check if the root of the ui tree is requested to be redrawn
         // - get the render target
         // - get the render buffer builder for the render target
@@ -165,6 +167,8 @@ fn render_texts(
             let text_size = text_size.copied().unwrap_or_default().scaling;
             let displacement = displacement * text_size;
             let width_constraint = (content_size.x / displacement.x).floor().max(0.0) as usize;
+
+            let text_color = text_color.copied().map(|color| color.color);
 
             tracing::trace!(?entity, text = ?text.text, ?content_offset, ?content_size, "render text");
 
@@ -189,6 +193,7 @@ fn render_texts(
                                         glyph_offset.cast::<f32>() * text_size + offset,
                                         glyph_size.cast::<f32>() * text_size,
                                         rounded_layout.order,
+                                        text_color,
                                     )
                                     .set_glyph_texture(glyph_id);
 

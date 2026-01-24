@@ -104,6 +104,7 @@ use crate::{
         },
         text::{
             Text,
+            TextColor,
             TextSize,
         },
     },
@@ -335,6 +336,12 @@ fn init_player(
 
     // create debug ui
     fps_counter_config.measurement_inverval = Duration::from_millis(100);
+    let text_style = (
+        TextSize { scaling: 2.0 },
+        TextColor {
+            color: palette::named::HOTPINK.into_format().with_alpha(1.0),
+        },
+    );
     commands
         .spawn((RenderTarget(window), {
             let mut style = Style::default();
@@ -342,18 +349,8 @@ fn init_player(
             style
         }))
         .with_children(|spawner| {
-            spawner.spawn((
-                Text::from(format_build_tag()),
-                TextSize { scaling: 2.0 },
-                Style::default(),
-            ));
-
-            spawner.spawn((
-                Text::default(),
-                TextSize { scaling: 2.0 },
-                Style::default(),
-                DebugOverlay,
-            ));
+            spawner.spawn((Text::from(format_build_tag()), text_style, Style::default()));
+            spawner.spawn((Text::default(), text_style, Style::default(), DebugOverlay));
         });
 }
 

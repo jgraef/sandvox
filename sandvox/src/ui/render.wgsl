@@ -52,6 +52,8 @@ struct Quad {
     size: vec2f,
     texture_id: u32,
     depth: f32,
+    // padding 8 bytes
+    tint: vec4f,
 }
 
 @group(1)
@@ -83,7 +85,7 @@ fn debug_vertex(@builtin(vertex_index) vertex_index: u32) -> DebugVertexOutput {
 
 struct DebugVertexOutput {
     @builtin(position)
-    fragment_position: vec4f,
+    position: vec4f,
 }
 
 @fragment
@@ -100,34 +102,31 @@ const QUAD_VERTICES = array(
 
 @vertex
 fn quad_vertex(@builtin(vertex_index) vertex_index: u32) -> QuadVertexOutput {
+    var output: QuadVertexOutput;
+
     let quad = quad_buffer[vertex_index / 6];
 
     if quad.texture_id == 0xffffffff {
         // anything with u32::MAX as texture ID will not be displayed
         // note: we could of course just not put these into the buffer, but we might want to draw them in a different way (e.g. debug outlines)
 
-        return QuadVertexOutput(
-            vec4f(1, 1, 1, 0), // will be clipped
-            vec2f(0),
-            0,
-        );
+        output.position = vec4f(1, 1, 1, 0); // will be clipped
+    }
+    else {
+        let vertex = QUAD_VERTICES[vertex_index % 6];
+        let position = vertex * quad.size + quad.position;
+        output.position = vec4f(vec2f(2, -2) * position / vec2f(frame_uniform.viewport_size) + vec2f(-1, 1), quad.depth, 1.0);
+        output.uv = vertex;
+        output.texture_id = quad.texture_id;
+        output.tint = quad.tint;
     }
 
-    let vertex = QUAD_VERTICES[vertex_index % 6];
-
-    let position = vertex * quad.size + quad.position;
-    let clip_position = vec4f(vec2f(2, -2) * position / vec2f(frame_uniform.viewport_size) + vec2f(-1, 1), quad.depth, 1.0);
-
-    return QuadVertexOutput(
-        clip_position,
-        vertex,
-        quad.texture_id,
-    );
+    return output;
 }
 
 struct QuadVertexOutput {
     @builtin(position)
-    fragment_position: vec4f,
+    position: vec4f,
 
     @location(0)
     uv: vec2f,
@@ -135,6 +134,9 @@ struct QuadVertexOutput {
     @location(1)
     @interpolate(flat, either)
     texture_id: u32,
+
+    @location(2)
+    tint: vec4f,
 }
 
 @fragment
@@ -160,7 +162,7 @@ fn quad_fragment(input: QuadVertexOutput) -> @location(0) vec4f {
 
         if luma > 0.5 {
             // todo
-            return vec4f(0, 0, 0, 1);
+            return input.tint;
         }
         else {
             discard;

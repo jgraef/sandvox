@@ -26,6 +26,10 @@ use nalgebra::{
     Point2,
     Vector2,
 };
+use palette::{
+    LinSrgba,
+    Srgba,
+};
 
 use crate::{
     ecs::{
@@ -401,6 +405,8 @@ struct Quad {
     size: Vector2<f32>,
     texture_id: u32,
     depth: f32,
+    _padding: [u32; 2],
+    tint: LinSrgba<f32>,
 }
 
 #[derive(Debug)]
@@ -421,6 +427,7 @@ impl RenderBufferBuilder {
         position: Point2<f32>,
         size: Vector2<f32>,
         order: u32,
+        tint: Option<Srgba<f32>>,
     ) -> QuadBuilder<'_> {
         let index = self.quads.len();
 
@@ -431,6 +438,11 @@ impl RenderBufferBuilder {
                 size,
                 texture_id: u32::MAX,
                 depth: 0.0,
+                _padding: Default::default(),
+                tint: tint.map_or_else(
+                    || LinSrgba::new(0.0, 0.0, 0.0, 1.0),
+                    |tint| tint.into_linear(),
+                ),
             },
         });
 
