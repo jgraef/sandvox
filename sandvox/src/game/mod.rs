@@ -85,7 +85,7 @@ use crate::{
             PaddingFill,
             PaddingMode,
         },
-        camera::CameraProjection,
+        camera::Camera,
         fps_counter::{
             FpsCounter,
             FpsCounterConfig,
@@ -297,10 +297,12 @@ fn init_player(
     commands.spawn((
         Name::new("main_camera"),
         RenderTarget(window),
-        CameraProjection::new(
-            CameraProjection::DEFAULT_FOVY,
-            config.chunk_render_distance as f32 * CHUNK_SIZE as f32,
-        ),
+        Camera {
+            aspect_ratio: 1.0,
+            fovy: 60.0f32.to_radians(),
+            z_near: 0.1,
+            z_far: config.chunk_render_distance as f32 * CHUNK_SIZE as f32,
+        },
         LocalTransform::from(chunk_center + chunk_side_length * Vector3::y()),
         CameraController {
             state: CameraControllerState {

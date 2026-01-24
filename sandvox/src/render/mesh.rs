@@ -52,8 +52,8 @@ use crate::{
     render::{
         RenderSystems,
         camera::{
+            Camera,
             CameraFrustrum,
-            CameraProjection,
             FrustrumCulled,
         },
         frame::{
@@ -437,10 +437,7 @@ fn update_instance_buffer(
 }
 
 fn render_meshes_with(
-    cameras: Populated<
-        (Option<&CameraFrustrum>, &GlobalTransform, &RenderTarget),
-        With<CameraProjection>,
-    >,
+    cameras: Populated<(Option<&CameraFrustrum>, &GlobalTransform, &RenderTarget), With<Camera>>,
     mut frames: Populated<(&mut Frame, &MeshPipeline)>,
     meshes: Populated<(&Mesh, &InstanceId, Option<&FrustrumCulled>)>,
     instance_buffer: Res<InstanceBuffer>,
@@ -485,10 +482,7 @@ fn render_meshes_with(
 }
 
 fn render_meshes(
-    cameras: Populated<
-        (Option<&CameraFrustrum>, &GlobalTransform, &RenderTarget),
-        With<CameraProjection>,
-    >,
+    cameras: Populated<(Option<&CameraFrustrum>, &GlobalTransform, &RenderTarget), With<Camera>>,
     frames: Populated<(&mut Frame, &MeshPipeline)>,
     meshes: Populated<(&Mesh, &InstanceId, Option<&FrustrumCulled>)>,
     instance_buffer: Res<InstanceBuffer>,
@@ -499,10 +493,7 @@ fn render_meshes(
 }
 
 fn render_wireframes(
-    cameras: Populated<
-        (Option<&CameraFrustrum>, &GlobalTransform, &RenderTarget),
-        With<CameraProjection>,
-    >,
+    cameras: Populated<(Option<&CameraFrustrum>, &GlobalTransform, &RenderTarget), With<Camera>>,
     frames: Populated<(&mut Frame, &MeshPipeline)>,
     meshes: Populated<(&Mesh, &InstanceId, Option<&FrustrumCulled>)>,
     instance_buffer: Res<InstanceBuffer>,

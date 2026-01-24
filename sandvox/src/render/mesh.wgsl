@@ -23,7 +23,7 @@ struct VertexInput {
 
 struct VertexOutput {
     @builtin(position)
-    fragment_position: vec4f,
+    position: vec4f,
 
     @location(0)
     world_position: vec4f,
@@ -41,15 +41,24 @@ struct VertexOutput {
 
 struct VertexOutputWireframe {
     @builtin(position)
-    fragment_position: vec4f,
+    position: vec4f,
 }
 
 struct FrameUniform {
     viewport_size: vec2u,
     time: f32,
     // padding: 4 bytes
-    camera_matrix: mat4x4f,
+    camera: Camera,
 }
+
+struct Camera {
+    projection: mat4x4f,
+    projection_inverse: mat4x4f,
+    view: mat4x4f,
+    view_inverse: mat4x4f,
+    position: vec4f,
+}
+
 
 @group(0)
 @binding(0)
@@ -73,8 +82,6 @@ struct AtlasEntry {
 var<storage, read> atlas_data: array<AtlasEntry>;
 
 
-
-
 @vertex
 fn vertex_main(input: VertexInput) -> VertexOutput {
     let model_matrix = mat4x4f(input.model0, input.model1, input.model2, input.model3);
@@ -82,10 +89,10 @@ fn vertex_main(input: VertexInput) -> VertexOutput {
     let world_position = model_matrix * input.position;
     let normal = model_matrix * input.normal;
 
-    let fragment_position = frame_uniform.camera_matrix * world_position;
+    let position = frame_uniform.camera.projection * frame_uniform.camera.view * world_position;
 
     return VertexOutput(
-        fragment_position,
+        position,
         world_position,
         normal,
         input.uv,
@@ -95,6 +102,8 @@ fn vertex_main(input: VertexInput) -> VertexOutput {
 
 @fragment
 fn fragment_main(input: VertexOutput) -> @location(0) vec4f {
+    var color: vec4f;
+
     // todo: figure out where the sun is (https://iurietarlev.github.io/SunpathDiagram/),
     // but move this out of shader and send light direction/color via frame uniform
     //let sun_phase = frame_uniform.time / 60.0 * 2.0 * PI;
@@ -104,22 +113,22 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4f {
     let normal = normalize(input.normal.xyz);
     let brightness = 0.5 * dot(normal, light_dir) + 0.5;
 
+    // color sampled from texture
     let uv = atlas_map_uv(input.texture_id, input.uv);
-    var color = textureSample(atlas_texture, default_sampler, uv);
-
+    color = textureSample(atlas_texture, default_sampler, uv);
     color = vec4f(color.rgb * brightness * light_color, 1);
+
     return color;
 }
-
 
 @vertex
 fn vertex_main_wireframe(input: VertexInput) -> VertexOutputWireframe {
     let model_matrix = mat4x4f(input.model0, input.model1, input.model2, input.model3);
     let world_position = model_matrix * input.position;
-    let fragment_position = frame_uniform.camera_matrix * world_position;
+    let position =  frame_uniform.camera.projection * frame_uniform.camera.view * world_position;
 
     return VertexOutputWireframe(
-        fragment_position,
+        position,
     );
 }
 

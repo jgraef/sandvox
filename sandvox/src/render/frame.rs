@@ -29,6 +29,7 @@ use bytemuck::{
 use nalgebra::{
     Matrix4,
     Vector2,
+    Vector4,
 };
 use palette::Srgba;
 
@@ -388,7 +389,17 @@ pub struct FrameUniformData {
     pub viewport_size: Vector2<u32>,
     pub time: f32,
     _padding: u32,
-    pub camera_matrix: Matrix4<f32>,
+    pub camera: CameraData,
+}
+
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+#[repr(C)]
+pub struct CameraData {
+    pub projection: Matrix4<f32>,
+    pub projection_inverse: Matrix4<f32>,
+    pub view: Matrix4<f32>,
+    pub view_inverse: Matrix4<f32>,
+    pub position: Vector4<f32>,
 }
 
 pub(super) fn update_frame_uniform(

@@ -313,6 +313,8 @@ impl Atlas {
     }
 
     pub fn flush(&mut self, device: &wgpu::Device, mut staging: &mut Staging) -> bool {
+        self.handle_drops();
+
         let mut new_texture = false;
         let new_data_buffer;
 
