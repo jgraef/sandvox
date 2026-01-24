@@ -296,3 +296,22 @@ impl CameraFrustrum {
 pub struct FrustrumCulled {
     pub aabb: Aabb,
 }
+
+#[cfg(test)]
+mod tests {
+    use nalgebra::{
+        Perspective3,
+        Point3,
+    };
+
+    #[test]
+    fn how_tf_does_nalgebras_perspective_map() {
+        let perspective = Perspective3::new(1.0, 60.0f32.to_radians(), 0.1, 100.0).to_homogeneous();
+        println!("{perspective:#?}");
+
+        let point = Point3::new(0.0, 0.0, 100.0).to_homogeneous();
+        let projected_point = Point3::from_homogeneous(perspective * point).unwrap();
+
+        assert_eq!(projected_point, Point3::new(0.0, 0.0, 1.0));
+    }
+}

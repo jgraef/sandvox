@@ -12,6 +12,7 @@ use std::{
 
 use bevy_ecs::{
     component::Component,
+    message::MessageWriter,
     name::Name,
     query::{
         Changed,
@@ -92,6 +93,10 @@ use crate::{
         },
         frame::DefaultAtlas,
         mesh::RenderWireframes,
+        skybox::{
+            LoadSkybox,
+            SkyboxPlugin,
+        },
         staging::Staging,
         surface::{
             ClearColor,
@@ -220,6 +225,7 @@ impl Plugin for GamePlugin {
                 //TestChunkGenerator,
                 CHUNK_SIZE,
             >::new(self.game_config.chunk_generator_config))?
+            .add_plugin(SkyboxPlugin)?
             .add_systems(
                 schedule::Startup,
                 (
@@ -276,6 +282,7 @@ fn init_player(
     config: Res<GameConfig>,
     mut fps_counter_config: ResMut<FpsCounterConfig>,
     mut commands: Commands,
+    mut load_skybox: MessageWriter<LoadSkybox>,
 ) {
     tracing::debug!("initializing world");
 
@@ -294,27 +301,34 @@ fn init_player(
         .id();
 
     // spawn camera
-    commands.spawn((
-        Name::new("main_camera"),
-        RenderTarget(window),
-        Camera {
-            aspect_ratio: 1.0,
-            fovy: 60.0f32.to_radians(),
-            z_near: 0.1,
-            z_far: config.chunk_render_distance as f32 * CHUNK_SIZE as f32,
-        },
-        LocalTransform::from(chunk_center + chunk_side_length * Vector3::y()),
-        CameraController {
-            state: CameraControllerState {
-                yaw: 0.0,
-                pitch: -FRAC_PI_4,
+    let camera = commands
+        .spawn((
+            Name::new("main_camera"),
+            RenderTarget(window),
+            Camera {
+                aspect_ratio: 1.0,
+                fovy: 60.0f32.to_radians(),
+                z_near: 0.1,
+                z_far: config.chunk_render_distance as f32 * CHUNK_SIZE as f32,
             },
-            config: config.camera_controller.clone(),
-        },
-        ChunkLoader {
-            radius: Vector3::repeat(config.chunk_load_distance),
-        },
-    ));
+            LocalTransform::from(chunk_center + chunk_side_length * Vector3::y()),
+            CameraController {
+                state: CameraControllerState {
+                    yaw: 0.0,
+                    pitch: -FRAC_PI_4,
+                },
+                config: config.camera_controller.clone(),
+            },
+            ChunkLoader {
+                radius: Vector3::repeat(config.chunk_load_distance),
+            },
+        ))
+        .id();
+
+    load_skybox.write(LoadSkybox {
+        path: PathBuf::from("assets/skybox"),
+        entity: camera,
+    });
 
     // create cursor
     // todo

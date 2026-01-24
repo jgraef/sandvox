@@ -3,6 +3,7 @@ pub mod camera;
 pub mod fps_counter;
 pub mod frame;
 pub mod mesh;
+pub mod skybox;
 pub mod staging;
 pub mod surface;
 pub mod text;
