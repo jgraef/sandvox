@@ -19,10 +19,10 @@ pub struct Rect {
 
 #[derive(Clone, Copy, Debug, Default, Serialize)]
 pub struct Margin {
-    pub left: f32,
-    pub top: f32,
-    pub right: f32,
-    pub bottom: f32,
+    pub left: u32,
+    pub top: u32,
+    pub right: u32,
+    pub bottom: u32,
 }
 
 #[derive(Clone, Copy, Debug, Serialize)]
@@ -52,7 +52,7 @@ fn extract_asset(tres: &str) -> Option<Asset> {
                 "bottom" => &mut output.bottom,
                 _ => return,
             };
-            *output = value;
+            *output = value.max(0.0) as u32;
         }
     }
 

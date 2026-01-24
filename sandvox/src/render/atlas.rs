@@ -238,12 +238,6 @@ impl Atlas {
             ref_count: 1,
         });
 
-        let _dummy_view_id = self.views.push(View {
-            allocation_id,
-            offset: inner_offset,
-            size,
-        });
-
         let view_id = self.views.push(View {
             allocation_id,
             offset: inner_offset,
@@ -310,6 +304,38 @@ impl Atlas {
         });
 
         self.insert_texture(texture_view, padding_mode)
+    }
+
+    pub fn view(
+        &mut self,
+        handle: &AtlasHandle,
+        offset: Vector2<u32>,
+        size: Vector2<u32>,
+    ) -> AtlasHandle {
+        let outer_view = &self.views[handle.view_id];
+
+        assert!(offset.x + size.x <= outer_view.size.x);
+        assert!(offset.y + size.y <= outer_view.size.y);
+
+        self.allocations[outer_view.allocation_id].ref_count += 1;
+
+        let view_id = self.views.push(View {
+            allocation_id: outer_view.allocation_id,
+            offset: outer_view.offset + offset,
+            size,
+        });
+
+        AtlasHandle {
+            view_id,
+            dropper: Arc::new(Dropper {
+                view_id,
+                dropped: self.dropped.clone(),
+            }),
+        }
+    }
+
+    pub fn view_size(&self, handle: &AtlasHandle) -> Vector2<u32> {
+        self.views[handle.view_id].size
     }
 
     pub fn flush(&mut self, device: &wgpu::Device, mut staging: &mut Staging) -> bool {
@@ -500,7 +526,7 @@ impl AtlasHandle {
 
 impl Debug for AtlasHandle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_tuple("AtlasHandle").field(&self.view_id).finish()
+        f.debug_tuple("AtlasHandle").field(&self.view_id.0).finish()
     }
 }
 

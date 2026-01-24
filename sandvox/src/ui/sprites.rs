@@ -77,18 +77,24 @@ impl Sprites {
     }
 
     fn insert_ui(&mut self, name: String, sprite: Sprite) -> SpriteId {
+        tracing::debug!(?name, ?sprite, "loaded ui sprite");
+
         let sprite_id = self.insert(sprite);
         self.ui.insert(name, sprite_id);
         sprite_id
     }
 
     fn insert_icon(&mut self, name: String, sprite: Sprite) -> SpriteId {
+        tracing::debug!(?name, ?sprite, "loaded icon sprite");
+
         let sprite_id = self.insert(sprite);
         self.icons.insert(name, sprite_id);
         sprite_id
     }
 
     fn insert_crosshair(&mut self, sprite: Sprite) -> SpriteId {
+        tracing::debug!(?sprite, "loaded crosshair sprite");
+
         let sprite_id = self.insert(sprite);
         self.crosshairs.push(sprite_id);
         sprite_id
@@ -124,6 +130,7 @@ pub struct Sprite {
     pub margin: Option<Margin>,
     pub content_margin: Option<Margin>,
     pub expand_margin: Option<Margin>,
+    pub nine_patch: Option<NinePatch>,
 }
 
 impl Sprite {
@@ -133,21 +140,157 @@ impl Sprite {
             margin: None,
             content_margin: None,
             expand_margin: None,
+            nine_patch: None,
         }
     }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
 pub struct Margin {
-    pub left: f32,
-    pub top: f32,
-    pub right: f32,
-    pub bottom: f32,
+    pub left: u32,
+    pub top: u32,
+    pub right: u32,
+    pub bottom: u32,
+}
+
+impl Margin {
+    pub fn to_padding(&self, pixel_size: f32) -> taffy::Rect<taffy::LengthPercentage> {
+        tracing::debug!(
+            left = self.left as f32 * pixel_size,
+            right = self.right as f32 * pixel_size,
+            top = self.top as f32 * pixel_size,
+            bottom = self.bottom as f32 * pixel_size,
+            "padding"
+        );
+
+        taffy::Rect {
+            left: taffy::LengthPercentage::length(self.left as f32 * pixel_size),
+            right: taffy::LengthPercentage::length(self.right as f32 * pixel_size),
+            top: taffy::LengthPercentage::length(self.top as f32 * pixel_size),
+            bottom: taffy::LengthPercentage::length(self.bottom as f32 * pixel_size),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Component)]
 pub struct Background {
     pub sprite: Sprite,
+    pub pixel_size: f32,
+}
+
+#[derive(Clone, Debug)]
+pub struct NinePatch {
+    patches: [[AtlasHandle; 3]; 3],
+    margin: Margin,
+}
+
+impl NinePatch {
+    pub fn new(atlas_handle: &AtlasHandle, atlas: &mut Atlas, margin: Margin) -> Self {
+        let size = atlas.view_size(atlas_handle);
+
+        let mut patch = |mut left, mut top, mut right, mut bottom| {
+            if left > right {
+                std::mem::swap(&mut left, &mut right);
+            }
+            if top > bottom {
+                std::mem::swap(&mut bottom, &mut top)
+            }
+
+            let patch_size = Vector2::new(right - left, bottom - top);
+            let texture = atlas.view(atlas_handle, Vector2::new(left, top), patch_size);
+            texture
+        };
+
+        let patches = [
+            [
+                patch(0, 0, margin.left, margin.top),
+                patch(margin.left, 0, size.x - margin.right, margin.top),
+                patch(size.x - margin.right, 0, size.x, margin.top),
+            ],
+            [
+                patch(0, margin.top, margin.left, size.y - margin.bottom),
+                patch(
+                    margin.left,
+                    margin.top,
+                    size.x - margin.right,
+                    size.y - margin.bottom,
+                ),
+                patch(
+                    size.x - margin.right,
+                    margin.top,
+                    size.x,
+                    size.y - margin.bottom,
+                ),
+            ],
+            [
+                patch(0, size.y - margin.bottom, margin.left, size.y),
+                patch(
+                    margin.left,
+                    size.y - margin.bottom,
+                    size.x - margin.right,
+                    size.y,
+                ),
+                patch(
+                    size.x - margin.right,
+                    size.y - margin.bottom,
+                    size.x,
+                    size.y,
+                ),
+            ],
+        ];
+
+        NinePatch { patches, margin }
+    }
+
+    pub fn render(
+        &self,
+        render_buffer_builder: &mut RenderBufferBuilder,
+        offset: Point2<f32>,
+        size: Vector2<f32>,
+        order: u32,
+        pixel_size: f32,
+    ) {
+        fn patch_sizes(size: f32, margin_low: f32, margin_high: f32) -> [f32; 3] {
+            let mut spacings = [0.0; 3];
+            spacings[0] = margin_low.min(size);
+            spacings[2] = margin_high.clamp(0.0, size - spacings[0]);
+            spacings[1] = (size - spacings[0] - spacings[2]).max(0.0);
+            spacings
+        }
+
+        let mut horizontal = patch_sizes(
+            size.x / pixel_size,
+            self.margin.left as f32,
+            self.margin.right as f32,
+        );
+        let mut vertical = patch_sizes(
+            size.y / pixel_size,
+            self.margin.top as f32,
+            self.margin.bottom as f32,
+        );
+        for i in 0..3 {
+            horizontal[i] *= pixel_size;
+            vertical[i] *= pixel_size;
+        }
+
+        let mut cursor = offset;
+
+        for y in 0..3 {
+            for x in 0..3 {
+                render_buffer_builder
+                    .push_quad(
+                        cursor,
+                        Vector2::new(horizontal[x], vertical[y]),
+                        order,
+                        None,
+                    )
+                    .set_atlas_texture(&self.patches[y][x]);
+                cursor.x += horizontal[x];
+            }
+            cursor.x = offset.x;
+            cursor.y += vertical[y];
+        }
+    }
 }
 
 pub(super) fn setup_sprite_systems(builder: &mut WorldBuilder) {
@@ -193,20 +336,31 @@ fn render_sprites(
             && let Some(render_target) = root.render_target
             && let Ok(mut render_buffer_builder) = surfaces.get_mut(render_target)
         {
-            let content_offset = Point2::new(
-                rounded_layout.content_box_x(),
-                rounded_layout.content_box_y(),
-            );
-            let content_size = Vector2::new(
-                rounded_layout.content_box_width(),
-                rounded_layout.content_box_height(),
+            let content_offset = Point2::new(rounded_layout.location.x, rounded_layout.location.y);
+            let content_size = Vector2::new(rounded_layout.size.width, rounded_layout.size.height);
+
+            tracing::trace!(
+                ?entity,
+                ?background,
+                ?content_offset,
+                ?content_size,
+                "render background"
             );
 
-            tracing::trace!(?entity, sprite = ?background.sprite, ?content_offset, ?content_size, "render background");
-
-            render_buffer_builder
-                .push_quad(content_offset, content_size, rounded_layout.order, None)
-                .set_atlas_texture(&background.sprite.atlas_handle);
+            if let Some(nine_patch) = &background.sprite.nine_patch {
+                nine_patch.render(
+                    &mut render_buffer_builder,
+                    content_offset,
+                    content_size,
+                    rounded_layout.order,
+                    background.pixel_size,
+                );
+            }
+            else {
+                render_buffer_builder
+                    .push_quad(content_offset, content_size, rounded_layout.order, None)
+                    .set_atlas_texture(&background.sprite.atlas_handle);
+            }
         }
     }
 }
@@ -295,7 +449,7 @@ fn load_sprite_sheet_json(
             )
             .to_image();
 
-        let atlas_id = atlas.insert_image(
+        let atlas_handle = atlas.insert_image(
             &sub_image,
             Some(PaddingMode {
                 padding: Padding::uniform(1),
@@ -307,16 +461,21 @@ fn load_sprite_sheet_json(
 
         if entry.margin.is_some() || entry.content_margin.is_some() || entry.expand_margin.is_some()
         {
-            tracing::debug!(?atlas_id, ?name, ?entry.margin, ?entry.content_margin, ?entry.expand_margin, "nine-patch?");
+            tracing::debug!(?atlas_handle, ?name, ?entry.margin, ?entry.content_margin, ?entry.expand_margin, "nine-patch?");
         }
+
+        let nine_patch = entry
+            .margin
+            .map(|margin| NinePatch::new(&atlas_handle, atlas, margin));
 
         insert_sprite(
             name,
             Sprite {
-                atlas_handle: atlas_id,
+                atlas_handle,
                 margin: entry.margin,
                 content_margin: entry.content_margin,
                 expand_margin: entry.expand_margin,
+                nine_patch,
             },
         );
     }

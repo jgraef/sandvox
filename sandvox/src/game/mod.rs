@@ -341,29 +341,35 @@ fn init_player(
 
     // create debug ui
     fps_counter_config.measurement_inverval = Duration::from_millis(100);
+    let pixel_size = 2.0;
     let text_style = (
-        TextSize { scaling: 2.0 },
+        TextSize {
+            scaling: pixel_size,
+        },
         TextColor {
-            color: palette::named::HOTPINK.into_format().with_alpha(1.0),
+            color: palette::named::WHITESMOKE.into_format().with_alpha(1.0),
         },
     );
     commands
-        .spawn((
-            RenderTarget(window),
-            {
-                let mut style = Style::default();
-                style.display = taffy::style::Display::Block;
-                style
-            },
-            Background {
-                sprite: {
-                    let sprite_id = sprites.lookup_ui("normal_panel_round").unwrap();
-                    let sprite = sprites[sprite_id].clone();
-                    tracing::debug!(?sprite, "SPRITE!");
-                    sprite
-                },
-            },
-        ))
+        .spawn((RenderTarget(window), {
+            let sprite_id = sprites.lookup_ui("normal_panel_sharp").unwrap();
+            let background = Background {
+                sprite: sprites[sprite_id].clone(),
+                pixel_size,
+            };
+
+            let mut style = Style::default();
+            style.display = taffy::style::Display::Flex;
+            style.flex_direction = taffy::style::FlexDirection::Column;
+            style.padding = taffy::Rect {
+                left: taffy::LengthPercentage::length(4.0 * pixel_size),
+                right: taffy::LengthPercentage::length(6.0 * pixel_size),
+                top: taffy::LengthPercentage::length(4.0 * pixel_size),
+                bottom: taffy::LengthPercentage::length(5.0 * pixel_size),
+            };
+
+            (style, background)
+        }))
         .with_children(|spawner| {
             spawner.spawn((Text::from(format_build_tag()), text_style, Style::default()));
             spawner.spawn((Text::default(), text_style, Style::default(), DebugOverlay));

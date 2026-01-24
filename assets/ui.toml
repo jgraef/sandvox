@@ -1,0 +1,7 @@
+[source]
+image = "ui.png"
+sprites = "ui.json"
+
+[[backgrounds.panel]]
+source = "normal_panel_round"
+ninepatch = { margin = 4 }
