@@ -185,8 +185,8 @@ fn create_pipeline(
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: surface.depth_texture_format(),
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::LessEqual,
+                    depth_write_enabled: false,
+                    depth_compare: wgpu::CompareFunction::Equal,
                     stencil: Default::default(),
                     bias: Default::default(),
                 }),
