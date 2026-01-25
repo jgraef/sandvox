@@ -89,7 +89,7 @@ pub struct Atlas {
     usage: wgpu::TextureUsages,
     allocations: SparseVec<AllocationId, Allocation>,
     views: SparseVec<ViewId, View>,
-    dropped: Arc<Mutex<Vec<ViewId>>>,
+    dropped: Arc<Mutex<Dropped>>,
     dropped_buf: Vec<ViewId>,
     changes: Vec<Change>,
     blitter: Blitter,
@@ -164,7 +164,7 @@ impl Atlas {
             // time. we do this because freeing allocations might take a bit.
 
             let mut dropped = self.dropped.lock();
-            std::mem::swap(&mut self.dropped_buf, &mut *dropped);
+            std::mem::swap(&mut self.dropped_buf, &mut dropped.views);
         }
 
         for view_id in self.dropped_buf.drain(..) {
@@ -471,6 +471,20 @@ impl Atlas {
     }
 }
 
+impl Drop for Atlas {
+    fn drop(&mut self) {
+        let mut dropped = self.dropped.lock();
+        dropped.closed = true;
+        dropped.views.clear();
+    }
+}
+
+#[derive(Debug, Default)]
+struct Dropped {
+    views: Vec<ViewId>,
+    closed: bool,
+}
+
 #[derive(Clone)]
 pub struct AtlasHandle {
     view_id: ViewId,
@@ -492,13 +506,15 @@ impl Debug for AtlasHandle {
 
 struct Dropper {
     view_id: ViewId,
-    dropped: Arc<Mutex<Vec<ViewId>>>,
+    dropped: Arc<Mutex<Dropped>>,
 }
 
 impl Drop for Dropper {
     fn drop(&mut self) {
         let mut dropped = self.dropped.lock();
-        dropped.push(self.view_id);
+        if !dropped.closed {
+            dropped.views.push(self.view_id);
+        }
     }
 }
 
