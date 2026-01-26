@@ -1,7 +1,8 @@
 use std::{
-    collections::HashMap,
-    fs::File,
-    io::BufReader,
+    collections::{
+        HashMap,
+        hash_map,
+    },
     ops::Index,
     path::Path,
 };
@@ -56,6 +57,7 @@ use crate::{
         Root,
         RoundedLayout,
         UiSystems,
+        sprites::ui_defs::MarginDef,
     },
     util::image::ImageLoadExt,
     wgpu::WgpuContext,
@@ -64,52 +66,92 @@ use crate::{
 #[derive(Debug, Default, Resource)]
 pub struct Sprites {
     sprites: Vec<Sprite>,
-    ui: HashMap<String, SpriteId>,
-    icons: HashMap<String, SpriteId>,
-    crosshairs: Vec<SpriteId>,
+    by_name: HashMap<String, SpriteId>,
 }
 
 impl Sprites {
-    fn insert(&mut self, sprite: Sprite) -> SpriteId {
+    fn insert(&mut self, name: String, sprite: Sprite) -> SpriteId {
         let sprite_id = SpriteId(self.sprites.len());
         self.sprites.push(sprite);
+        self.by_name.insert(name, sprite_id);
         sprite_id
     }
 
-    fn insert_ui(&mut self, name: String, sprite: Sprite) -> SpriteId {
-        tracing::debug!(?name, ?sprite, "loaded ui sprite");
-
-        let sprite_id = self.insert(sprite);
-        self.ui.insert(name, sprite_id);
-        sprite_id
+    pub fn lookup(&self, name: &str) -> Option<SpriteId> {
+        self.by_name.get(name).copied()
     }
 
-    fn insert_icon(&mut self, name: String, sprite: Sprite) -> SpriteId {
-        tracing::debug!(?name, ?sprite, "loaded icon sprite");
+    pub fn load(
+        path: impl AsRef<Path>,
+        device: &wgpu::Device,
+        atlas: &mut Atlas,
+        staging: &mut Staging,
+    ) -> Result<Self, Error> {
+        let toml_directory = path.as_ref().parent().unwrap();
+        let toml = std::fs::read(&path)?;
+        let ui_defs: ui_defs::SpriteDefs = toml::from_slice(&toml)?;
 
-        let sprite_id = self.insert(sprite);
-        self.icons.insert(name, sprite_id);
-        sprite_id
-    }
+        let mut image_cache = HashMap::new();
+        let mut sprites = Sprites::default();
 
-    fn insert_crosshair(&mut self, sprite: Sprite) -> SpriteId {
-        tracing::debug!(?sprite, "loaded crosshair sprite");
+        for (name, sprite_def) in ui_defs.sprites {
+            let image = match image_cache.entry(sprite_def.source.clone()) {
+                hash_map::Entry::Occupied(occupied) => occupied.into_mut(),
+                hash_map::Entry::Vacant(vacant) => {
+                    let image = RgbaImage::from_path(toml_directory.join(&sprite_def.source))?;
+                    vacant.insert(image)
+                }
+            };
 
-        let sprite_id = self.insert(sprite);
-        self.crosshairs.push(sprite_id);
-        sprite_id
-    }
+            let sub_image = image
+                .view(
+                    sprite_def.x,
+                    sprite_def.y,
+                    sprite_def.width,
+                    sprite_def.height,
+                )
+                .to_image();
 
-    pub fn lookup_ui(&self, name: &str) -> Option<SpriteId> {
-        self.ui.get(name).copied()
-    }
+            let atlas_handle = atlas.insert_image(
+                &sub_image,
+                Some(PaddingMode {
+                    padding: Padding::uniform(1),
+                    fill: PaddingFill::TRANSPARENT,
+                }),
+                device,
+                staging,
+            )?;
 
-    pub fn lookup_icon(&self, name: &str) -> Option<SpriteId> {
-        self.icons.get(name).copied()
-    }
+            let mut nine_patch = None;
+            let mut padding = None;
 
-    pub fn lookup_crosshair(&self, index: usize) -> Option<SpriteId> {
-        self.crosshairs.get(index).copied()
+            if let Some(margin) = sprite_def.nine_patch {
+                let margin = match margin {
+                    MarginDef::SingleMargin { margin } => {
+                        Margin {
+                            left: margin,
+                            top: margin,
+                            right: margin,
+                            bottom: margin,
+                        }
+                    }
+                };
+
+                nine_patch = Some(NinePatch::new(&atlas_handle, atlas, margin));
+                padding = Some(margin);
+            };
+
+            sprites.insert(
+                name,
+                Sprite {
+                    atlas_handle,
+                    nine_patch,
+                    padding,
+                },
+            );
+        }
+
+        Ok(sprites)
     }
 }
 
@@ -127,21 +169,20 @@ pub struct SpriteId(usize);
 #[derive(Clone, Debug)]
 pub struct Sprite {
     pub atlas_handle: AtlasHandle,
-    pub margin: Option<Margin>,
-    pub content_margin: Option<Margin>,
-    pub expand_margin: Option<Margin>,
     pub nine_patch: Option<NinePatch>,
+    pub padding: Option<Margin>,
 }
 
 impl Sprite {
-    pub fn from_atlas(atlas_handle: AtlasHandle) -> Self {
-        Self {
-            atlas_handle,
-            margin: None,
-            content_margin: None,
-            expand_margin: None,
-            nine_patch: None,
-        }
+    pub fn padding(&self, pixel_size: f32) -> Option<taffy::Rect<taffy::LengthPercentage>> {
+        self.padding.map(|padding| {
+            taffy::Rect {
+                left: taffy::LengthPercentage::length(padding.left as f32 * pixel_size),
+                right: taffy::LengthPercentage::length(padding.right as f32 * pixel_size),
+                top: taffy::LengthPercentage::length(padding.top as f32 * pixel_size),
+                bottom: taffy::LengthPercentage::length(padding.bottom as f32 * pixel_size),
+            }
+        })
     }
 }
 
@@ -312,8 +353,8 @@ fn load_sprites(
     mut commands: Commands,
 ) {
     // todo: hard-coded asset path
-    let sprites = load_all_sprites("assets", &mut atlas, &wgpu.device, &mut *staging).unwrap();
-
+    let path = Path::new("assets/ui.toml");
+    let sprites = Sprites::load(path, &wgpu.device, &mut atlas.0, &mut *staging).unwrap();
     commands.insert_resource(sprites);
 }
 
@@ -365,158 +406,32 @@ fn render_sprites(
     }
 }
 
-fn load_all_sprites(
-    path: impl AsRef<Path>,
-    mut atlas: &mut Atlas,
-    device: &wgpu::Device,
-    mut staging: &mut Staging,
-) -> Result<Sprites, Error> {
-    let path = path.as_ref();
-    let mut sprites = Sprites::default();
+mod ui_defs {
+    use std::path::PathBuf;
 
-    load_sprite_sheet_json(
-        path.join("ui.json"),
-        path.join("ui.png"),
-        &mut atlas,
-        |name, sprite| {
-            sprites.insert_ui(name, sprite);
-        },
-        device,
-        &mut staging,
-    )?;
+    use indexmap::IndexMap;
+    use serde::Deserialize;
 
-    load_sprite_sheet_json(
-        path.join("icons.json"),
-        path.join("icons.png"),
-        &mut atlas,
-        |name, sprite| {
-            sprites.insert_icon(name, sprite);
-        },
-        device,
-        &mut staging,
-    )?;
-
-    load_sprite_sheet_tiled(
-        Vector2::repeat(7),
-        path.join("crosshairs.png"),
-        &mut atlas,
-        |sprite| {
-            sprites.insert_crosshair(sprite);
-        },
-        device,
-        &mut staging,
-    )?;
-
-    Ok(sprites)
-}
-
-fn load_sprite_sheet_json(
-    json_path: impl AsRef<Path>,
-    image_path: impl AsRef<Path>,
-    atlas: &mut Atlas,
-    mut insert_sprite: impl FnMut(String, Sprite),
-    device: &wgpu::Device,
-    staging: &mut Staging,
-) -> Result<(), Error> {
     #[derive(Debug, Deserialize)]
-    struct Source {
-        x: u32,
-        y: u32,
-        width: u32,
-        height: u32,
+    #[serde(transparent)]
+    pub struct SpriteDefs {
+        pub sprites: IndexMap<String, SpriteDef>,
     }
 
     #[derive(Debug, Deserialize)]
-    struct Entry {
-        source: Source,
-        margin: Option<Margin>,
-        content_margin: Option<Margin>,
-        expand_margin: Option<Margin>,
+    #[serde(deny_unknown_fields)]
+    pub struct SpriteDef {
+        pub source: PathBuf,
+        pub x: u32,
+        pub y: u32,
+        pub width: u32,
+        pub height: u32,
+        pub nine_patch: Option<MarginDef>,
     }
 
-    let reader = BufReader::new(File::open(json_path)?);
-    let entries: HashMap<String, Entry> = serde_json::from_reader(reader)?;
-
-    let image = RgbaImage::from_path(image_path)?;
-
-    for (name, entry) in entries {
-        let sub_image = image
-            .view(
-                entry.source.x,
-                entry.source.y,
-                entry.source.width,
-                entry.source.height,
-            )
-            .to_image();
-
-        let atlas_handle = atlas.insert_image(
-            &sub_image,
-            Some(PaddingMode {
-                padding: Padding::uniform(1),
-                fill: PaddingFill::TRANSPARENT,
-            }),
-            device,
-            staging,
-        )?;
-
-        if entry.margin.is_some() || entry.content_margin.is_some() || entry.expand_margin.is_some()
-        {
-            tracing::debug!(?atlas_handle, ?name, ?entry.margin, ?entry.content_margin, ?entry.expand_margin, "nine-patch?");
-        }
-
-        let nine_patch = entry
-            .margin
-            .map(|margin| NinePatch::new(&atlas_handle, atlas, margin));
-
-        insert_sprite(
-            name,
-            Sprite {
-                atlas_handle,
-                margin: entry.margin,
-                content_margin: entry.content_margin,
-                expand_margin: entry.expand_margin,
-                nine_patch,
-            },
-        );
+    #[derive(Debug, Deserialize)]
+    #[serde(untagged, deny_unknown_fields)]
+    pub enum MarginDef {
+        SingleMargin { margin: u32 },
     }
-
-    Ok(())
-}
-
-fn load_sprite_sheet_tiled(
-    sprite_size: Vector2<u32>,
-    image_path: impl AsRef<Path>,
-    atlas: &mut Atlas,
-    mut insert_sprite: impl FnMut(Sprite),
-    device: &wgpu::Device,
-    staging: &mut Staging,
-) -> Result<(), Error> {
-    let image = RgbaImage::from_path(image_path)?;
-
-    for y in 0..(image.height() / sprite_size.y) {
-        for x in 0..(image.width() / sprite_size.x) {
-            let sub_image = image
-                .view(
-                    x * sprite_size.x,
-                    y * sprite_size.y,
-                    sprite_size.x,
-                    sprite_size.y,
-                )
-                .to_image();
-
-            let atlas_id = atlas.insert_image(
-                &sub_image,
-                Some(PaddingMode {
-                    padding: Padding::uniform(1),
-                    fill: PaddingFill::TRANSPARENT,
-                }),
-                device,
-                staging,
-            )?;
-
-            insert_sprite(Sprite::from_atlas(atlas_id));
-        }
-    }
-
-    Ok(())
 }

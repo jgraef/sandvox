@@ -110,6 +110,7 @@ use crate::{
     },
     ui::{
         Background,
+        ShowDebugOutlines,
         Sprites,
         Style,
     },
@@ -352,7 +353,7 @@ fn init_player(
     );
     commands
         .spawn((RenderTarget(window), {
-            let sprite_id = sprites.lookup_ui("normal_panel_sharp").unwrap();
+            let sprite_id = sprites.lookup("panel").unwrap();
             let background = Background {
                 sprite: sprites[sprite_id].clone(),
                 pixel_size,
@@ -361,12 +362,15 @@ fn init_player(
             let mut style = Style::default();
             style.display = taffy::style::Display::Flex;
             style.flex_direction = taffy::style::FlexDirection::Column;
-            style.padding = taffy::Rect {
+            /*style.padding = taffy::Rect {
                 left: taffy::LengthPercentage::length(4.0 * pixel_size),
                 right: taffy::LengthPercentage::length(6.0 * pixel_size),
                 top: taffy::LengthPercentage::length(4.0 * pixel_size),
                 bottom: taffy::LengthPercentage::length(5.0 * pixel_size),
-            };
+            };*/
+            if let Some(padding) = sprites[sprite_id].padding(pixel_size) {
+                style.padding = padding;
+            }
 
             (style, background)
         }))
@@ -445,6 +449,7 @@ fn update_debug_overlay(
 fn handle_keys(
     keys: Populated<&Keys, Changed<Keys>>,
     render_wireframes: Option<Res<RenderWireframes>>,
+    show_ui_layout: Option<Res<ShowDebugOutlines>>,
     mut close_app: CloseApp,
     mut commands: Commands,
 ) {
@@ -455,6 +460,15 @@ fn handle_keys(
             }
             else {
                 commands.remove_resource::<RenderWireframes>();
+            }
+        }
+
+        if keys.just_pressed.contains(&KeyCode::F7) {
+            if show_ui_layout.is_none() {
+                commands.insert_resource(ShowDebugOutlines);
+            }
+            else {
+                commands.remove_resource::<ShowDebugOutlines>();
             }
         }
 

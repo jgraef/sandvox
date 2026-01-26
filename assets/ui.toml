@@ -1,7 +1,7 @@
-[source]
-image = "ui.png"
-sprites = "ui.json"
-
-[[backgrounds.panel]]
-source = "normal_panel_round"
-ninepatch = { margin = 4 }
+[panel]
+source = "ui.png"
+x = 86
+y = 148
+width = 16
+height = 16
+nine_patch = { margin = 6 }
