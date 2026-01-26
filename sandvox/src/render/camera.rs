@@ -204,7 +204,7 @@ fn update_cameras(
 fn update_camera_projections(
     cameras: Populated<
         (Entity, &Camera, Option<&mut CameraProjection>),
-        Or<(Changed<CameraProjection>, Without<CameraProjection>)>,
+        Or<(Changed<Camera>, Without<CameraProjection>)>,
     >,
     mut commands: Commands,
 ) {
