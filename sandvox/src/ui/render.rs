@@ -1,6 +1,9 @@
 use bevy_ecs::{
     component::Component,
-    entity::Entity,
+    entity::{
+        Entity,
+        EntityHashSet,
+    },
     name::NameOrEntity,
     query::{
         Added,
@@ -9,10 +12,12 @@ use bevy_ecs::{
         With,
         Without,
     },
+    relationship::RelationshipTarget,
     resource::Resource,
     schedule::IntoScheduleConfigs,
     system::{
         Commands,
+        Local,
         Populated,
         Res,
         ResMut,
@@ -45,6 +50,7 @@ use crate::{
         },
         staging::Staging,
         surface::{
+            RenderSources,
             RenderTarget,
             Surface,
         },
@@ -77,6 +83,9 @@ pub(super) fn setup_render_systems(builder: &mut WorldBuilder) {
                 )
                     .in_set(RenderSystems::RenderUi),
                 clear_render_requests.after(UiSystems::Render),
+                propagate_render_requests
+                    .before(UiSystems::Render)
+                    .after(UiSystems::Layout),
             ),
         );
 }
@@ -378,6 +387,37 @@ fn render_ui(
             }
         }
     }
+}
+
+// this is more of a hack. `RedrawRequested` is attached to the UI viewport,
+// but all viewports of a render surface must be drawn at the same time.
+fn propagate_render_requests(
+    requests: Populated<(Entity, &RenderTarget), With<RedrawRequested>>,
+    surfaces: Populated<&RenderSources>,
+    mut already_requesting: Local<EntityHashSet>,
+    mut propagate_to: Local<EntityHashSet>,
+    mut commands: Commands,
+) {
+    assert!(already_requesting.is_empty());
+    assert!(propagate_to.is_empty());
+
+    for (entity, render_target) in requests {
+        already_requesting.insert(entity);
+
+        if let Ok(render_sources) = surfaces.get(render_target.0) {
+            for render_source in render_sources.iter() {
+                propagate_to.insert(render_source);
+            }
+        }
+    }
+
+    for entity in propagate_to.drain() {
+        if !already_requesting.contains(&entity) {
+            commands.entity(entity).insert(RedrawRequested);
+        }
+    }
+
+    already_requesting.clear();
 }
 
 fn clear_render_requests(
