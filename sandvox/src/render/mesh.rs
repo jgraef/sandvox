@@ -313,7 +313,7 @@ fn create_mesh_pipeline(
                 layout: Some(&pipeline_layout.layout),
                 vertex: wgpu::VertexState {
                     module: &pipeline_layout.shader,
-                    entry_point: Some("vertex_main"),
+                    entry_point: Some("mesh_shaded_vertex"),
                     compilation_options: Default::default(),
                     buffers: &[Vertex::LAYOUT, Instance::LAYOUT],
                 },
@@ -336,7 +336,7 @@ fn create_mesh_pipeline(
                 multisample: Default::default(),
                 fragment: Some(wgpu::FragmentState {
                     module: &pipeline_layout.shader,
-                    entry_point: Some("fragment_main"),
+                    entry_point: Some("mesh_shaded_fragment"),
                     compilation_options: Default::default(),
                     targets: &[Some(wgpu::ColorTargetState {
                         format: surface.surface_texture_format(),
@@ -355,7 +355,7 @@ fn create_mesh_pipeline(
                     layout: Some(&pipeline_layout.layout),
                     vertex: wgpu::VertexState {
                         module: &pipeline_layout.shader,
-                        entry_point: Some("vertex_main_wireframe"),
+                        entry_point: Some("mesh_wireframe_vertex"),
                         compilation_options: Default::default(),
                         buffers: &[Vertex::LAYOUT, Instance::LAYOUT],
                     },
@@ -378,7 +378,7 @@ fn create_mesh_pipeline(
                     multisample: Default::default(),
                     fragment: Some(wgpu::FragmentState {
                         module: &pipeline_layout.shader,
-                        entry_point: Some("fragment_main_wireframe"),
+                        entry_point: Some("mesh_wireframe_fragment"),
                         compilation_options: Default::default(),
                         targets: &[Some(wgpu::ColorTargetState {
                             format: surface.surface_texture_format(),

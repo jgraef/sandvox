@@ -83,7 +83,7 @@ var<storage, read> atlas_data: array<AtlasEntry>;
 
 
 @vertex
-fn vertex_main(input: VertexInput) -> VertexOutput {
+fn mesh_shaded_vertex(input: VertexInput) -> VertexOutput {
     let model_matrix = mat4x4f(input.model0, input.model1, input.model2, input.model3);
 
     let world_position = model_matrix * input.position;
@@ -101,13 +101,14 @@ fn vertex_main(input: VertexInput) -> VertexOutput {
 }
 
 @fragment
-fn fragment_main(input: VertexOutput) -> @location(0) vec4f {
+fn mesh_shaded_fragment(input: VertexOutput) -> @location(0) vec4f {
     var color: vec4f;
 
     // todo: figure out where the sun is (https://iurietarlev.github.io/SunpathDiagram/),
     // but move this out of shader and send light direction/color via frame uniform
     //let sun_phase = frame_uniform.time / 60.0 * 2.0 * PI;
     //let light_dir = normalize(vec3f(sin(sun_phase), cos(sun_phase), 0.5));
+
     let light_color = vec3f(1);
     let light_dir = normalize(vec3f(0.5, 1, 0.5));
     let normal = normalize(input.normal.xyz);
@@ -122,7 +123,7 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4f {
 }
 
 @vertex
-fn vertex_main_wireframe(input: VertexInput) -> VertexOutputWireframe {
+fn mesh_wireframe_vertex(input: VertexInput) -> VertexOutputWireframe {
     let model_matrix = mat4x4f(input.model0, input.model1, input.model2, input.model3);
     let world_position = model_matrix * input.position;
     let position =  frame_uniform.camera.projection * frame_uniform.camera.view * world_position;
@@ -133,7 +134,7 @@ fn vertex_main_wireframe(input: VertexInput) -> VertexOutputWireframe {
 }
 
 @fragment
-fn fragment_main_wireframe(input: VertexOutputWireframe) -> @location(0) vec4f {
+fn mesh_wireframe_fragment(input: VertexOutputWireframe) -> @location(0) vec4f {
     return vec4f(0, 0, 0, 1);
 }
 
