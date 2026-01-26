@@ -41,6 +41,7 @@ use nalgebra::{
 use wgpu::util::DeviceExt;
 
 use crate::{
+    collide::frustrum::Frustrum,
     ecs::{
         plugin::{
             Plugin,
@@ -53,7 +54,7 @@ use crate::{
         RenderSystems,
         camera::{
             Camera,
-            CameraFrustrum,
+            CameraProjection,
             FrustrumCulled,
         },
         frame::{
@@ -437,7 +438,7 @@ fn update_instance_buffer(
 }
 
 fn render_meshes_with(
-    cameras: Populated<(Option<&CameraFrustrum>, &GlobalTransform, &RenderTarget), With<Camera>>,
+    cameras: Populated<(&CameraProjection, &GlobalTransform, &RenderTarget), With<Camera>>,
     mut frames: Populated<(&mut Frame, &MeshPipeline)>,
     meshes: Populated<(&Mesh, &InstanceId, Option<&FrustrumCulled>)>,
     instance_buffer: Res<InstanceBuffer>,
@@ -447,24 +448,21 @@ fn render_meshes_with(
         let mut count_rendered = 0;
         let mut count_culled = 0;
 
-        for (camera_frustrum, camera_transform, render_target) in cameras {
+        for (camera_projection, camera_transform, render_target) in cameras {
             if let Ok((mut frame, pipeline)) = frames.get_mut(render_target.0) {
                 let mut render_pass = frame.render_pass_mut();
 
                 render_pass.set_pipeline(get_pipeline(pipeline));
                 render_pass.set_vertex_buffer(1, instance_buffer.slice(..));
 
-                let frustrum_culling = camera_frustrum.map(|camera_frustrum| {
-                    (camera_frustrum, camera_transform.isometry().inverse())
-                });
+                let camera_frustrum = Frustrum {
+                    matrix: camera_projection.to_matrix()
+                        * camera_transform.isometry().inverse().to_homogeneous(),
+                };
 
                 for (mesh, instance_id, cull_aabb) in &meshes {
-                    let cull =
-                        frustrum_culling.is_some_and(|(camera_frustrum, camera_transform_inv)| {
-                            cull_aabb.is_some_and(|cull_aabb| {
-                                camera_frustrum.cull(&camera_transform_inv, &cull_aabb.aabb)
-                            })
-                        });
+                    let cull = cull_aabb
+                        .is_some_and(|cull_aabb| !camera_frustrum.intersect_aabb(&cull_aabb.aabb));
 
                     if cull {
                         count_culled += 1;
@@ -482,7 +480,7 @@ fn render_meshes_with(
 }
 
 fn render_meshes(
-    cameras: Populated<(Option<&CameraFrustrum>, &GlobalTransform, &RenderTarget), With<Camera>>,
+    cameras: Populated<(&CameraProjection, &GlobalTransform, &RenderTarget), With<Camera>>,
     frames: Populated<(&mut Frame, &MeshPipeline)>,
     meshes: Populated<(&Mesh, &InstanceId, Option<&FrustrumCulled>)>,
     instance_buffer: Res<InstanceBuffer>,
@@ -493,7 +491,7 @@ fn render_meshes(
 }
 
 fn render_wireframes(
-    cameras: Populated<(Option<&CameraFrustrum>, &GlobalTransform, &RenderTarget), With<Camera>>,
+    cameras: Populated<(&CameraProjection, &GlobalTransform, &RenderTarget), With<Camera>>,
     frames: Populated<(&mut Frame, &MeshPipeline)>,
     meshes: Populated<(&Mesh, &InstanceId, Option<&FrustrumCulled>)>,
     instance_buffer: Res<InstanceBuffer>,

@@ -15,7 +15,6 @@ use bevy_ecs::{
 };
 use color_eyre::eyre::Error;
 use nalgebra::{
-    Isometry3,
     Matrix4,
     Point2,
     Vector2,
@@ -24,10 +23,7 @@ use nalgebra::{
 
 use crate::{
     app::WindowSize,
-    collide::{
-        Aabb,
-        frustrum::Frustrum,
-    },
+    collide::Aabb,
     ecs::{
         plugin::{
             Plugin,
@@ -57,7 +53,7 @@ impl Plugin for CameraPlugin {
             schedule::Render,
             (
                 update_cameras,
-                (update_camera_projections, update_camera_frustrums).after(update_cameras),
+                update_camera_projections.after(update_cameras),
                 update_camera_matrices
                     .before(RenderSystems::EndFrame)
                     .after(update_camera_projections),
@@ -86,19 +82,6 @@ impl Camera {
 
     pub fn projection(&self) -> CameraProjection {
         CameraProjection::new(self.aspect_ratio, self.fovy, self.z_near, self.z_far)
-    }
-
-    pub fn frustrum(&self) -> CameraFrustrum {
-        let half_fov = 0.5 * self.fovy;
-
-        CameraFrustrum {
-            frustrum: Frustrum::new(
-                half_fov * self.aspect_ratio,
-                half_fov,
-                self.z_near,
-                self.z_far,
-            ),
-        }
     }
 
     /// Returns angles (horizontal, vertical) that a point makes with the focal
@@ -256,39 +239,6 @@ fn update_camera_matrices(
                 position: transform.position().to_homogeneous(),
             };
         }
-    }
-}
-
-fn update_camera_frustrums(
-    changed: Populated<
-        (Entity, &Camera, Option<&mut CameraFrustrum>),
-        Or<(
-            Changed<Camera>,
-            Changed<GlobalTransform>,
-            Without<CameraFrustrum>,
-        )>,
-    >,
-    mut commands: Commands,
-) {
-    for (entity, projection, frustrum) in changed {
-        // update frustrum
-        if let Some(mut frustrum) = frustrum {
-            *frustrum = projection.frustrum();
-        }
-        else {
-            commands.entity(entity).insert(projection.frustrum());
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Component)]
-pub struct CameraFrustrum {
-    pub frustrum: Frustrum,
-}
-
-impl CameraFrustrum {
-    pub fn cull(&self, isometry: &Isometry3<f32>, aabb: &Aabb) -> bool {
-        !self.frustrum.intersect_aabb(isometry, aabb)
     }
 }
 
