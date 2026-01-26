@@ -9,7 +9,7 @@ use std::{
 
 use bevy_ecs::{
     component::Component,
-    entity::Entity,
+    name::NameOrEntity,
     query::{
         Changed,
         With,
@@ -147,6 +147,7 @@ impl Sprites {
                     atlas_handle,
                     nine_patch,
                     padding,
+                    size: Vector2::new(sprite_def.width, sprite_def.height),
                 },
             );
         }
@@ -163,6 +164,18 @@ impl Index<SpriteId> for Sprites {
     }
 }
 
+impl Index<&str> for Sprites {
+    type Output = Sprite;
+
+    fn index(&self, index: &str) -> &Self::Output {
+        let sprite_id = *self
+            .by_name
+            .get(index)
+            .unwrap_or_else(|| panic!("No such sprite: {index}"));
+        &self[sprite_id]
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SpriteId(usize);
 
@@ -171,6 +184,7 @@ pub struct Sprite {
     pub atlas_handle: AtlasHandle,
     pub nine_patch: Option<NinePatch>,
     pub padding: Option<Margin>,
+    pub size: Vector2<u32>,
 }
 
 impl Sprite {
@@ -196,14 +210,6 @@ pub struct Margin {
 
 impl Margin {
     pub fn to_padding(&self, pixel_size: f32) -> taffy::Rect<taffy::LengthPercentage> {
-        tracing::debug!(
-            left = self.left as f32 * pixel_size,
-            right = self.right as f32 * pixel_size,
-            top = self.top as f32 * pixel_size,
-            bottom = self.bottom as f32 * pixel_size,
-            "padding"
-        );
-
         taffy::Rect {
             left: taffy::LengthPercentage::length(self.left as f32 * pixel_size),
             right: taffy::LengthPercentage::length(self.right as f32 * pixel_size),
@@ -365,7 +371,7 @@ fn request_redraw(nodes: Populated<&Root, Changed<Background>>, mut commands: Co
 }
 
 fn render_sprites(
-    nodes: Populated<(Entity, &Background, &RoundedLayout, &Root)>,
+    nodes: Populated<(NameOrEntity, &Background, &RoundedLayout, &Root)>,
     requested_redraw: Populated<(), With<RedrawRequested>>,
     mut surfaces: Populated<&mut RenderBufferBuilder>,
 ) {
@@ -377,29 +383,29 @@ fn render_sprites(
             && let Some(render_target) = root.render_target
             && let Ok(mut render_buffer_builder) = surfaces.get_mut(render_target)
         {
-            let content_offset = Point2::new(rounded_layout.location.x, rounded_layout.location.y);
-            let content_size = Vector2::new(rounded_layout.size.width, rounded_layout.size.height);
+            let offset = Point2::new(rounded_layout.location.x, rounded_layout.location.y);
+            let size = Vector2::new(rounded_layout.size.width, rounded_layout.size.height);
 
             tracing::trace!(
-                ?entity,
+                %entity,
                 ?background,
-                ?content_offset,
-                ?content_size,
+                ?offset,
+                ?size,
                 "render background"
             );
 
             if let Some(nine_patch) = &background.sprite.nine_patch {
                 nine_patch.render(
                     &mut render_buffer_builder,
-                    content_offset,
-                    content_size,
+                    offset,
+                    size,
                     rounded_layout.order,
                     background.pixel_size,
                 );
             }
             else {
                 render_buffer_builder
-                    .push_quad(content_offset, content_size, rounded_layout.order, None)
+                    .push_quad(offset, size, rounded_layout.order, None)
                     .set_atlas_texture(&background.sprite.atlas_handle);
             }
         }

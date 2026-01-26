@@ -5,3 +5,10 @@ y = 148
 width = 16
 height = 16
 nine_patch = { margin = 6 }
+
+[crosshair]
+source = "crosshairs.png"
+x = 49
+y = 0
+width = 7
+height = 7

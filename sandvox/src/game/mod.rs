@@ -352,31 +352,58 @@ fn init_player(
         },
     );
     commands
-        .spawn((RenderTarget(window), {
-            let sprite_id = sprites.lookup("panel").unwrap();
+        .spawn({
+            let sprite = &sprites["panel"];
             let background = Background {
-                sprite: sprites[sprite_id].clone(),
+                sprite: sprite.clone(),
                 pixel_size,
             };
 
             let mut style = Style::default();
             style.display = taffy::style::Display::Flex;
             style.flex_direction = taffy::style::FlexDirection::Column;
-            /*style.padding = taffy::Rect {
-                left: taffy::LengthPercentage::length(4.0 * pixel_size),
-                right: taffy::LengthPercentage::length(6.0 * pixel_size),
-                top: taffy::LengthPercentage::length(4.0 * pixel_size),
-                bottom: taffy::LengthPercentage::length(5.0 * pixel_size),
-            };*/
-            if let Some(padding) = sprites[sprite_id].padding(pixel_size) {
+            if let Some(padding) = sprite.padding(pixel_size) {
                 style.padding = padding;
             }
 
-            (style, background)
-        }))
+            (
+                style,
+                background,
+                RenderTarget(window),
+                Name::new("debug_panel"),
+            )
+        })
         .with_children(|spawner| {
             spawner.spawn((Text::from(format_build_tag()), text_style, Style::default()));
             spawner.spawn((Text::default(), text_style, Style::default(), DebugOverlay));
+        });
+
+    // create crosshair
+    commands
+        .spawn({
+            let mut style = Style::default();
+            style.display = taffy::style::Display::Flex;
+            style.size = taffy::Size::percent(1.0);
+
+            (style, RenderTarget(window), Name::new("crosshair"))
+        })
+        .with_child({
+            let sprite = &sprites["crosshair"];
+            let background = Background {
+                sprite: sprite.clone(),
+                pixel_size,
+            };
+
+            let mut style = Style::default();
+            style.display = taffy::style::Display::Flex;
+            style.margin = taffy::Rect::auto();
+            style.size = taffy::Size::from_lengths(
+                sprite.size.x as f32 * pixel_size,
+                sprite.size.y as f32 * pixel_size,
+            );
+            style.align_self = Some(taffy::AlignSelf::Center);
+
+            (style, background)
         });
 }
 
@@ -418,9 +445,9 @@ fn update_debug_overlay(
 
     writeln!(&mut debug_overlay.text, "FPS: {:.1}", fps_counter.fps).unwrap();
 
-    writeln!(
+    write!(
         &mut debug_overlay.text,
-        "MEM/CPU: {}",
+        "MEM: CPU={}",
         format_size(bytes_allocated())
     )
     .unwrap();
@@ -428,10 +455,13 @@ fn update_debug_overlay(
     if let Some(allocator_report) = wgpu.device.generate_allocator_report() {
         writeln!(
             &mut debug_overlay.text,
-            "MEM/GPU: {}",
+            ", GPU={}",
             format_size(allocator_report.total_allocated_bytes)
         )
         .unwrap();
+    }
+    else {
+        writeln!(&mut debug_overlay.text, "").unwrap();
     }
 
     let staging_info = wgpu.staging_pool.info();

@@ -125,14 +125,17 @@ pub struct Viewport {
 
 fn create_viewports_from_render_targets(
     windows: Populated<(NameOrEntity, &WindowSize)>,
-    roots: Populated<(Entity, &RenderTarget), (With<Style>, Without<ChildOf>, Without<Viewport>)>,
+    roots: Populated<
+        (NameOrEntity, &RenderTarget),
+        (With<Style>, Without<ChildOf>, Without<Viewport>),
+    >,
     mut commands: Commands,
 ) {
-    for (entity, render_target) in roots {
+    for (viewport_entity, render_target) in roots {
         if let Ok((window_name, window_size)) = windows.get(render_target.0) {
-            tracing::debug!(window = %window_name, size = ?window_size.size, "create ui viewport");
+            tracing::debug!(window = %window_name, viewport = %viewport_entity, size = ?window_size.size, "create ui viewport");
 
-            commands.entity(entity).insert(Viewport {
+            commands.entity(viewport_entity.entity).insert(Viewport {
                 size: window_size.size,
             });
         }

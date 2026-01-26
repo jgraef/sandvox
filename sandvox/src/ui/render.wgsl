@@ -150,6 +150,11 @@ fn quad_fragment(input: QuadVertexOutput) -> @location(0) vec4f {
         let uv = atlas_map_uv(atlas_id, input.uv);
 
         let color = textureSample(atlas_texture, default_sampler, uv);
+
+        if color.a < 0.1 {
+            discard;
+        }
+
         return color;
     }
     else {
@@ -160,13 +165,11 @@ fn quad_fragment(input: QuadVertexOutput) -> @location(0) vec4f {
 
         let luma = textureSample(font_texture, default_sampler, uv).r;
 
-        if luma > 0.5 {
-            // todo
-            return input.tint;
-        }
-        else {
+        if luma < 0.5 {
             discard;
         }
+
+        return input.tint;
     }
 }
 

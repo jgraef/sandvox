@@ -70,7 +70,7 @@ pub struct AtlasConfig {
 impl Default for AtlasConfig {
     fn default() -> Self {
         Self {
-            initial_size: 1024,
+            initial_size: 256,
             initial_data_buffer_size: const { NonZero::new(256).unwrap() },
             size_limit: None,
             format: wgpu::TextureFormat::Rgba8UnormSrgb,
