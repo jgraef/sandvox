@@ -92,7 +92,10 @@ use crate::{
             FpsCounterConfig,
         },
         frame::DefaultAtlas,
-        mesh::RenderWireframes,
+        mesh::{
+            RenderMeshStatistics,
+            RenderWireframes,
+        },
         skybox::{
             LoadSkybox,
             SkyboxPlugin,
@@ -430,6 +433,7 @@ fn update_debug_overlay(
     fps_counter: Res<FpsCounter>,
     wgpu: Res<WgpuContext>,
     time: Res<Time>,
+    render_mesh: Res<RenderMeshStatistics>,
     mut debug_overlay: Single<&mut Text, With<DebugOverlay>>,
 ) {
     debug_overlay.text.clear();
@@ -472,6 +476,13 @@ fn update_debug_overlay(
         staging_info.free_count,
         staging_info.total_allocation_count,
         format_size(staging_info.total_allocation_bytes)
+    )
+    .unwrap();
+
+    writeln!(
+        &mut debug_overlay.text,
+        "MESH: DRAW={}, VERT={}, CULL={}",
+        render_mesh.num_rendered, render_mesh.num_vertices, render_mesh.num_culled,
     )
     .unwrap();
 }

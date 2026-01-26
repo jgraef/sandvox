@@ -43,6 +43,7 @@ use crate::{
             update_frame_bind_groups,
             update_frame_uniform,
         },
+        mesh::RenderMeshStatistics,
         staging::{
             flush_staging,
             initialize_staging,
@@ -65,6 +66,8 @@ pub struct RenderPlugin {
 impl Plugin for RenderPlugin {
     fn setup(&self, builder: &mut WorldBuilder) -> Result<(), Error> {
         builder
+            .insert_resource(self.config.clone())
+            .insert_resource(RenderMeshStatistics::default())
             .add_systems(
                 schedule::Startup,
                 (
@@ -122,8 +125,7 @@ impl Plugin for RenderPlugin {
             .configure_system_sets(
                 schedule::Render,
                 RenderSystems::EndFrame.after(RenderSystems::BeginFrame),
-            )
-            .insert_resource(self.config.clone());
+            );
 
         Ok(())
     }

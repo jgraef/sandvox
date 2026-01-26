@@ -251,6 +251,10 @@ impl Mesh {
         render_pass.set_index_buffer(self.index_buffer.slice(..), Self::INDEX_FORMAT);
         render_pass.draw_indexed(self.indices.clone(), self.base_vertex, instances);
     }
+
+    pub fn num_vertices(&self) -> u32 {
+        self.indices.end - self.indices.start
+    }
 }
 
 #[derive(Debug, Resource)]
@@ -443,11 +447,10 @@ fn render_meshes_with(
     meshes: Populated<(&Mesh, &InstanceId, Option<&FrustrumCulled>)>,
     instance_buffer: Res<InstanceBuffer>,
     get_pipeline: impl Fn(&MeshPipeline) -> &wgpu::RenderPipeline,
-) {
-    if let Some(instance_buffer) = instance_buffer.buffer.try_buffer() {
-        let mut count_rendered = 0;
-        let mut count_culled = 0;
+) -> RenderMeshStatistics {
+    let mut stats = RenderMeshStatistics::default();
 
+    if let Some(instance_buffer) = instance_buffer.buffer.try_buffer() {
         for (camera_projection, camera_transform, render_target) in cameras {
             if let Ok((mut frame, pipeline)) = frames.get_mut(render_target.0) {
                 let mut render_pass = frame.render_pass_mut();
@@ -465,18 +468,19 @@ fn render_meshes_with(
                         .is_some_and(|cull_aabb| !camera_frustrum.intersect_aabb(&cull_aabb.aabb));
 
                     if cull {
-                        count_culled += 1;
+                        stats.num_culled += 1;
                     }
                     else {
                         mesh.draw(&mut render_pass, 0, instance_id.0..(instance_id.0 + 1));
-                        count_rendered += 1;
+                        stats.num_rendered += 1;
+                        stats.num_vertices += mesh.num_vertices() as usize;
                     }
                 }
             }
         }
-
-        tracing::trace!(count_rendered, count_culled, "rendered meshes");
     }
+
+    stats
 }
 
 fn render_meshes(
@@ -484,8 +488,9 @@ fn render_meshes(
     frames: Populated<(&mut Frame, &MeshPipeline)>,
     meshes: Populated<(&Mesh, &InstanceId, Option<&FrustrumCulled>)>,
     instance_buffer: Res<InstanceBuffer>,
+    mut render_stats: ResMut<RenderMeshStatistics>,
 ) {
-    render_meshes_with(cameras, frames, meshes, instance_buffer, |per_surface| {
+    *render_stats = render_meshes_with(cameras, frames, meshes, instance_buffer, |per_surface| {
         &per_surface.pipeline
     });
 }
@@ -499,4 +504,11 @@ fn render_wireframes(
     render_meshes_with(cameras, frames, meshes, instance_buffer, |per_surface| {
         &per_surface.wireframe_pipeline
     });
+}
+
+#[derive(Clone, Copy, Debug, Default, Resource)]
+pub struct RenderMeshStatistics {
+    pub num_rendered: usize,
+    pub num_culled: usize,
+    pub num_vertices: usize,
 }
