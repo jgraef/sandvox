@@ -370,26 +370,35 @@ fn render_ui(
 ) {
     for (mut frame, render_pipeline, render_buffer) in surfaces {
         if let Some(bind_group) = &render_buffer.bind_group {
-            let render_pass = frame.render_pass_mut();
+            let frame = frame.active_mut();
+            let span = frame.enter_span("ui");
 
             // bind bind group containing the render buffer
-            render_pass.set_bind_group(1, Some(bind_group), &[]);
+            frame.render_pass.set_bind_group(1, Some(bind_group), &[]);
 
             // clear z buffer
-            render_pass.set_pipeline(&render_pipeline.clear_depth_pipeline);
-            render_pass.draw(0..3, 0..1);
+            frame
+                .render_pass
+                .set_pipeline(&render_pipeline.clear_depth_pipeline);
+            frame.render_pass.draw(0..3, 0..1);
 
             // draw render buffer (textured quads)
-            render_pass.set_pipeline(&render_pipeline.quad_pipeline);
+            frame
+                .render_pass
+                .set_pipeline(&render_pipeline.quad_pipeline);
 
             let num_quads: u32 = render_buffer.buffer.len().try_into().unwrap();
-            render_pass.draw(0..(6 * num_quads), 0..1);
+            frame.render_pass.draw(0..(6 * num_quads), 0..1);
 
             // draw debug outlines for render buffer
             if show_debug_outlines.is_some() {
-                render_pass.set_pipeline(&render_pipeline.debug_pipeline);
-                render_pass.draw(0..(8 * num_quads), 0..1);
+                frame
+                    .render_pass
+                    .set_pipeline(&render_pipeline.debug_pipeline);
+                frame.render_pass.draw(0..(8 * num_quads), 0..1);
             }
+
+            frame.exit_span(span);
         }
     }
 }

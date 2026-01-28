@@ -32,7 +32,10 @@ use palette::Srgba;
 
 use crate::{
     app::Time,
-    profiler::wgpu::RenderPassProfiler,
+    profiler::wgpu::{
+        RenderPassProfiler,
+        SpanId,
+    },
     render::{
         RenderConfig,
         atlas::{
@@ -163,7 +166,7 @@ pub(super) fn create_frames(
         );
 
         let mut entity = commands.entity(entity);
-        entity.insert((Frame { inner: None }, frame_uniform, frame_bind_group));
+        entity.insert((Frame { active: None }, frame_uniform, frame_bind_group));
     }
 }
 
@@ -177,7 +180,10 @@ pub(super) fn begin_frames(
     )>,
 ) {
     for (surface, clear_color, mut frame, frame_uniform) in surfaces {
-        assert!(frame.inner.is_none());
+        assert!(
+            frame.active.is_none(),
+            "a frame is still active in begin_frames"
+        );
 
         let mut command_encoder =
             wgpu.device
@@ -232,11 +238,11 @@ pub(super) fn begin_frames(
         // bind frame uniform buffer
         render_pass.set_bind_group(0, Some(&frame_uniform.bind_group), &[]);
 
-        frame.inner = Some(FrameInner {
+        frame.active = Some(ActiveFrame {
             command_encoder,
             render_pass,
             surface_texture,
-            render_pass_profiler,
+            profiler: render_pass_profiler,
         });
     }
 }
@@ -262,12 +268,12 @@ pub fn end_frames(
 
     // end all render passes and get the surface textures
     for mut frame in frames {
-        if let Some(FrameInner {
+        if let Some(ActiveFrame {
             mut command_encoder,
             render_pass,
             surface_texture,
-            render_pass_profiler,
-        }) = frame.inner.take()
+            profiler: render_pass_profiler,
+        }) = frame.active.take()
         {
             // drop the render pass explicitely since we'll submit the command encoder next
             drop(render_pass);
@@ -294,30 +300,43 @@ pub fn end_frames(
 
 #[derive(Debug, Component)]
 pub struct Frame {
-    inner: Option<FrameInner>,
+    active: Option<ActiveFrame>,
 }
 
 impl Frame {
-    #[allow(dead_code)]
-    fn inner(&self) -> &FrameInner {
-        self.inner.as_ref().expect("No active frame")
-    }
-
-    fn inner_mut(&mut self) -> &mut FrameInner {
-        self.inner.as_mut().expect("No active frame")
-    }
-
-    pub fn render_pass_mut(&mut self) -> &mut wgpu::RenderPass<'static> {
-        &mut self.inner_mut().render_pass
+    #[inline]
+    pub fn active_mut(&mut self) -> &mut ActiveFrame {
+        self.active.as_mut().unwrap()
     }
 }
 
 #[derive(Debug)]
-struct FrameInner {
+pub struct ActiveFrame {
     command_encoder: wgpu::CommandEncoder,
-    render_pass: wgpu::RenderPass<'static>,
+    pub render_pass: wgpu::RenderPass<'static>,
     surface_texture: wgpu::SurfaceTexture,
-    render_pass_profiler: Option<RenderPassProfiler>,
+    pub profiler: Option<RenderPassProfiler>,
+}
+
+impl ActiveFrame {
+    #[track_caller]
+    #[inline]
+    pub fn enter_span(&mut self, label: &'static str) -> Option<SpanId> {
+        if let Some(profiler) = &mut self.profiler {
+            Some(profiler.enter_span(label, &mut self.render_pass))
+        }
+        else {
+            None
+        }
+    }
+
+    #[track_caller]
+    #[inline]
+    pub fn exit_span(&mut self, span_id: Option<SpanId>) {
+        if let (Some(span_id), Some(profiler)) = (span_id, &mut self.profiler) {
+            profiler.exit_span(span_id, &mut self.render_pass);
+        }
+    }
 }
 
 #[derive(Debug, Resource)]

@@ -215,11 +215,16 @@ fn render_skybox(
 ) {
     for (render_target, skybox) in cameras {
         if let Ok((mut frame, pipeline)) = frames.get_mut(render_target.0) {
-            let render_pass = frame.render_pass_mut();
+            let frame = frame.active_mut();
+            let span = frame.enter_span("skybox");
 
-            render_pass.set_pipeline(&pipeline.pipeline);
-            render_pass.set_bind_group(1, Some(&skybox.bind_group), &[]);
-            render_pass.draw(0..3, 0..1);
+            frame.render_pass.set_pipeline(&pipeline.pipeline);
+            frame
+                .render_pass
+                .set_bind_group(1, Some(&skybox.bind_group), &[]);
+            frame.render_pass.draw(0..3, 0..1);
+
+            frame.exit_span(span);
         }
     }
 }

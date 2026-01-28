@@ -458,10 +458,13 @@ fn render_meshes_with(
     if let Some(instance_buffer) = instance_buffer.buffer.try_buffer() {
         for (camera_projection, camera_transform, render_target) in cameras {
             if let Ok((mut frame, pipeline)) = frames.get_mut(render_target.0) {
-                let mut render_pass = frame.render_pass_mut();
+                let frame = frame.active_mut();
+                let span = frame.enter_span("mesh");
 
-                render_pass.set_pipeline(get_pipeline(pipeline));
-                render_pass.set_vertex_buffer(1, instance_buffer.slice(..));
+                frame.render_pass.set_pipeline(get_pipeline(pipeline));
+                frame
+                    .render_pass
+                    .set_vertex_buffer(1, instance_buffer.slice(..));
 
                 let camera_frustrum = Frustrum {
                     matrix: camera_projection.to_matrix()
@@ -476,11 +479,17 @@ fn render_meshes_with(
                         stats.num_culled += 1;
                     }
                     else {
-                        mesh.draw(&mut render_pass, 0, instance_id.0..(instance_id.0 + 1));
+                        mesh.draw(
+                            &mut frame.render_pass,
+                            0,
+                            instance_id.0..(instance_id.0 + 1),
+                        );
                         stats.num_rendered += 1;
                         stats.num_vertices += mesh.num_vertices() as usize;
                     }
                 }
+
+                frame.exit_span(span);
             }
         }
     }

@@ -176,6 +176,7 @@ pub struct WgpuProfilerSink {
 }
 
 impl WgpuProfilerSink {
+    #[inline]
     fn write(&self, reference_time: i64, render_pass: RenderPassSpan, spans: Vec<QuerySpan>) {
         if let Some(sender) = &self.sender {
             let _ = sender.try_send(WriterCommand::Write {
@@ -226,6 +227,9 @@ pub struct SpanId(usize);
 #[allow(dead_code)]
 enum WriterCommand {
     Write {
+        // this is a reference timestamp (nanoseconds since unix epoch) taken when the query
+        // finishes. you'd think this is when the render pass has finished, but it looks like it's
+        // actually when the command buffer is submitted.
         reference_time: i64,
         render_pass: RenderPassSpan,
         spans: Vec<QuerySpan>,
@@ -328,10 +332,11 @@ pub mod puffin_sink {
 
                     // returns nanoseconds since start of render pass
                     let to_ns = |timestamp| {
-                        //start_ns
-                        //    + ((timestamp - render_pass.start) as f32 * timestamp_period) as i64
+                        //reference_time
+                        //    - ((render_pass.end - timestamp) as f32 * timestamp_period) as i64
+
                         reference_time
-                            - ((render_pass.end - timestamp) as f32 * timestamp_period) as i64
+                            + ((timestamp - render_pass.start) as f32 * timestamp_period) as i64
                     };
 
                     // serialize spans
