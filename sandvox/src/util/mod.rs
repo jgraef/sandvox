@@ -2,6 +2,7 @@ pub mod image;
 pub mod noise;
 pub mod oneshot;
 pub mod serde;
+pub mod sparse_vec;
 pub mod stats_alloc;
 
 use std::ops::{

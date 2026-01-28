@@ -121,6 +121,7 @@ impl Plugin for MeshPlugin {
 }
 
 fn request_wgpu_features(mut builder: ResMut<WgpuContextBuilder>) {
+    // todo: remove this when we do wiremesh rendering via vertex pulling
     builder.request_features(wgpu::Features::POLYGON_MODE_LINE);
 }
 
@@ -277,6 +278,7 @@ struct MeshPipeline {
     wireframe_pipeline: wgpu::RenderPipeline,
 }
 
+#[profiling::function]
 fn create_mesh_pipeline_layout(
     wgpu: Res<WgpuContext>,
     frame_bind_group_layout: Res<FrameBindGroupLayout>,
@@ -297,6 +299,7 @@ fn create_mesh_pipeline_layout(
     commands.insert_resource(MeshPipelineLayout { layout, shader });
 }
 
+#[profiling::function]
 fn create_mesh_pipeline(
     wgpu: Res<WgpuContext>,
     pipeline_layout: Res<MeshPipelineLayout>,
@@ -397,6 +400,7 @@ fn create_mesh_pipeline(
     }
 }
 
+#[profiling::function]
 fn create_instance_buffer(wgpu: Res<WgpuContext>, mut commands: Commands) {
     commands.insert_resource(InstanceBuffer {
         buffer: TypedArrayBuffer::new(
@@ -407,6 +411,7 @@ fn create_instance_buffer(wgpu: Res<WgpuContext>, mut commands: Commands) {
     });
 }
 
+#[profiling::function]
 fn update_instance_buffer(
     mut instance_buffer: ResMut<InstanceBuffer>,
     meshes: Populated<(Entity, &GlobalTransform, Option<&mut InstanceId>), With<Mesh>>,
@@ -483,6 +488,7 @@ fn render_meshes_with(
     stats
 }
 
+#[profiling::function]
 fn render_meshes(
     cameras: Populated<(&CameraProjection, &GlobalTransform, &RenderTarget), With<Camera>>,
     frames: Populated<(&mut Frame, &MeshPipeline)>,
@@ -495,6 +501,7 @@ fn render_meshes(
     });
 }
 
+#[profiling::function]
 fn render_wireframes(
     cameras: Populated<(&CameraProjection, &GlobalTransform, &RenderTarget), With<Camera>>,
     frames: Populated<(&mut Frame, &MeshPipeline)>,

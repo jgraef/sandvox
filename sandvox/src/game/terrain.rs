@@ -153,6 +153,7 @@ impl ChunkGenerator<TerrainVoxel, CHUNK_SIZE> for TerrainGenerator {
         !is_inside_bounds
     }
 
+    #[profiling::function]
     fn generate_chunk(
         &self,
         chunk_position: Point3<i32>,

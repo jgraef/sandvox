@@ -1,5 +1,3 @@
-use std::time::Instant;
-
 use bevy_ecs::{
     change_detection::{
         DetectChanges,
@@ -7,7 +5,6 @@ use bevy_ecs::{
     },
     component::Component,
     entity::Entity,
-    name::NameOrEntity,
     query::{
         With,
         Without,
@@ -35,6 +32,7 @@ use palette::Srgba;
 
 use crate::{
     app::Time,
+    profiler::wgpu::RenderPassProfiler,
     render::{
         RenderConfig,
         atlas::{
@@ -164,9 +162,8 @@ pub(super) fn create_frames(
             default_font.0.resources(),
         );
 
-        commands
-            .entity(entity)
-            .insert((Frame { inner: None }, frame_uniform, frame_bind_group));
+        let mut entity = commands.entity(entity);
+        entity.insert((Frame { inner: None }, frame_uniform, frame_bind_group));
     }
 }
 
@@ -179,8 +176,6 @@ pub(super) fn begin_frames(
         Ref<FrameBindGroup>,
     )>,
 ) {
-    let start_time = Instant::now();
-
     for (surface, clear_color, mut frame, frame_uniform) in surfaces {
         assert!(frame.inner.is_none());
 
@@ -198,6 +193,11 @@ pub(super) fn begin_frames(
                     label: Some("surface"),
                     ..Default::default()
                 });
+
+        let mut render_pass_profiler = wgpu
+            .profiler
+            .as_ref()
+            .map(|profiler| profiler.begin_render_pass("frame"));
 
         let mut render_pass = command_encoder
             .begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -221,7 +221,9 @@ pub(super) fn begin_frames(
                     }),
                     stencil_ops: None,
                 }),
-                timestamp_writes: None,
+                timestamp_writes: render_pass_profiler
+                    .as_mut()
+                    .map(|transaction| transaction.timestamp_writes()),
                 occlusion_query_set: None,
                 multiview_mask: None,
             })
@@ -234,14 +236,14 @@ pub(super) fn begin_frames(
             command_encoder,
             render_pass,
             surface_texture,
-            start_time,
+            render_pass_profiler,
         });
     }
 }
 
 pub fn end_frames(
     wgpu: Res<WgpuContext>,
-    frames: Query<(NameOrEntity, &mut Frame)>,
+    frames: Query<&mut Frame>,
     mut command_buffers: Local<Vec<wgpu::CommandBuffer>>,
     mut present_surfaces: Local<Vec<wgpu::SurfaceTexture>>,
     mut staging: ResMut<Staging>,
@@ -259,26 +261,25 @@ pub fn end_frames(
     }
 
     // end all render passes and get the surface textures
-    for (name, mut frame) in frames {
+    for mut frame in frames {
         if let Some(FrameInner {
-            command_encoder,
+            mut command_encoder,
             render_pass,
             surface_texture,
-            start_time,
+            render_pass_profiler,
         }) = frame.inner.take()
         {
             // drop the render pass explicitely since we'll submit the command encoder next
             drop(render_pass);
 
+            if let Some(render_pass_profiler) = render_pass_profiler {
+                render_pass_profiler.finish(&mut command_encoder);
+            }
+
             // finish the frame's renderpass command encoder
             command_buffers.push(command_encoder.finish());
             // and present after we submit
             present_surfaces.push(surface_texture);
-
-            let end_time = Instant::now();
-            let time = end_time - start_time;
-
-            tracing::trace!(surface = %name, ?time, "rendered frame");
         }
     }
 
@@ -316,7 +317,7 @@ struct FrameInner {
     command_encoder: wgpu::CommandEncoder,
     render_pass: wgpu::RenderPass<'static>,
     surface_texture: wgpu::SurfaceTexture,
-    start_time: Instant,
+    render_pass_profiler: Option<RenderPassProfiler>,
 }
 
 #[derive(Debug, Resource)]

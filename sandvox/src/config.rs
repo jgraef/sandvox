@@ -16,6 +16,7 @@ use serde::{
 
 use crate::{
     game::GameConfig,
+    profiler::ProfilerConfig,
     render::RenderConfig,
     sound::SoundConfig,
     wgpu::WgpuConfig,
@@ -32,6 +33,8 @@ pub struct Config {
 
     #[serde(flatten, default)]
     pub game: GameConfig,
+
+    pub profiler: Option<ProfilerConfig>,
 }
 
 impl Default for Config {
@@ -44,6 +47,7 @@ impl Default for Config {
             },
             num_threads: None,
             game: Default::default(),
+            profiler: Default::default(),
         }
     }
 }

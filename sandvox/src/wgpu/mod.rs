@@ -2,6 +2,8 @@ pub mod blit;
 pub mod buffer;
 pub mod image;
 
+pub mod query;
+
 use std::{
     num::NonZero,
     sync::Arc,
@@ -32,20 +34,24 @@ use crate::{
         },
         schedule,
     },
+    profiler::{
+        Profiler,
+        wgpu::WgpuProfiler,
+    },
     wgpu::buffer::{
         StagingPool,
         WriteStaging,
     },
 };
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct WgpuPlugin {
     pub config: WgpuConfig,
 }
 
 impl Plugin for WgpuPlugin {
     fn setup(&self, builder: &mut WorldBuilder) -> Result<(), Error> {
-        let context_builder = WgpuContextBuilder::new(self.config)?;
+        let context_builder = WgpuContextBuilder::new(self.config.clone())?;
         builder.insert_resource(context_builder).add_systems(
             schedule::Startup,
             create_wgpu_context
@@ -60,7 +66,10 @@ impl Plugin for WgpuPlugin {
 fn create_wgpu_context(mut commands: Commands) {
     commands.queue(|world: &mut World| {
         let context_builder = world.remove_resource::<WgpuContextBuilder>().unwrap();
-        let context = context_builder.build().unwrap();
+
+        let profiler = world.get_resource::<Profiler>();
+
+        let context = context_builder.build(profiler).unwrap();
         world.insert_resource(context);
     })
 }
@@ -71,26 +80,34 @@ pub enum WgpuSystems {
     RequestFeatures,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WgpuConfig {
-    #[serde(with = "crate::util::serde::backends")]
+    #[serde(default = "default_backends", with = "crate::util::serde::backends")]
     pub backends: wgpu::Backends,
-    #[serde(with = "crate::util::serde::power_preference")]
+
+    #[serde(default, with = "crate::util::serde::power_preference")]
     pub power_preference: wgpu::PowerPreference,
+
     #[serde(default = "default_staging_chunk_size")]
     pub staging_chunk_size: wgpu::BufferSize,
+
+    #[serde(default)]
     pub memory_hints: MemoryHints,
 }
 
 impl Default for WgpuConfig {
     fn default() -> Self {
         Self {
-            backends: wgpu::Backends::VULKAN,
+            backends: default_backends(),
             power_preference: Default::default(),
             staging_chunk_size: default_staging_chunk_size(),
             memory_hints: Default::default(),
         }
     }
+}
+
+fn default_backends() -> wgpu::Backends {
+    wgpu::Backends::VULKAN
 }
 
 fn default_staging_chunk_size() -> wgpu::BufferSize {
@@ -144,18 +161,40 @@ impl WgpuContextBuilder {
     }
 
     #[track_caller]
-    pub fn request_features(&mut self, features: wgpu::Features) -> &mut Self {
+    pub fn try_request_features(
+        &mut self,
+        features: wgpu::Features,
+    ) -> Result<&mut Self, UnsupportedFeatures> {
         let unsupported = features.difference(self.supported_features);
-        if !unsupported.is_empty() {
-            panic!("Requested features that iare not supported by the adapter: {unsupported:?}");
+        if unsupported.is_empty() {
+            self.enabled_features.insert(features);
+            Ok(self)
         }
-
-        self.enabled_features.insert(features);
-
-        self
+        else {
+            Err(UnsupportedFeatures { unsupported })
+        }
     }
 
-    pub fn build(self) -> Result<WgpuContext, Error> {
+    #[track_caller]
+    pub fn request_features(&mut self, features: wgpu::Features) -> &mut Self {
+        self.try_request_features(features).unwrap()
+    }
+
+    pub fn build(mut self, mut profiler: Option<&Profiler>) -> Result<WgpuContext, Error> {
+        if profiler.is_some() {
+            if self
+                .try_request_features(
+                    wgpu::Features::TIMESTAMP_QUERY
+                        | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS
+                        | wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES,
+                )
+                .is_err()
+            {
+                tracing::warn!("Timestamp queries not available. Won't profile GPU.");
+                profiler = None;
+            }
+        }
+
         // fixme: this won't do on web
         let (device, queue) = pollster::block_on(async {
             // these might need to be modified
@@ -180,9 +219,13 @@ impl WgpuContextBuilder {
             adapter: self.adapter_info,
             features: device.features(),
             limits: device.limits(),
+            timestamp_period: queue.get_timestamp_period(),
         };
 
         let staging_pool = StagingPool::new(self.config.staging_chunk_size, "staging pool");
+
+        let profiler =
+            profiler.map(|profiler| WgpuProfiler::new(&device, info.timestamp_period, profiler));
 
         Ok(WgpuContext {
             instance: self.instance,
@@ -191,8 +234,17 @@ impl WgpuContextBuilder {
             queue,
             staging_pool,
             info: Arc::new(info),
+            profiler,
         })
     }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error(
+    "The following features were requested, but are not supported by the adapter: {unsupported:?}"
+)]
+pub struct UnsupportedFeatures {
+    pub unsupported: wgpu::Features,
 }
 
 #[derive(Clone, Debug, Resource)]
@@ -203,13 +255,15 @@ pub struct WgpuContext {
     pub queue: wgpu::Queue,
     pub staging_pool: StagingPool,
     pub info: Arc<WgpuInfo>,
+    pub profiler: Option<WgpuProfiler>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WgpuInfo {
     pub adapter: wgpu::AdapterInfo,
     pub features: wgpu::Features,
     pub limits: wgpu::Limits,
+    pub timestamp_period: f32,
 }
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]

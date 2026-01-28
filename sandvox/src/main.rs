@@ -8,6 +8,7 @@ pub mod config;
 pub mod ecs;
 pub mod game;
 pub mod input;
+pub mod profiler;
 pub mod render;
 pub mod sound;
 pub mod ui;
@@ -74,7 +75,7 @@ fn wgpu_info() -> Result<(), Error> {
 
     println!("supported limits: {:#?}", builder.supported_limits);
 
-    let context = builder.build()?;
+    let context = builder.build(None)?;
     println!("adapter info: {:#?}", context.info.adapter);
 
     Ok(())

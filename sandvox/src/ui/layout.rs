@@ -134,6 +134,7 @@ fn layout_trees<L>(
     }
 }
 
+#[profiling::function]
 fn initialize_layout_components(
     nodes: Populated<
         (Entity, Has<LayoutCache>, Has<UnroundedLayout>),
@@ -155,6 +156,7 @@ fn initialize_layout_components(
     }
 }
 
+#[profiling::function]
 fn purge_dirty_cache_entries(
     mut params: ParamSet<(
         Populated<Entity, Or<(Changed<LayoutCache>, Changed<ChildOf>, Changed<Children>)>>,

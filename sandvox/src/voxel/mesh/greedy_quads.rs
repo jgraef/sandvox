@@ -45,6 +45,7 @@ impl<V, const CHUNK_SIZE: usize> ChunkMesher<V, CHUNK_SIZE> for GreedyMesher<V, 
 where
     V: Voxel,
 {
+    #[profiling::function]
     fn mesh_chunk<'w, 's>(
         &mut self,
         chunk: &Chunk<V, CHUNK_SIZE>,
@@ -137,6 +138,7 @@ impl<V, const CHUNK_SIZE: usize> Default for MeshFaceBuffer<V, CHUNK_SIZE> {
 impl<V, const CHUNK_SIZE: usize> MeshFaceBuffer<V, CHUNK_SIZE> {
     /// Documentation and variable names are for XY faces, but are
     /// representative for other directions as well.
+    #[profiling::function]
     fn mesh_faces<'v>(
         &mut self,
         get_voxel: impl Fn(Point3<u16>) -> &'v V,
@@ -316,6 +318,7 @@ impl<const CHUNK_SIZE: usize> Default for OpacityMasks<CHUNK_SIZE> {
 }
 
 impl<const CHUNK_SIZE: usize> OpacityMasks<CHUNK_SIZE> {
+    #[profiling::function]
     fn fill<V>(&mut self, chunk: &Chunk<V, CHUNK_SIZE>, data: &V::Data)
     where
         V: Voxel,
@@ -445,6 +448,7 @@ mod tranpose {
         /// Taken from [`dsnet/matrix-transpose`][1]
         ///
         /// [1]: https://github.com/dsnet/matrix-transpose
+        #[profiling::function]
         fn transpose(&mut self) {
             //let mut swap_width = 64;
             //let mut swap_mask = u64::MAX;

@@ -88,6 +88,7 @@ use crate::{
         },
     },
     input::InputPlugin,
+    profiler::Profiler,
     render::{
         RenderPlugin,
         camera::CameraPlugin,
@@ -126,7 +127,17 @@ impl App {
         // todo: load from proper location
         let config = Config::load("config.toml")?;
 
+        let profiler = config
+            .profiler
+            .as_ref()
+            .map(|config| Profiler::new(config))
+            .transpose()?;
+
         let mut world_builder = WorldBuilder::default();
+
+        if let Some(profiler) = profiler {
+            world_builder.insert_resource(profiler);
+        }
 
         world_builder
             .add_plugin(BackgroundTaskPlugin {
@@ -228,6 +239,7 @@ impl App {
         Ok(())
     }
 
+    #[profiling::function]
     fn update(&mut self) {
         let tick_start = Instant::now();
 
@@ -247,6 +259,8 @@ impl App {
             time.tick_delta = tick_start.elapsed();
             time.tick_count += 1;
         }
+
+        profiling::finish_frame!();
     }
 }
 

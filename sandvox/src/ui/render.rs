@@ -67,6 +67,7 @@ use crate::{
     },
 };
 
+#[profiling::function]
 pub(super) fn setup_render_systems(builder: &mut WorldBuilder) {
     builder
         .add_systems(
@@ -90,6 +91,7 @@ pub(super) fn setup_render_systems(builder: &mut WorldBuilder) {
         );
 }
 
+#[profiling::function]
 fn create_pipeline_layout(
     wgpu: Res<WgpuContext>,
     frame_bind_group_layout: Res<FrameBindGroupLayout>,
@@ -274,6 +276,7 @@ fn create_pipeline(
     }
 }
 
+#[profiling::function]
 fn create_render_buffer(
     wgpu: Res<WgpuContext>,
     viewports: Populated<
@@ -305,6 +308,7 @@ fn create_render_buffer(
     }
 }
 
+#[profiling::function]
 fn flush_render_buffers(
     wgpu: Res<WgpuContext>,
     pipeline_layout: Res<PipelineLayout>,
@@ -359,6 +363,7 @@ fn flush_render_buffers(
     }
 }
 
+#[profiling::function]
 fn render_ui(
     surfaces: Populated<(&mut Frame, &Pipeline, &RenderBuffer)>,
     show_debug_outlines: Option<Res<ShowDebugOutlines>>,
@@ -391,6 +396,7 @@ fn render_ui(
 
 // this is more of a hack. `RedrawRequested` is attached to the UI viewport,
 // but all viewports of a render surface must be drawn at the same time.
+#[profiling::function]
 fn propagate_render_requests(
     requests: Populated<(Entity, &RenderTarget), With<RedrawRequested>>,
     surfaces: Populated<&RenderSources>,
@@ -420,6 +426,7 @@ fn propagate_render_requests(
     already_requesting.clear();
 }
 
+#[profiling::function]
 fn clear_render_requests(
     requests: Populated<Entity, With<RedrawRequested>>,
     mut commands: Commands,
