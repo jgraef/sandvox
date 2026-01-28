@@ -27,7 +27,7 @@ use crate::{
 pub struct Config {
     pub graphics: GraphicsConfig,
 
-    pub sound: WithDisableFlag<SoundConfig>,
+    pub sound: Option<SoundConfig>,
 
     pub num_threads: Option<NonZero<usize>>,
 
@@ -41,10 +41,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             graphics: Default::default(),
-            sound: WithDisableFlag {
-                inner: Default::default(),
-                disabled: false,
-            },
+            sound: Default::default(),
             num_threads: None,
             game: Default::default(),
             profiler: Default::default(),
@@ -96,14 +93,4 @@ pub struct GraphicsConfig {
 
     #[serde(flatten)]
     pub render: RenderConfig,
-}
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct WithDisableFlag<T> {
-    #[serde(flatten)]
-    pub inner: T,
-
-    #[serde(default = "crate::util::serde::default_true")]
-    pub disabled: bool,
 }

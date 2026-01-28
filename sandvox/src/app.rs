@@ -166,10 +166,8 @@ impl App {
             .add_plugin(CameraPlugin)?
             .add_plugin(UiPlugin)?;
 
-        if !config.sound.disabled {
-            world_builder.add_plugin(SoundPlugin {
-                config: config.sound.inner,
-            })?;
+        if let Some(config) = config.sound {
+            world_builder.add_plugin(SoundPlugin { config })?;
         }
 
         let init_world = if let Some(world_config_file) = &args.create_world {
