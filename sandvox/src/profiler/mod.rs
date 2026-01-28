@@ -22,18 +22,7 @@ pub enum ProfilerConfig {
 
 impl Default for ProfilerConfig {
     fn default() -> Self {
-        #[cfg(feature = "puffin")]
-        {
-            Self::Puffin {
-                address: format!("localhost:{}", puffin_http::DEFAULT_PORT),
-                open_viewer: false,
-            }
-        }
-
-        #[cfg(not(feature = "puffin"))]
-        {
-            Self::Null
-        }
+        Self::Null
     }
 }
 
