@@ -1,4 +1,4 @@
-use std::ops::Range;
+use std::convert::identity;
 
 use bevy_ecs::{
     component::Component,
@@ -69,8 +69,6 @@ use crate::{
     },
     wgpu::{
         WgpuContext,
-        WgpuContextBuilder,
-        WgpuSystems,
         buffer::TypedArrayBuffer,
     },
 };
@@ -81,10 +79,6 @@ pub struct MeshPlugin;
 impl Plugin for MeshPlugin {
     fn setup(&self, builder: &mut WorldBuilder) -> Result<(), Error> {
         builder
-            .add_systems(
-                schedule::Startup,
-                request_wgpu_features.in_set(WgpuSystems::RequestFeatures),
-            )
             .add_systems(
                 schedule::Startup,
                 (
@@ -118,11 +112,6 @@ impl Plugin for MeshPlugin {
             );
         Ok(())
     }
-}
-
-fn request_wgpu_features(mut builder: ResMut<WgpuContextBuilder>) {
-    // todo: remove this when we do wiremesh rendering via vertex pulling
-    builder.request_features(wgpu::Features::POLYGON_MODE_LINE);
 }
 
 #[derive(Clone, Copy, Debug, Default, Resource)]
@@ -183,7 +172,7 @@ impl MeshBuilder {
                     usage: wgpu::BufferUsages::STORAGE,
                 });
 
-            let num_indices = 3 * u32::try_from(self.faces.len()).unwrap();
+            let num_vertices = 3 * u32::try_from(self.faces.len()).unwrap();
 
             let bind_group = wgpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some(&format!("{label} bind group")),
@@ -203,7 +192,7 @@ impl MeshBuilder {
             Some(Mesh {
                 vertex_buffer,
                 index_buffer,
-                indices: 0..num_indices,
+                num_vertices,
                 bind_group,
             })
         }
@@ -230,24 +219,11 @@ pub struct Vertex {
 pub struct Mesh {
     pub vertex_buffer: wgpu::Buffer,
     pub index_buffer: wgpu::Buffer,
-    pub indices: Range<u32>,
+
+    /// How many vertices are actually rendered (not how many are in the buffer)
+    pub num_vertices: u32,
+
     pub bind_group: wgpu::BindGroup,
-}
-
-impl Mesh {
-    pub fn draw(
-        &self,
-        render_pass: &mut wgpu::RenderPass,
-        mesh_bind_group_slot: u32,
-        instances: Range<u32>,
-    ) {
-        render_pass.set_bind_group(mesh_bind_group_slot, &self.bind_group, &[]);
-        render_pass.draw(self.indices.clone(), instances);
-    }
-
-    pub fn num_vertices(&self) -> u32 {
-        self.indices.end - self.indices.start
-    }
 }
 
 #[derive(Debug, Resource)]
@@ -411,12 +387,12 @@ fn create_mesh_pipeline(
                         buffers: &[],
                     },
                     primitive: wgpu::PrimitiveState {
-                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        topology: wgpu::PrimitiveTopology::LineList,
                         strip_index_format: None,
                         front_face: wgpu::FrontFace::Ccw,
                         cull_mode: None,
                         unclipped_depth: false,
-                        polygon_mode: wgpu::PolygonMode::Line,
+                        polygon_mode: wgpu::PolygonMode::Fill,
                         conservative: false,
                     },
                     depth_stencil: Some(wgpu::DepthStencilState {
@@ -518,6 +494,8 @@ fn render_meshes_with(
     meshes: Populated<(&Mesh, &InstanceId, Option<&FrustrumCulled>)>,
     instance_buffer: Res<InstanceBuffer>,
     get_pipeline: impl Fn(&MeshPipeline) -> &wgpu::RenderPipeline,
+    map_num_vertices: impl Fn(u32) -> u32,
+    scope_label: &'static str,
 ) -> RenderMeshStatistics {
     let mut stats = RenderMeshStatistics::default();
 
@@ -525,7 +503,7 @@ fn render_meshes_with(
         for (camera_projection, camera_transform, render_target) in cameras {
             if let Ok((mut frame, pipeline)) = frames.get_mut(render_target.0) {
                 let frame = frame.active_mut();
-                let span = frame.enter_span("mesh");
+                let span = frame.enter_span(scope_label);
 
                 frame.render_pass.set_pipeline(get_pipeline(pipeline));
                 frame
@@ -545,13 +523,14 @@ fn render_meshes_with(
                         stats.num_culled += 1;
                     }
                     else {
-                        mesh.draw(
-                            &mut frame.render_pass,
-                            2,
-                            instance_id.0..(instance_id.0 + 1),
-                        );
+                        frame.render_pass.set_bind_group(2, &mesh.bind_group, &[]);
+                        let num_vertices = map_num_vertices(mesh.num_vertices);
+                        frame
+                            .render_pass
+                            .draw(0..num_vertices, instance_id.0..(instance_id.0 + 1));
+
                         stats.num_rendered += 1;
-                        stats.num_vertices += mesh.num_vertices() as usize;
+                        stats.num_vertices += num_vertices as usize;
                     }
                 }
 
@@ -571,9 +550,15 @@ fn render_meshes(
     instance_buffer: Res<InstanceBuffer>,
     mut render_stats: ResMut<RenderMeshStatistics>,
 ) {
-    *render_stats = render_meshes_with(cameras, frames, meshes, instance_buffer, |per_surface| {
-        &per_surface.pipeline
-    });
+    *render_stats = render_meshes_with(
+        cameras,
+        frames,
+        meshes,
+        instance_buffer,
+        |per_surface| &per_surface.pipeline,
+        identity,
+        "mesh-shaded",
+    );
 }
 
 #[profiling::function]
@@ -583,9 +568,19 @@ fn render_wireframes(
     meshes: Populated<(&Mesh, &InstanceId, Option<&FrustrumCulled>)>,
     instance_buffer: Res<InstanceBuffer>,
 ) {
-    render_meshes_with(cameras, frames, meshes, instance_buffer, |per_surface| {
-        &per_surface.wireframe_pipeline
-    });
+    render_meshes_with(
+        cameras,
+        frames,
+        meshes,
+        instance_buffer,
+        |per_surface| &per_surface.wireframe_pipeline,
+        |num_vertices| {
+            // n vertices are n/3 triangles, which require n lines to connect, which require
+            // 2*n vertices
+            2 * num_vertices
+        },
+        "mesh-wireframe",
+    );
 }
 
 #[derive(Clone, Copy, Debug, Default, Resource)]

@@ -138,7 +138,28 @@ fn mesh_wireframe_vertex(
     @builtin(vertex_index) vertex_index: u32,
     @builtin(instance_index) instance_index: u32,
 ) -> WireframeOutput {
-    let resolved_vertex_index = index_buffer[vertex_index];
+    /*
+        0----2
+        |   /
+        | /
+        1
+
+        shader will be called with vertex_index = [0, 1, 2, 3, 4, 5] (2 * number of vertices)
+
+        vertex_index | draw vertex
+                   0 | 0
+                   1 | 1
+                   2 | 1
+                   3 | 2
+                   4 | 2
+                   5 | 0
+
+        `(i + 1) % 6 / 2` gives the vertex indices for lines of a single triangle.
+        `(i / 6) * 3` gives the vertex index for the first index of a triangle.
+    */
+
+    var line_vertex_index = ((vertex_index + 1) % 6) / 2 + (vertex_index / 6) * 3;
+    let resolved_vertex_index = index_buffer[line_vertex_index];
     let vertex = vertex_buffer[resolved_vertex_index];
     let instance = instance_buffer[instance_index];
 
@@ -152,7 +173,8 @@ fn mesh_wireframe_vertex(
 
 @fragment
 fn mesh_wireframe_fragment(input: WireframeOutput) -> @location(0) vec4f {
-    return vec4f(0, 0, 0, 1);
+    const plum: vec4f = vec4f(0.86, 0.62, 0.86, 1);
+    return plum;
 }
 
 
