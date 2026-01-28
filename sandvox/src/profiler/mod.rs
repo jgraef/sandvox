@@ -10,25 +10,29 @@ use serde::{
 use crate::profiler::wgpu::WgpuProfilerSink;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ProfilerConfig {
-    // note: this is for puffin only right now
-    pub server: String,
+#[serde(rename_all = "kebab-case")]
+pub enum ProfilerConfig {
+    Puffin {
+        address: String,
+        #[serde(default)]
+        open_viewer: bool,
+    },
+    Null,
 }
 
 impl Default for ProfilerConfig {
     fn default() -> Self {
         #[cfg(feature = "puffin")]
         {
-            Self {
-                server: format!("localhost:{}", puffin_http::DEFAULT_PORT),
+            Self::Puffin {
+                address: format!("localhost:{}", puffin_http::DEFAULT_PORT),
+                open_viewer: false,
             }
         }
 
         #[cfg(not(feature = "puffin"))]
         {
-            Self {
-                server: "localhost:8585".to_owned(),
-            }
+            Self::Null
         }
     }
 }
@@ -50,30 +54,47 @@ enum Inner {
 
 impl Profiler {
     pub fn new(config: &ProfilerConfig) -> Result<Self, Error> {
-        #[cfg(feature = "puffin")]
-        {
-            use color_eyre::eyre::eyre;
+        let inner = match config {
+            ProfilerConfig::Puffin {
+                address,
+                open_viewer,
+            } => {
+                #[cfg(feature = "puffin")]
+                {
+                    use color_eyre::eyre::eyre;
 
-            let server = puffin_http::Server::new(&config.server).map_err(|e| eyre!("{e}"))?;
+                    let server = puffin_http::Server::new(address).map_err(|e| eyre!("{e}"))?;
 
-            tracing::info!(
-                "Profiler listening {}. Run `puffin_viewer` to view it.",
-                config.server
-            );
+                    tracing::info!(
+                        "Profiler listening {}. Run `puffin_viewer` to view it.",
+                        address
+                    );
 
-            puffin::set_scopes_on(true);
+                    puffin::set_scopes_on(true);
 
-            return Ok(Self {
-                inner: Inner::Puffin { _server: server },
-            });
-        }
+                    if *open_viewer {
+                        use std::process::Command;
 
-        #[allow(unreachable_code)]
-        {
-            let _ = config;
-            tracing::warn!("Profiler configured, but compiled out.");
-            Ok(Self { inner: Inner::Null })
-        }
+                        Command::new("puffin_viewer")
+                            .arg("--url")
+                            .arg(address)
+                            .spawn()?;
+                    }
+
+                    Inner::Puffin { _server: server }
+                }
+
+                #[cfg(not(feature = "puffin"))]
+                {
+                    let _ = (address, open_viewer);
+                    tracing::warn!("Puffin profiler configured, but compiled out.");
+                    Inner::Null
+                }
+            }
+            ProfilerConfig::Null => Inner::Null,
+        };
+
+        Ok(Self { inner })
     }
 
     pub fn wgpu_sink(&self, timestamp_period: f32) -> WgpuProfilerSink {
