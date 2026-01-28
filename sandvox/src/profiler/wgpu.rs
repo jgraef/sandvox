@@ -124,6 +124,8 @@ impl RenderPassProfiler {
     pub fn finish(mut self, command_encoder: &mut wgpu::CommandEncoder) {
         if let Some(start_end) = self.start_end {
             self.transaction.finish(command_encoder, move |resolved| {
+                let reference_time = get_reference_timestamp();
+
                 let render_pass_times: [u64; 2] = {
                     let data = resolved.get(start_end);
                     let timestamps: &[u64] = bytemuck::cast_slice(data);
@@ -138,6 +140,7 @@ impl RenderPassProfiler {
                 }
 
                 self.sink.write(
+                    reference_time,
                     RenderPassSpan {
                         label: self.label,
                         caller: self.render_pass_caller,
@@ -151,15 +154,35 @@ impl RenderPassProfiler {
     }
 }
 
+#[inline(always)]
+fn get_reference_timestamp() -> i64 {
+    #![allow(unused)]
+
+    // todo: a nicer way of abstracting the reference time needed by the backend
+
+    let mut t = 0;
+
+    #[cfg(feature = "puffin")]
+    {
+        t = puffin::now_ns();
+    }
+
+    t
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct WgpuProfilerSink {
     sender: Option<mpsc::SyncSender<WriterCommand>>,
 }
 
 impl WgpuProfilerSink {
-    fn write(&self, render_pass: RenderPassSpan, spans: Vec<QuerySpan>) {
+    fn write(&self, reference_time: i64, render_pass: RenderPassSpan, spans: Vec<QuerySpan>) {
         if let Some(sender) = &self.sender {
-            let _ = sender.try_send(WriterCommand::Write { render_pass, spans });
+            let _ = sender.try_send(WriterCommand::Write {
+                reference_time,
+                render_pass,
+                spans,
+            });
         }
     }
 }
@@ -203,6 +226,7 @@ pub struct SpanId(usize);
 #[allow(dead_code)]
 enum WriterCommand {
     Write {
+        reference_time: i64,
         render_pass: RenderPassSpan,
         spans: Vec<QuerySpan>,
     },
@@ -265,7 +289,11 @@ pub mod puffin_sink {
 
         while let Ok(command) = receiver.recv() {
             match command {
-                WriterCommand::Write { render_pass, spans } => {
+                WriterCommand::Write {
+                    reference_time,
+                    render_pass,
+                    spans,
+                } => {
                     let mut profiler = GlobalProfiler::lock();
 
                     let mut stream_info = StreamInfo::default();
@@ -283,23 +311,39 @@ pub mod puffin_sink {
 
                     let mut scope_ids = profiler.register_user_scopes(&details).into_iter();
 
+                    // insert registered scope ids
+                    if !scopes.contains_key(render_pass.caller) {
+                        scopes.insert(render_pass.caller, scope_ids.next().unwrap());
+                    }
+                    for (span, scope_id) in spans.iter().zip(scope_ids) {
+                        if !scopes.contains_key(span.enter.caller) {
+                            details.push(location_to_details(span.enter.caller, span.label));
+                            scopes.insert(span.enter.caller, scope_id);
+                        }
+                    }
+
                     // returns scope id for location
-                    let mut scope_id = |location: &'static Location<'static>| {
-                        *scopes
-                            .entry(location)
-                            .or_insert_with(|| scope_ids.next().unwrap())
-                    };
+                    let scope_id =
+                        |location: &'static Location<'static>| *scopes.get(location).unwrap();
 
                     // returns nanoseconds since start of render pass
                     let to_ns = |timestamp| {
-                        ((timestamp - render_pass.start) as f32 * timestamp_period) as i64
+                        //start_ns
+                        //    + ((timestamp - render_pass.start) as f32 * timestamp_period) as i64
+                        reference_time
+                            - ((render_pass.end - timestamp) as f32 * timestamp_period) as i64
                     };
 
                     // serialize spans
-                    let (offset, _) =
-                        stream_info
-                            .stream
-                            .begin_scope(|| 0, scope_id(render_pass.caller), "");
+                    let render_pass_start_ns = to_ns(render_pass.start);
+                    let render_pass_end_ns = to_ns(render_pass.end);
+                    let (offset, _) = stream_info.stream.begin_scope(
+                        || render_pass_start_ns,
+                        scope_id(render_pass.caller),
+                        "",
+                    );
+                    stream_info.num_scopes += 1;
+                    stream_info.depth = 1;
 
                     for span in &spans {
                         if let Some(exit) = &span.exit {
@@ -310,16 +354,19 @@ pub mod puffin_sink {
                             );
 
                             stream_info.stream.end_scope(offset, to_ns(exit.timestamp));
+                            stream_info.num_scopes += 1;
+                            stream_info.depth = 2;
                         }
                     }
 
-                    stream_info.stream.end_scope(offset, to_ns(render_pass.end));
+                    stream_info.stream.end_scope(offset, render_pass_end_ns);
+                    stream_info.range_ns = (render_pass_start_ns, render_pass_end_ns);
 
                     // submit stream
                     profiler.report_user_scopes(
                         ThreadInfo {
                             start_time_ns: None,
-                            name: "wgpu".to_owned(),
+                            name: "gpu".to_owned(),
                         },
                         &stream_info.as_stream_into_ref(),
                     );

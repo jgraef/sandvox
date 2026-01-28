@@ -239,25 +239,28 @@ impl App {
         Ok(())
     }
 
-    #[profiling::function]
     fn update(&mut self) {
-        let tick_start = Instant::now();
-
         {
-            let mut time = self.world.resource_mut::<Time>();
-            time.tick_start = tick_start;
-        }
+            profiling::function_scope!();
 
-        self.world.run_schedule(schedule::PreUpdate);
-        self.world.run_schedule(schedule::Update);
-        self.world.run_schedule(schedule::PostUpdate);
+            let tick_start = Instant::now();
 
-        self.world.run_schedule(schedule::Render);
+            {
+                let mut time = self.world.resource_mut::<Time>();
+                time.tick_start = tick_start;
+            }
 
-        {
-            let mut time = self.world.resource_mut::<Time>();
-            time.tick_delta = tick_start.elapsed();
-            time.tick_count += 1;
+            self.world.run_schedule(schedule::PreUpdate);
+            self.world.run_schedule(schedule::Update);
+            self.world.run_schedule(schedule::PostUpdate);
+
+            self.world.run_schedule(schedule::Render);
+
+            {
+                let mut time = self.world.resource_mut::<Time>();
+                time.tick_delta = tick_start.elapsed();
+                time.tick_count += 1;
+            }
         }
 
         profiling::finish_frame!();
