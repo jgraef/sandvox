@@ -155,7 +155,12 @@ impl MeshBuilder {
         );
     }
 
-    pub fn finish(&self, wgpu: &WgpuContext, label: &str) -> Option<Mesh> {
+    pub fn finish(
+        &self,
+        wgpu: &WgpuContext,
+        label: &str,
+        bind_group_layout: &wgpu::BindGroupLayout,
+    ) -> Option<Mesh> {
         if self.faces.is_empty() {
             None
         }
@@ -167,7 +172,7 @@ impl MeshBuilder {
                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some(&format!("{label} vertices")),
                     contents: bytemuck::cast_slice(&self.vertices),
-                    usage: wgpu::BufferUsages::VERTEX,
+                    usage: wgpu::BufferUsages::STORAGE,
                 });
 
             let index_buffer = wgpu
@@ -175,16 +180,31 @@ impl MeshBuilder {
                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some(&format!("{label} indices")),
                     contents: bytemuck::cast_slice(&self.faces),
-                    usage: wgpu::BufferUsages::INDEX,
+                    usage: wgpu::BufferUsages::STORAGE,
                 });
 
             let num_indices = 3 * u32::try_from(self.faces.len()).unwrap();
+
+            let bind_group = wgpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some(&format!("{label} bind group")),
+                layout: bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: vertex_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: index_buffer.as_entire_binding(),
+                    },
+                ],
+            });
 
             Some(Mesh {
                 vertex_buffer,
                 index_buffer,
                 indices: 0..num_indices,
-                base_vertex: 0,
+                bind_group,
             })
         }
     }
@@ -196,19 +216,6 @@ struct Instance {
     model_matrix: Matrix4<f32>,
 }
 
-impl Instance {
-    pub const LAYOUT: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout {
-        array_stride: size_of::<Self>() as wgpu::BufferAddress,
-        step_mode: wgpu::VertexStepMode::Instance,
-        attributes: &wgpu::vertex_attr_array![
-            4 => Float32x4,
-            5 => Float32x4,
-            6 => Float32x4,
-            7 => Float32x4,
-        ],
-    };
-}
-
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 #[repr(C)]
 pub struct Vertex {
@@ -216,19 +223,7 @@ pub struct Vertex {
     pub normal: Vector4<f32>,
     pub uv: Point2<f32>,
     pub texture_id: u32,
-}
-
-impl Vertex {
-    pub const LAYOUT: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout {
-        array_stride: size_of::<Self>() as wgpu::BufferAddress,
-        step_mode: wgpu::VertexStepMode::Vertex,
-        attributes: &wgpu::vertex_attr_array![
-            0 => Float32x4,
-            1 => Float32x4,
-            2 => Float32x2,
-            3 => Uint32,
-        ],
-    };
+    pub padding: u32,
 }
 
 #[derive(Clone, Debug, Component)]
@@ -236,21 +231,18 @@ pub struct Mesh {
     pub vertex_buffer: wgpu::Buffer,
     pub index_buffer: wgpu::Buffer,
     pub indices: Range<u32>,
-    pub base_vertex: i32,
+    pub bind_group: wgpu::BindGroup,
 }
 
 impl Mesh {
-    pub const INDEX_FORMAT: wgpu::IndexFormat = wgpu::IndexFormat::Uint32;
-
     pub fn draw(
         &self,
         render_pass: &mut wgpu::RenderPass,
-        vertex_buffer_slot: u32,
+        mesh_bind_group_slot: u32,
         instances: Range<u32>,
     ) {
-        render_pass.set_vertex_buffer(vertex_buffer_slot, self.vertex_buffer.slice(..));
-        render_pass.set_index_buffer(self.index_buffer.slice(..), Self::INDEX_FORMAT);
-        render_pass.draw_indexed(self.indices.clone(), self.base_vertex, instances);
+        render_pass.set_bind_group(mesh_bind_group_slot, &self.bind_group, &[]);
+        render_pass.draw(self.indices.clone(), instances);
     }
 
     pub fn num_vertices(&self) -> u32 {
@@ -261,15 +253,18 @@ impl Mesh {
 #[derive(Debug, Resource)]
 struct InstanceBuffer {
     buffer: TypedArrayBuffer<Instance>,
+    bind_group: Option<wgpu::BindGroup>,
 }
 
 #[derive(Clone, Copy, Debug, Component)]
 struct InstanceId(u32);
 
 #[derive(Debug, Resource)]
-struct MeshPipelineLayout {
+pub struct MeshPipelineLayout {
     layout: wgpu::PipelineLayout,
     shader: wgpu::ShaderModule,
+    instance_bind_group_layout: wgpu::BindGroupLayout,
+    pub mesh_bind_group_layout: wgpu::BindGroupLayout,
 }
 
 #[derive(Debug, Component)]
@@ -284,11 +279,59 @@ fn create_mesh_pipeline_layout(
     frame_bind_group_layout: Res<FrameBindGroupLayout>,
     mut commands: Commands,
 ) {
+    let instance_bind_group_layout =
+        wgpu.device
+            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("instance"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+
+    let mesh_bind_group_layout =
+        wgpu.device
+            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("mesh"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::VERTEX,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::VERTEX,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+
     let layout = wgpu
         .device
         .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("mesh"),
-            bind_group_layouts: &[&frame_bind_group_layout.bind_group_layout],
+            bind_group_layouts: &[
+                &frame_bind_group_layout.bind_group_layout,
+                &instance_bind_group_layout,
+                &mesh_bind_group_layout,
+            ],
             immediate_size: 0,
         });
 
@@ -296,7 +339,12 @@ fn create_mesh_pipeline_layout(
         .device
         .create_shader_module(wgpu::include_wgsl!("mesh.wgsl"));
 
-    commands.insert_resource(MeshPipelineLayout { layout, shader });
+    commands.insert_resource(MeshPipelineLayout {
+        layout,
+        shader,
+        instance_bind_group_layout,
+        mesh_bind_group_layout,
+    });
 }
 
 #[profiling::function]
@@ -318,7 +366,7 @@ fn create_mesh_pipeline(
                     module: &pipeline_layout.shader,
                     entry_point: Some("mesh_shaded_vertex"),
                     compilation_options: Default::default(),
-                    buffers: &[Vertex::LAYOUT, Instance::LAYOUT],
+                    buffers: &[],
                 },
                 primitive: wgpu::PrimitiveState {
                     topology: wgpu::PrimitiveTopology::TriangleList,
@@ -360,7 +408,7 @@ fn create_mesh_pipeline(
                         module: &pipeline_layout.shader,
                         entry_point: Some("mesh_wireframe_vertex"),
                         compilation_options: Default::default(),
-                        buffers: &[Vertex::LAYOUT, Instance::LAYOUT],
+                        buffers: &[],
                     },
                     primitive: wgpu::PrimitiveState {
                         topology: wgpu::PrimitiveTopology::TriangleList,
@@ -402,17 +450,22 @@ fn create_mesh_pipeline(
 
 #[profiling::function]
 fn create_instance_buffer(wgpu: Res<WgpuContext>, mut commands: Commands) {
+    let buffer = TypedArrayBuffer::new(
+        wgpu.device.clone(),
+        "mesh instance buffer",
+        wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+    );
+
     commands.insert_resource(InstanceBuffer {
-        buffer: TypedArrayBuffer::new(
-            wgpu.device.clone(),
-            "mesh instance buffer",
-            wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        ),
+        buffer,
+        bind_group: None,
     });
 }
 
 #[profiling::function]
 fn update_instance_buffer(
+    wgpu: Res<WgpuContext>,
+    layout: Res<MeshPipelineLayout>,
     mut instance_buffer: ResMut<InstanceBuffer>,
     meshes: Populated<(Entity, &GlobalTransform, Option<&mut InstanceId>), With<Mesh>>,
     mut commands: Commands,
@@ -438,9 +491,22 @@ fn update_instance_buffer(
         }
     }
 
-    instance_buffer
-        .buffer
-        .write_all(&instance_data, |_buffer| {}, &mut *staging);
+    let instance_buffer = &mut *instance_buffer;
+    instance_buffer.buffer.write_all(
+        &instance_data,
+        |buffer| {
+            instance_buffer.bind_group =
+                Some(wgpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("instance"),
+                    layout: &layout.instance_bind_group_layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: buffer.as_entire_binding(),
+                    }],
+                }));
+        },
+        &mut *staging,
+    );
 
     // don't forget!!!!111
     instance_data.clear();
@@ -455,7 +521,7 @@ fn render_meshes_with(
 ) -> RenderMeshStatistics {
     let mut stats = RenderMeshStatistics::default();
 
-    if let Some(instance_buffer) = instance_buffer.buffer.try_buffer() {
+    if let Some(instance_bind_group) = &instance_buffer.bind_group {
         for (camera_projection, camera_transform, render_target) in cameras {
             if let Ok((mut frame, pipeline)) = frames.get_mut(render_target.0) {
                 let frame = frame.active_mut();
@@ -464,7 +530,7 @@ fn render_meshes_with(
                 frame.render_pass.set_pipeline(get_pipeline(pipeline));
                 frame
                     .render_pass
-                    .set_vertex_buffer(1, instance_buffer.slice(..));
+                    .set_bind_group(1, instance_bind_group, &[]);
 
                 let camera_frustrum = Frustrum {
                     matrix: camera_projection.to_matrix()
@@ -481,7 +547,7 @@ fn render_meshes_with(
                     else {
                         mesh.draw(
                             &mut frame.render_pass,
-                            0,
+                            2,
                             instance_id.0..(instance_id.0 + 1),
                         );
                         stats.num_rendered += 1;

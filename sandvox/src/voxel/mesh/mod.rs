@@ -51,6 +51,7 @@ use crate::{
     },
     render::mesh::{
         MeshBuilder,
+        MeshPipelineLayout,
         MeshPlugin,
         Vertex,
     },
@@ -115,6 +116,7 @@ where
     entity: Entity,
     chunk: Chunk<V, CHUNK_SIZE>,
     wgpu: WgpuContext,
+    mesh_bind_group_layout: wgpu::BindGroupLayout,
     voxel_data: V::Data,
     workspaces: Workspaces<(MeshBuilder, M)>,
 }
@@ -133,7 +135,11 @@ where
         let time = t_start.elapsed();
         tracing::trace!(entity = ?self.entity, ?time, "meshed chunk");
 
-        let mesh = mesh_builder.finish(&self.wgpu, &format!("chunk {:?}", self.entity));
+        let mesh = mesh_builder.finish(
+            &self.wgpu,
+            &format!("chunk {:?}", self.entity),
+            &self.mesh_bind_group_layout,
+        );
         mesh_builder.clear();
 
         world_modifications.push(move |world: &mut World| {
@@ -160,6 +166,7 @@ fn dispatch_chunk_meshing<V, M, const CHUNK_SIZE: usize>(
     >,
     voxel_data: StaticSystemParam<V::FetchData>,
     workspaces: Local<Workspaces<(MeshBuilder, M)>>,
+    mesh_layout: Res<MeshPipelineLayout>,
     mut commands: Commands,
 ) where
     V: Voxel,
@@ -175,6 +182,7 @@ fn dispatch_chunk_meshing<V, M, const CHUNK_SIZE: usize>(
             wgpu: wgpu.clone(),
             voxel_data: voxel_data.clone(),
             workspaces: workspaces.clone(),
+            mesh_bind_group_layout: mesh_layout.mesh_bind_group_layout.clone(),
         }
     }));
 }
@@ -287,6 +295,7 @@ impl UnorientedQuad {
                 normal,
                 uv: Point2::from(uvs[i]).cast(),
                 texture_id,
+                padding: 0,
             }
         });
 

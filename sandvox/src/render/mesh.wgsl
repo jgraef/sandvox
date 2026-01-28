@@ -1,47 +1,15 @@
 const PI: f32 = 3.141592653589793;
 
-struct VertexInput {
-    // from vertex buffer
-    @location(0)
+struct Vertex {
     position: vec4f,
-
-    @location(1)
     normal: vec4f,
-
-    @location(2)
     uv: vec2f,
-
-    @location(3)
     texture_id: u32,
-
-    // from instance buffer
-    @location(4) model0: vec4f,
-    @location(5) model1: vec4f,
-    @location(6) model2: vec4f,
-    @location(7) model3: vec4f,
+    // padding: 4 bytes
 }
 
-struct VertexOutput {
-    @builtin(position)
-    position: vec4f,
-
-    @location(0)
-    world_position: vec4f,
-
-    @location(1)
-    normal: vec4f,
-
-    @location(2)
-    uv: vec2f,
-
-    @location(3)
-    @interpolate(flat, either)
-    texture_id: u32,
-}
-
-struct VertexOutputWireframe {
-    @builtin(position)
-    position: vec4f,
+struct Instance {
+    model_matrix: mat4x4f,
 }
 
 struct FrameUniform {
@@ -58,7 +26,6 @@ struct Camera {
     view_inverse: mat4x4f,
     position: vec4f,
 }
-
 
 @group(0)
 @binding(0)
@@ -82,26 +49,64 @@ struct AtlasEntry {
 var<storage, read> atlas_data: array<AtlasEntry>;
 
 
-@vertex
-fn mesh_shaded_vertex(input: VertexInput) -> VertexOutput {
-    let model_matrix = mat4x4f(input.model0, input.model1, input.model2, input.model3);
+// todo: merge this into the render pass bind group
+@group(1)
+@binding(0)
+var<storage, read> instance_buffer: array<Instance>;
 
-    let world_position = model_matrix * input.position;
-    let normal = model_matrix * input.normal;
+@group(2)
+@binding(0)
+var<storage, read> vertex_buffer: array<Vertex>;
+
+@group(2)
+@binding(1)
+var<storage, read> index_buffer: array<u32>;
+
+
+@vertex
+fn mesh_shaded_vertex(
+    @builtin(vertex_index) vertex_index: u32,
+    @builtin(instance_index) instance_index: u32,
+) -> ShadedOutput {
+    let resolved_vertex_index = index_buffer[vertex_index];
+    let vertex = vertex_buffer[resolved_vertex_index];
+    let instance = instance_buffer[instance_index];
+
+    let world_position = instance.model_matrix * vertex.position;
+    let normal = instance.model_matrix * vertex.normal;
 
     let position = frame_uniform.camera.projection * frame_uniform.camera.view * world_position;
 
-    return VertexOutput(
+    return ShadedOutput(
         position,
         world_position,
         normal,
-        input.uv,
-        input.texture_id,
+        vertex.uv,
+        vertex.texture_id,
     );
 }
 
+struct ShadedOutput {
+    @builtin(position)
+    position: vec4f,
+
+    @location(0)
+    world_position: vec4f,
+
+    @location(1)
+    normal: vec4f,
+
+    @location(2)
+    uv: vec2f,
+
+    @location(3)
+    @interpolate(flat, either)
+    texture_id: u32,
+}
+
+
 @fragment
-fn mesh_shaded_fragment(input: VertexOutput) -> @location(0) vec4f {
+fn mesh_shaded_fragment(input: ShadedOutput) -> @location(0) vec4f {
     var color: vec4f;
 
     // todo: figure out where the sun is (https://iurietarlev.github.io/SunpathDiagram/),
@@ -122,19 +127,31 @@ fn mesh_shaded_fragment(input: VertexOutput) -> @location(0) vec4f {
     return color;
 }
 
+
+struct WireframeOutput {
+    @builtin(position)
+    position: vec4f,
+}
+
 @vertex
-fn mesh_wireframe_vertex(input: VertexInput) -> VertexOutputWireframe {
-    let model_matrix = mat4x4f(input.model0, input.model1, input.model2, input.model3);
-    let world_position = model_matrix * input.position;
+fn mesh_wireframe_vertex(
+    @builtin(vertex_index) vertex_index: u32,
+    @builtin(instance_index) instance_index: u32,
+) -> WireframeOutput {
+    let resolved_vertex_index = index_buffer[vertex_index];
+    let vertex = vertex_buffer[resolved_vertex_index];
+    let instance = instance_buffer[instance_index];
+
+    let world_position = instance.model_matrix * vertex.position;
     let position =  frame_uniform.camera.projection * frame_uniform.camera.view * world_position;
 
-    return VertexOutputWireframe(
+    return WireframeOutput(
         position,
     );
 }
 
 @fragment
-fn mesh_wireframe_fragment(input: VertexOutputWireframe) -> @location(0) vec4f {
+fn mesh_wireframe_fragment(input: WireframeOutput) -> @location(0) vec4f {
     return vec4f(0, 0, 0, 1);
 }
 
