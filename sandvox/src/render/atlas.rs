@@ -449,23 +449,19 @@ impl Atlas {
 
             staging
                 .command_encoder_mut()
-                .on_submitted_work_done(move || {
-                    staging_buffer
-                        .clone()
-                        .map_async(wgpu::MapMode::Read, .., move |result| {
-                            result.unwrap();
-                            let mapped_range = staging_buffer.get_mapped_range(..);
+                .map_buffer_on_submit(&staging_buffer.clone(), wgpu::MapMode::Read, .., move |result| {
+                    result.unwrap();
+                    let mapped_range = staging_buffer.get_mapped_range(..);
 
-                            let image = image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(
-                                size, size,
-                                &*mapped_range,
-                            )
-                            .unwrap();
+                    let image = image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(
+                        size, size,
+                        &*mapped_range,
+                    )
+                    .unwrap();
 
-                            if let Err(error) = image.save(path) {
-                                tracing::error!(path = %path.display(), "couldn't save texture atlas: {error}");
-                            }
-                        });
+                    if let Err(error) = image.save(path) {
+                        tracing::error!(path = %path.display(), "couldn't save texture atlas: {error}");
+                    }
                 });
         }
 
