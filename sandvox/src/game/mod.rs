@@ -49,7 +49,6 @@ use winit::keyboard::KeyCode;
 
 use crate::{
     app::{
-        CloseApp,
         Time,
         WindowConfig,
     },
@@ -491,7 +490,6 @@ fn handle_keys(
     keys: Populated<&Keys, Changed<Keys>>,
     render_wireframes: Option<Res<RenderWireframes>>,
     show_ui_layout: Option<Res<ShowDebugOutlines>>,
-    mut close_app: CloseApp,
     mut commands: Commands,
 ) {
     for keys in keys {
@@ -511,10 +509,6 @@ fn handle_keys(
             else {
                 commands.remove_resource::<ShowDebugOutlines>();
             }
-        }
-
-        if keys.just_pressed.contains(&KeyCode::Escape) {
-            close_app.request_close();
         }
     }
 }

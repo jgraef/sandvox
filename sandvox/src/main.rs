@@ -56,6 +56,7 @@ fn main() -> Result<(), Error> {
         Command::Main(args) => {
             let app = App::new(args)?;
             app.run()?;
+            tracing::info!("App exited cleanly");
         }
         Command::WgpuInfo => {
             wgpu_info()?;

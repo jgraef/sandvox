@@ -13,7 +13,10 @@ use bevy_ecs::{
         Message,
         MessageReader,
     },
-    query::With,
+    query::{
+        Has,
+        With,
+    },
     schedule::{
         IntoScheduleConfigs,
         common_conditions::on_message,
@@ -55,6 +58,8 @@ use crate::{
     input::{
         InputSystems,
         Keys,
+        MouseButton,
+        MouseButtons,
         MousePosition,
     },
     render::surface::RenderTarget,
@@ -100,7 +105,7 @@ pub struct CameraControllerConfig {
     // rad / pixel
     pub mouse_sensitivity: f32,
 
-    pub keybindings: IndexMap<KeyCode, Movement>,
+    pub keybindings: IndexMap<KeyCode, Action>,
 
     // block / second
     pub movement_speed: f32,
@@ -109,12 +114,31 @@ pub struct CameraControllerConfig {
 impl Default for CameraControllerConfig {
     fn default() -> Self {
         let mut keybindings = IndexMap::with_capacity(6);
-        keybindings.insert(KeyCode::KeyW, Movement::Local(Vector3::z()));
-        keybindings.insert(KeyCode::KeyA, Movement::Local(-Vector3::x()));
-        keybindings.insert(KeyCode::KeyS, Movement::Local(-Vector3::z()));
-        keybindings.insert(KeyCode::KeyD, Movement::Local(Vector3::x()));
-        keybindings.insert(KeyCode::ShiftLeft, Movement::Global(-Vector3::y()));
-        keybindings.insert(KeyCode::Space, Movement::Global(Vector3::y()));
+        keybindings.insert(
+            KeyCode::KeyW,
+            Action::Movement(Movement::Local(Vector3::z())),
+        );
+        keybindings.insert(
+            KeyCode::KeyA,
+            Action::Movement(Movement::Local(-Vector3::x())),
+        );
+        keybindings.insert(
+            KeyCode::KeyS,
+            Action::Movement(Movement::Local(-Vector3::z())),
+        );
+        keybindings.insert(
+            KeyCode::KeyD,
+            Action::Movement(Movement::Local(Vector3::x())),
+        );
+        keybindings.insert(
+            KeyCode::ShiftLeft,
+            Action::Movement(Movement::Global(-Vector3::y())),
+        );
+        keybindings.insert(
+            KeyCode::Space,
+            Action::Movement(Movement::Global(Vector3::y())),
+        );
+        keybindings.insert(KeyCode::Escape, Action::ReleaseCursor);
 
         Self {
             mouse_sensitivity: 0.01,
@@ -144,6 +168,7 @@ enum ControllerMessage {
     ControllerRemoved(Entity),
 }
 
+#[profiling::function]
 fn grab_cursor(
     mut messages: MessageReader<ControllerMessage>,
     cameras: Populated<&RenderTarget, With<CameraControllerState>>,
@@ -167,52 +192,83 @@ fn grab_cursor(
     }
 }
 
+#[profiling::function]
 fn update_camera(
     time: Res<Time>,
-    windows: Populated<(Option<&MousePosition>, &Keys)>,
+    windows: Populated<(
+        Entity,
+        Option<&MousePosition>,
+        Option<&MouseButtons>,
+        &Keys,
+        Has<GrabCursor>,
+    )>,
     cameras: Populated<(
         &mut LocalTransform,
         &mut CameraControllerState,
         &CameraControllerConfig,
         &RenderTarget,
     )>,
+    mut commands: Commands,
 ) {
     for (mut transform, mut state, config, render_target) in cameras {
         if state.is_added() {
             state.apply(&mut transform);
         }
 
-        if let Ok((mouse_position, keys)) = windows.get(render_target.0) {
-            let dt = time.delta_seconds();
+        if let Ok((window_entity, mouse_position, mouse_buttons, keys, cursor_grabbed)) =
+            windows.get(render_target.0)
+        {
+            if cursor_grabbed {
+                let dt = time.delta_seconds();
 
-            // mouse
-            if let Some(mouse_position) = mouse_position {
-                if !mouse_position.frame_delta.is_zero() {
-                    // note: don't multiply by delta-time, since the mouse delta is already
-                    // naturally scaled by that.
-                    let delta = config.mouse_sensitivity * mouse_position.frame_delta;
+                // mouse
+                if let Some(mouse_position) = mouse_position {
+                    if !mouse_position.frame_delta.is_zero() {
+                        // note: don't multiply by delta-time, since the mouse delta is already
+                        // naturally scaled by that.
+                        let delta = config.mouse_sensitivity * mouse_position.frame_delta;
 
-                    tracing::trace!(?delta, ?mouse_position.frame_delta, "mouse movement");
+                        tracing::trace!(?delta, ?mouse_position.frame_delta, "mouse movement");
 
-                    state.yaw = (state.yaw + delta.x).rem_euclid(TAU);
-                    state.pitch = (state.pitch - delta.y).clamp(-FRAC_PI_2, FRAC_PI_2);
+                        state.yaw = (state.yaw + delta.x).rem_euclid(TAU);
+                        state.pitch = (state.pitch - delta.y).clamp(-FRAC_PI_2, FRAC_PI_2);
 
-                    state.apply(&mut transform);
+                        state.apply(&mut transform);
+                    }
                 }
-            }
 
-            // keyboard
-            if !keys.pressed.is_empty() {
-                tracing::trace!(?keys.pressed, "keys pressed");
-                let speed = dt * config.movement_speed;
-                for (key_code, action) in &config.keybindings {
-                    if keys.pressed.contains(key_code) {
-                        action.apply(&mut transform, speed);
+                // keyboard
+                if !keys.pressed.is_empty() {
+                    tracing::trace!(?keys.pressed, "keys pressed");
+                    let speed = dt * config.movement_speed;
+                    for (key_code, action) in &config.keybindings {
+                        if keys.pressed.contains(key_code) {
+                            match action {
+                                Action::ReleaseCursor => {
+                                    commands.entity(window_entity).try_remove::<GrabCursor>();
+                                }
+                                Action::Movement(movement) => {
+                                    movement.apply(&mut transform, speed);
+                                }
+                            }
+                        }
                     }
                 }
             }
+            else if let Some(mouse_buttons) = mouse_buttons
+                && mouse_buttons.just_pressed(MouseButton::Left)
+            {
+                commands.entity(window_entity).insert(GrabCursor);
+            }
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub enum Action {
+    ReleaseCursor,
+    Movement(Movement),
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]

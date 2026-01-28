@@ -87,7 +87,10 @@ use crate::{
             WorldSeed,
         },
     },
-    input::InputPlugin,
+    input::{
+        InputPlugin,
+        MouseButton,
+    },
     profiler::Profiler,
     render::{
         RenderPlugin,
@@ -234,6 +237,7 @@ impl App {
         self.world.insert_resource(EventLoopProxy(proxy));
 
         event_loop.run_app(&mut self)?;
+
         Ok(())
     }
 
@@ -511,17 +515,43 @@ fn handle_window_event(
         }
         winit::event::WindowEvent::MouseWheel {
             device_id: _,
-            delta: _,
+            delta,
             phase: _,
         } => {
-            // todo
+            match delta {
+                winit::event::MouseScrollDelta::LineDelta(x, y) => {
+                    window_events.write(WindowEvent::MouseWheel {
+                        window: *window_entity,
+                        delta: Vector2::new(x, y),
+                    });
+                }
+                winit::event::MouseScrollDelta::PixelDelta(_physical_position) => {
+                    // todo: scale relative to line scroll. this should probably
+                    // be handled by the input system
+                }
+            }
         }
         winit::event::WindowEvent::MouseInput {
             device_id: _,
-            state: _,
-            button: _,
+            state,
+            button,
         } => {
-            // todo
+            if let Ok(button) = MouseButton::try_from(button) {
+                match state {
+                    winit::event::ElementState::Pressed => {
+                        window_events.write(WindowEvent::MouseButtonPressed {
+                            window: *window_entity,
+                            button,
+                        });
+                    }
+                    winit::event::ElementState::Released => {
+                        window_events.write(WindowEvent::MouseButtonReleased {
+                            window: *window_entity,
+                            button,
+                        });
+                    }
+                }
+            }
         }
         winit::event::WindowEvent::ScaleFactorChanged {
             scale_factor: _,
@@ -672,6 +702,18 @@ pub enum WindowEvent {
     },
     MouseLeft {
         window: Entity,
+    },
+    MouseWheel {
+        window: Entity,
+        delta: Vector2<f32>,
+    },
+    MouseButtonPressed {
+        window: Entity,
+        button: MouseButton,
+    },
+    MouseButtonReleased {
+        window: Entity,
+        button: MouseButton,
     },
     GainedFocus {
         window: Entity,

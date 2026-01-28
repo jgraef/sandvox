@@ -22,12 +22,20 @@ use bevy_ecs::{
         SystemParam,
     },
 };
+use bitflags::{
+    Flags,
+    bitflags,
+};
 use color_eyre::eyre::Error;
 use nalgebra::{
     Point2,
     Vector2,
 };
 use num_traits::identities::Zero;
+use serde::{
+    Deserialize,
+    Serialize,
+};
 use winit::keyboard::{
     KeyCode,
     PhysicalKey,
@@ -71,29 +79,120 @@ pub struct MousePosition {
     pub frame_delta: Vector2<f32>,
 }
 
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MouseButton {
+    Left,
+    Right,
+    Middle,
+    Back,
+    Forward,
+}
+
+#[derive(Clone, Copy, Debug, thiserror::Error)]
+#[error("Unsupported mouse button: {code}")]
+pub struct UnsupportedMouseButton {
+    pub code: u16,
+}
+
+impl TryFrom<winit::event::MouseButton> for MouseButton {
+    type Error = UnsupportedMouseButton;
+
+    #[inline]
+    fn try_from(value: winit::event::MouseButton) -> Result<Self, UnsupportedMouseButton> {
+        match value {
+            winit::event::MouseButton::Left => Ok(MouseButton::Left),
+            winit::event::MouseButton::Right => Ok(MouseButton::Right),
+            winit::event::MouseButton::Middle => Ok(MouseButton::Middle),
+            winit::event::MouseButton::Back => Ok(MouseButton::Back),
+            winit::event::MouseButton::Forward => Ok(MouseButton::Forward),
+            winit::event::MouseButton::Other(code) => Err(UnsupportedMouseButton { code }),
+        }
+    }
+}
+
+bitflags! {
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct MouseButtonSet: u8 {
+        const LEFT = 0b0000_0001;
+        const RIGHT = 0b0000_0010;
+        const MIDDLE = 0b0000_0100;
+        const BACK = 0b0001_0000;
+        const FORWARD = 0b0010_0000;
+    }
+}
+
+impl From<MouseButton> for MouseButtonSet {
+    #[inline]
+    fn from(value: MouseButton) -> Self {
+        match value {
+            MouseButton::Left => MouseButtonSet::LEFT,
+            MouseButton::Right => MouseButtonSet::RIGHT,
+            MouseButton::Middle => MouseButtonSet::MIDDLE,
+            MouseButton::Back => MouseButtonSet::BACK,
+            MouseButton::Forward => MouseButtonSet::FORWARD,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Component)]
+pub struct MouseButtons {
+    pub pressed: MouseButtonSet,
+    pub just_pressed: MouseButtonSet,
+    pub just_released: MouseButtonSet,
+}
+
+impl MouseButtons {
+    #[inline]
+    pub fn pressed(&self, mouse_button: MouseButton) -> bool {
+        self.pressed.contains(mouse_button.into())
+    }
+
+    #[inline]
+    pub fn just_pressed(&self, mouse_button: MouseButton) -> bool {
+        self.just_pressed.contains(mouse_button.into())
+    }
+
+    #[inline]
+    pub fn just_released(&self, mouse_button: MouseButton) -> bool {
+        self.just_released.contains(mouse_button.into())
+    }
+}
+
 #[derive(SystemParam)]
 struct UpdateMouse<'w, 's> {
-    mouse_positions: Query<'w, 's, &'static mut MousePosition>,
+    mouse_cursors: Query<'w, 's, (&'static mut MousePosition, &'static mut MouseButtons)>,
     commands: Commands<'w, 's>,
-    new_mouse_positions: Local<'s, EntityHashMap<MousePosition>>,
+    new_mouse_cursors: Local<'s, EntityHashMap<(MousePosition, MouseButtons)>>,
 }
 
 impl<'w, 's> UpdateMouse<'w, 's> {
     fn begin(&mut self) {
-        assert!(self.new_mouse_positions.is_empty());
+        assert!(self.new_mouse_cursors.is_empty());
 
-        for mut mouse_position in &mut self.mouse_positions {
+        for (mut mouse_position, mut mouse_buttons) in &mut self.mouse_cursors {
             if !mouse_position.frame_delta.is_zero() {
                 mouse_position.frame_delta = Vector2::zeros();
+            }
+
+            // clear just_pressed and just_released.
+            // the extra check is so that we only trigger change detection if the sets
+            // really change.
+            if !mouse_buttons.just_pressed.is_empty() {
+                mouse_buttons.just_pressed.clear();
+            }
+            if !mouse_buttons.just_released.is_empty() {
+                mouse_buttons.just_released.clear();
             }
         }
     }
 
-    fn update(&mut self, window: Entity, update: impl FnOnce(&mut MousePosition)) {
-        self.update_if(window, |_| true, update);
+    #[inline]
+    fn update_position(&mut self, window: Entity, update: impl FnOnce(&mut MousePosition)) {
+        self.update_position_if(window, |_| true, update);
     }
 
-    fn update_if(
+    fn update_position_if(
         &mut self,
         window: Entity,
         condition: impl FnOnce(&MousePosition) -> bool,
@@ -105,34 +204,68 @@ impl<'w, 's> UpdateMouse<'w, 's> {
             }
         };
 
-        if let Ok(mut mouse_position) = self.mouse_positions.get_mut(window) {
+        if let Ok((mut mouse_position, _)) = self.mouse_cursors.get_mut(window) {
             update_if(&mut mouse_position);
         }
-        else if let Some(mouse_position) = self.new_mouse_positions.get_mut(&window) {
+        else if let Some((mouse_position, _)) = self.new_mouse_cursors.get_mut(&window) {
             update_if(mouse_position);
         }
         else {
             let mut mouse_position = MousePosition::default();
             update_if(&mut mouse_position);
-            self.new_mouse_positions.insert(window, mouse_position);
+            self.new_mouse_cursors
+                .insert(window, (mouse_position, MouseButtons::default()));
         }
     }
 
+    fn update_buttons_if(
+        &mut self,
+        window: Entity,
+        condition: impl FnOnce(&MouseButtons) -> bool,
+        update: impl FnOnce(&mut MouseButtons),
+    ) {
+        let update_if = |mouse_buttons: &mut MouseButtons| {
+            if condition(mouse_buttons) {
+                update(mouse_buttons);
+            }
+        };
+
+        if let Ok((_, mut mouse_buttons)) = self.mouse_cursors.get_mut(window) {
+            update_if(&mut mouse_buttons);
+        }
+        else if let Some((_, mouse_buttons)) = self.new_mouse_cursors.get_mut(&window) {
+            update_if(mouse_buttons)
+        }
+        else {
+            let mut mouse_buttons = MouseButtons::default();
+            update_if(&mut mouse_buttons);
+            self.new_mouse_cursors
+                .insert(window, (MousePosition::default(), mouse_buttons));
+        }
+    }
+
+    #[inline]
     fn insert(&mut self, window: Entity) {
-        if self.mouse_positions.get(window).is_err() {
-            self.new_mouse_positions.insert(window, Default::default());
+        if self.mouse_cursors.get(window).is_err() {
+            self.new_mouse_cursors.insert(window, Default::default());
         }
     }
 
+    #[inline]
     fn remove(&mut self, window: Entity) {
-        if self.new_mouse_positions.remove(&window).is_none() {
-            self.commands.entity(window).try_remove::<MousePosition>();
+        if self.new_mouse_cursors.remove(&window).is_none() {
+            self.commands
+                .entity(window)
+                .try_remove::<MousePosition>()
+                .try_remove::<MouseButtons>();
         }
     }
 
     fn end(mut self) {
-        for (window, mouse_position) in self.new_mouse_positions.drain() {
-            self.commands.entity(window).insert(mouse_position);
+        for (window, (mouse_position, mouse_buttons)) in self.new_mouse_cursors.drain() {
+            self.commands
+                .entity(window)
+                .insert((mouse_position, mouse_buttons));
         }
     }
 }
@@ -143,7 +276,7 @@ fn update_mouse(mut window_events: MessageReader<WindowEvent>, mut update_mouse:
     for event in window_events.read() {
         match event {
             WindowEvent::MousePosition { window, position } => {
-                update_mouse.update_if(
+                update_mouse.update_position_if(
                     *window,
                     |mouse_position| mouse_position.position != *position,
                     |mouse_position| {
@@ -153,10 +286,38 @@ fn update_mouse(mut window_events: MessageReader<WindowEvent>, mut update_mouse:
             }
             WindowEvent::MouseDelta { window, delta } => {
                 if !delta.is_zero() {
-                    update_mouse.update(*window, |mouse_position| {
+                    update_mouse.update_position(*window, |mouse_position| {
                         mouse_position.frame_delta += *delta;
                     });
                 }
+            }
+            WindowEvent::MouseWheel {
+                window: _,
+                delta: _,
+            } => {
+                // todo
+            }
+            WindowEvent::MouseButtonPressed { window, button } => {
+                let button = MouseButtonSet::from(*button);
+                update_mouse.update_buttons_if(
+                    *window,
+                    |mouse_buttons| !mouse_buttons.pressed.contains(button),
+                    |mouse_buttons| {
+                        mouse_buttons.pressed.insert(button);
+                        mouse_buttons.just_pressed.insert(button)
+                    },
+                );
+            }
+            WindowEvent::MouseButtonReleased { window, button } => {
+                let button = MouseButtonSet::from(*button);
+                update_mouse.update_buttons_if(
+                    *window,
+                    |mouse_buttons| mouse_buttons.pressed.contains(button),
+                    |mouse_buttons| {
+                        mouse_buttons.pressed.remove(button);
+                        mouse_buttons.just_released.insert(button)
+                    },
+                );
             }
             WindowEvent::MouseEntered { window } => {
                 update_mouse.insert(*window);
