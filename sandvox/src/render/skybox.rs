@@ -3,26 +3,31 @@ use std::path::PathBuf;
 use bevy_ecs::{
     component::Component,
     entity::Entity,
-    message::{
-        Message,
-        MessageReader,
-    },
     name::NameOrEntity,
-    query::Without,
-    resource::Resource,
-    schedule::{
-        IntoScheduleConfigs,
-        common_conditions::on_message,
+    query::{
+        Changed,
+        Without,
     },
+    resource::Resource,
+    schedule::IntoScheduleConfigs,
     system::{
         Commands,
         Populated,
         Res,
+        ResMut,
+        Single,
     },
+};
+use bytemuck::{
+    Pod,
+    Zeroable,
 };
 use color_eyre::eyre::Error;
 use image::RgbaImage;
-use nalgebra::Vector2;
+use nalgebra::{
+    Matrix4,
+    Vector2,
+};
 use wgpu::util::DeviceExt;
 
 use crate::{
@@ -32,6 +37,7 @@ use crate::{
             WorldBuilder,
         },
         schedule,
+        transform::GlobalTransform,
     },
     render::{
         RenderSystems,
@@ -39,6 +45,7 @@ use crate::{
             Frame,
             FrameBindGroupLayout,
         },
+        staging::Staging,
         surface::{
             RenderTarget,
             Surface,
@@ -51,7 +58,10 @@ use crate::{
             ImageSizeExt,
         },
     },
-    wgpu::WgpuContext,
+    wgpu::{
+        WgpuContext,
+        buffer::WriteStaging,
+    },
 };
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -64,39 +74,31 @@ impl Plugin for SkyboxPlugin {
                 schedule::Startup,
                 (
                     create_pipeline_layout,
-                    load_skybox
-                        .after(create_pipeline_layout)
-                        .run_if(on_message::<LoadSkybox>),
+                    load_skybox.after(create_pipeline_layout),
                 )
                     .in_set(RenderSystems::Setup),
             )
             .add_systems(
                 schedule::Render,
                 (
-                    (
-                        create_pipeline,
-                        load_skybox.run_if(on_message::<LoadSkybox>),
-                    )
-                        .in_set(RenderSystems::BeginFrame),
+                    (create_pipeline, load_skybox, update_skybox).in_set(RenderSystems::BeginFrame),
                     render_skybox.in_set(RenderSystems::RenderWorld),
                 ),
-            )
-            .add_message::<LoadSkybox>();
+            );
 
         Ok(())
     }
 }
 
-// todo: this is not nice
-#[derive(Clone, Debug, Message)]
-pub struct LoadSkybox {
+#[derive(Clone, Debug, Component)]
+pub struct Skybox {
     pub path: PathBuf,
-    pub entity: Entity,
 }
 
 #[derive(Clone, Debug, Component)]
-pub struct Skybox {
-    pub bind_group: wgpu::BindGroup,
+struct SkyboxBindGroup {
+    bind_group: wgpu::BindGroup,
+    data_buffer: wgpu::Buffer,
 }
 
 #[derive(Debug, Resource)]
@@ -120,16 +122,28 @@ fn create_pipeline_layout(
         wgpu.device
             .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("skybox"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::Cube,
-                        multisampled: false,
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::Cube,
+                            multisampled: false,
+                        },
+                        count: None,
                     },
-                    count: None,
-                }],
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::VERTEX,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
             });
 
     let layout = wgpu
@@ -209,11 +223,23 @@ fn create_pipeline(
     }
 }
 
-fn render_skybox(
-    cameras: Populated<(&RenderTarget, &Skybox)>,
-    mut frames: Populated<(&mut Frame, &Pipeline)>,
+fn update_skybox(
+    skyboxes: Populated<(&SkyboxBindGroup, &GlobalTransform), Changed<GlobalTransform>>,
+    mut staging: ResMut<Staging>,
 ) {
-    for (render_target, skybox) in cameras {
+    for (bind_group, transform) in skyboxes {
+        let data = SkyboxData::new(transform);
+        staging
+            .write_buffer_from_slice(bind_group.data_buffer.slice(..), bytemuck::bytes_of(&data));
+    }
+}
+
+fn render_skybox(
+    cameras: Populated<&RenderTarget>,
+    mut frames: Populated<(&mut Frame, &Pipeline)>,
+    skybox: Single<&SkyboxBindGroup>,
+) {
+    for render_target in cameras {
         if let Ok((mut frame, pipeline)) = frames.get_mut(render_target.0) {
             let frame = frame.active_mut();
             let span = frame.enter_span("skybox");
@@ -230,21 +256,21 @@ fn render_skybox(
 }
 
 fn load_skybox(
-    mut load_messages: MessageReader<LoadSkybox>,
     wgpu: Res<WgpuContext>,
     layout: Res<PipelineLayout>,
+    skyboxes: Populated<(Entity, &Skybox, Option<&GlobalTransform>), Without<SkyboxBindGroup>>,
     mut commands: Commands,
 ) {
     const FACES: [&str; 6] = ["right", "left", "top", "bottom", "front", "back"];
 
-    for message in load_messages.read() {
-        tracing::debug!(?message, "Loading skybox");
+    for (entity, skybox, transform) in skyboxes {
+        tracing::debug!(?entity, path = %skybox.path.display(), "Loading skybox");
 
         let mut data = vec![];
         let mut size = Vector2::zeros();
 
         for (i, face) in FACES.into_iter().enumerate() {
-            let path = message.path.join(format!("{face}.png"));
+            let path = skybox.path.join(format!("{face}.png"));
             let image = RgbaImage::from_path(path).unwrap();
 
             if i == 0 {
@@ -285,17 +311,57 @@ fn load_skybox(
             ..wgpu::TextureViewDescriptor::default()
         });
 
+        let data_buffer = {
+            let data = transform.map_or_else(SkyboxData::default, SkyboxData::new);
+
+            wgpu.device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("skybox"),
+                    contents: bytemuck::bytes_of(&data),
+                    usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::UNIFORM,
+                })
+        };
+
         let bind_group = wgpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("skybox"),
             layout: &layout.bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&texture_view),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&texture_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: data_buffer.as_entire_binding(),
+                },
+            ],
         });
 
-        commands
-            .entity(message.entity)
-            .insert(Skybox { bind_group });
+        commands.entity(entity).insert(SkyboxBindGroup {
+            bind_group,
+            data_buffer,
+        });
+    }
+}
+
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+#[repr(C)]
+struct SkyboxData {
+    transform: Matrix4<f32>,
+}
+
+impl SkyboxData {
+    fn new(transform: &GlobalTransform) -> Self {
+        Self {
+            transform: transform.isometry().to_homogeneous(),
+        }
+    }
+}
+
+impl Default for SkyboxData {
+    fn default() -> Self {
+        Self {
+            transform: Matrix4::identity(),
+        }
     }
 }

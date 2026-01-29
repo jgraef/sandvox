@@ -12,7 +12,6 @@ use std::{
 
 use bevy_ecs::{
     component::Component,
-    message::MessageWriter,
     name::Name,
     query::{
         Changed,
@@ -96,7 +95,7 @@ use crate::{
             RenderWireframes,
         },
         skybox::{
-            LoadSkybox,
+            Skybox,
             SkyboxPlugin,
         },
         staging::Staging,
@@ -291,7 +290,6 @@ fn init_player(
     sprites: Res<Sprites>,
     mut fps_counter_config: ResMut<FpsCounterConfig>,
     mut commands: Commands,
-    mut load_skybox: MessageWriter<LoadSkybox>,
 ) {
     tracing::debug!("initializing world");
 
@@ -310,33 +308,30 @@ fn init_player(
         .id();
 
     // spawn camera
-    let camera = commands
-        .spawn((
-            Name::new("main_camera"),
-            RenderTarget(window),
-            Camera {
-                aspect_ratio: 1.0,
-                fovy: 60.0f32.to_radians(),
-                z_near: 0.1,
-                z_far: config.chunk_render_distance as f32 * CHUNK_SIZE as f32,
+    commands.spawn((
+        Name::new("main_camera"),
+        RenderTarget(window),
+        Camera {
+            aspect_ratio: 1.0,
+            fovy: 60.0f32.to_radians(),
+            z_near: 0.1,
+            z_far: config.chunk_render_distance as f32 * CHUNK_SIZE as f32,
+        },
+        LocalTransform::from(chunk_center + chunk_side_length * Vector3::y()),
+        CameraController {
+            state: CameraControllerState {
+                yaw: 0.0,
+                pitch: -FRAC_PI_4,
             },
-            LocalTransform::from(chunk_center + chunk_side_length * Vector3::y()),
-            CameraController {
-                state: CameraControllerState {
-                    yaw: 0.0,
-                    pitch: -FRAC_PI_4,
-                },
-                config: config.camera_controller.clone(),
-            },
-            ChunkLoader {
-                radius: Vector3::repeat(config.chunk_load_distance),
-            },
-        ))
-        .id();
+            config: config.camera_controller.clone(),
+        },
+        ChunkLoader {
+            radius: Vector3::repeat(config.chunk_load_distance),
+        },
+    ));
 
-    load_skybox.write(LoadSkybox {
-        path: PathBuf::from("assets/skybox"),
-        entity: camera,
+    commands.spawn(Skybox {
+        path: "assets/skybox".into(),
     });
 
     // create cursor
