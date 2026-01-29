@@ -27,13 +27,10 @@ enum Command {
         #[clap(short, long)]
         output: PathBuf,
 
-        #[clap(short, long)]
-        layers: Vec<PathBuf>,
-
         #[clap(short, long, default_value = "1024")]
         size: u32,
 
-        stars: PathBuf,
+        layers: Vec<PathBuf>,
     },
 }
 
@@ -50,11 +47,11 @@ fn main() -> Result<(), Error> {
         }
         Command::MakeSkybox {
             output,
-            layers,
             size,
-            stars,
+
+            layers,
         } => {
-            skybox::make_skybox(stars, layers, size, output)?;
+            skybox::make_skybox(layers, size, output)?;
         }
     }
 

@@ -12,11 +12,11 @@ use color_eyre::eyre::{
 };
 use image::{
     GenericImageView,
+    ImageFormat,
     ImageReader,
     Pixel,
     Rgb,
     RgbImage,
-    Rgba,
     imageops::sample_bilinear,
 };
 use nalgebra::{
@@ -30,7 +30,6 @@ use rayon::iter::{
 };
 
 pub fn make_skybox(
-    stars: impl AsRef<Path>,
     layers: impl IntoIterator<Item = impl AsRef<Path>>,
     size: u32,
     output: impl AsRef<Path>,
@@ -50,19 +49,20 @@ pub fn make_skybox(
     // the exr file we use would be a ImageRgb32F
     // for now we'll convert it to rgb8 (don't know how to properly convert after
     // sampling)
-    tracing::debug!(path = ?stars.as_ref(), "Loading stars");
-    let stars = ImageReader::open(stars)?.decode()?.to_rgb8();
-
     let layers = layers
         .into_iter()
         .map(|layer| {
             tracing::debug!(path = ?layer.as_ref(), "Loading layer");
             // the layers are ImageLuma8
-            Ok(ImageReader::open(layer)?.decode()?.to_luma8())
+            Ok(ImageReader::open(layer)?.decode()?)
         })
         .collect::<Result<Vec<_>, Error>>()?;
 
-    let overlay_color: Rgb<u8> = Rgb([255, 255, 255]);
+    if layers.is_empty() {
+        bail!("No layers provided");
+    }
+
+    //let overlay_color: Rgb<u8> = Rgb([255, 255, 255]);
 
     let uv_scale = 1.0 / (size - 1) as f32;
     let mut face_images: [_; 6] = std::array::from_fn(|_| RgbImage::new(size, size));
@@ -77,27 +77,37 @@ pub fn make_skybox(
                     let target_uv = Vector2::new(x, y).cast::<f32>() * uv_scale;
                     let source_uv = map_uv(target_uv, face);
 
-                    let mut pixel = sample(&stars, source_uv).to_rgba();
+                    let mut pixel: Rgb<u8> = Rgb(Default::default());
+                    //let mut pixel = sample(&stars, source_uv).to_rgba();
 
                     for layer in &layers {
-                        pixel.blend(&Rgba([
-                            overlay_color[0],
-                            overlay_color[1],
-                            overlay_color[2],
-                            sample(layer, source_uv).0[0],
-                        ]));
+                        let layer_pixel = sample(layer, source_uv).to_rgb();
+                        for c in 0..3 {
+                            pixel.0[c] = pixel.0[c].saturating_add(layer_pixel.0[c]);
+                        }
                     }
 
                     *target_pixel = pixel.to_rgb();
                 });
         });
 
-    const FILENAMES: [&str; 6] = ["px.png", "nx.png", "py.png", "ny.png", "pz.png", "nz.png"];
+    const FILENAMES: [&str; 6] = ["px", "nx", "py", "ny", "pz", "nz"];
 
     for i in 0..6 {
-        let path = output.join(FILENAMES[i]);
+        let path = output.join(format!("{}.png", FILENAMES[i]));
+
         tracing::debug!(?path, "Saving image");
-        face_images[i].save(&path)?;
+
+        // we did add a cli flag to control the format, but only webp was slightly
+        // better. then we tried using png with better compression, it was not worth it:
+        //
+        // 2.1M test/png
+        // 1.8M test/png_best
+        // 4.6M test/tif
+        // 1.5M test/webp
+        //
+        // let's just use default PNG for now
+        face_images[i].save_with_format(&path, ImageFormat::Png)?;
     }
 
     Ok(())
