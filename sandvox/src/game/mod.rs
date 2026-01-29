@@ -344,7 +344,7 @@ fn init_player(
 
     commands.spawn((
         Skybox {
-            path: "assets/skybox/test_skybox".into(),
+            path: "assets/skybox".into(),
         },
         LocalTransform::identity(),
     ));
