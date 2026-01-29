@@ -334,7 +334,7 @@ fn init_player(
         CameraController {
             state: CameraControllerState {
                 yaw: 0.0,
-                pitch: FRAC_PI_4,
+                pitch: 0.0,
             },
             config: config.camera_controller.clone(),
         },
@@ -446,6 +446,7 @@ fn update_debug_overlay(
     time: Res<Time>,
     render_mesh: Res<RenderMeshStatistics>,
     mut debug_overlay: Single<&mut Text, With<DebugOverlay>>,
+    player: Option<Single<&GlobalTransform, With<Player>>>,
 ) {
     debug_overlay.text.clear();
 
@@ -496,6 +497,17 @@ fn update_debug_overlay(
         render_mesh.num_rendered, render_mesh.num_vertices, render_mesh.num_culled,
     )
     .unwrap();
+
+    if let Some(transform) = player {
+        let position = transform.position();
+        let look_dir = transform.isometry() * Vector3::z();
+        writeln!(
+            &mut debug_overlay.text,
+            "POS: {:.1}, {:.1}, {:.1}; LOOK: {:.1}, {:.1}, {:.1}",
+            position.x, position.y, position.z, look_dir.x, look_dir.y, look_dir.z,
+        )
+        .unwrap();
+    }
 }
 
 fn handle_keys(
@@ -534,18 +546,23 @@ fn rotate_skybox(
     time: Res<Time>,
 ) {
     const WORLD_ORIGIN: GeoCoords<f64> = GeoCoords {
-        latitude: 52.5169,
-        longitude: 13.3938,
+        // berlin
+        //latitude: 52.5169,
+        //longitude: 13.3938,
+        latitude: 51.37820f64.to_radians(),
+        longitude: 10.13740f64.to_radians(),
     };
 
     const DAY_LENGTH: f32 = 60.0;
     const TIME_WARP: f32 = 24.0 * 60.0 * 60.0 / DAY_LENGTH;
 
-    let observer = player.position();
-    let observer = world_to_geo(observer, WORLD_ORIGIN);
+    //let observer = player.position();
+    //let observer = world_to_geo(observer, WORLD_ORIGIN);
+    let observer = WORLD_ORIGIN;
+
     //let time = time.app_start_utc + Duration::from_secs_f32(TIME_WARP *
     // time.tick_start_seconds());
     let time = Utc::now();
 
-    //skybox.isometry.rotation = sky_orientation(observer, time);
+    skybox.isometry.rotation = sky_orientation(observer, time);
 }

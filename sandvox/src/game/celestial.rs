@@ -1,5 +1,3 @@
-use std::f64::consts::FRAC_PI_2;
-
 use chrono::{
     DateTime,
     Datelike,
@@ -17,6 +15,7 @@ use serde::{
     Serialize,
 };
 
+/// Geographic longitude and latitude (in radians)
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub struct GeoCoords<T> {
     pub longitude: T,
@@ -60,14 +59,9 @@ pub fn sky_orientation(observer: GeoCoords<f64>, time: DateTime<Utc>) -> UnitQua
     let hour_angle =
         astro::coords::hr_angl_frm_observer_long(mean_sidereal, observer.longitude, 0.0);
 
-    // horizontal
-    let altitude = astro::coords::alt_frm_eq(hour_angle, FRAC_PI_2, observer.latitude);
-    let azimuth = astro::coords::az_frm_eq(hour_angle, FRAC_PI_2, observer.latitude);
-
-    let north = Vector3::new(azimuth.sin(), altitude.sin(), azimuth.cos());
-    let north = UnitVector3::new_normalize(north);
-
-    UnitQuaternion::from_axis_angle(&north, hour_angle).cast()
+    (UnitQuaternion::from_axis_angle(&Vector3::y_axis(), -hour_angle)
+        * UnitQuaternion::from_axis_angle(&Vector3::x_axis(), -observer.latitude))
+    .cast()
 }
 
 /// Calculates longitude and latitude from a world position
@@ -85,12 +79,13 @@ pub fn world_to_geo(world: Point3<f32>, origin: GeoCoords<f64>) -> GeoCoords<f64
     }
 }
 
+#[inline]
 fn utc_to_jd(time: DateTime<Utc>) -> f64 {
     astro::time::julian_day(&utc_to_astro_date(time))
 }
 
 fn utc_to_astro_date(time: DateTime<Utc>) -> astro::time::Date {
-    let time = time.naive_utc();
+    let time = time.naive_local();
     let start_of_day = time.date();
     let start_of_next_day = start_of_day.succ_opt().unwrap();
     let seconds_in_this_day = (start_of_next_day - start_of_day).as_seconds_f64();
