@@ -1,13 +1,11 @@
 pub mod block_type;
 pub mod camera_controller;
+pub mod celestial;
 pub mod file;
 pub mod terrain;
 
 use std::{
-    f32::consts::{
-        FRAC_PI_4,
-        TAU,
-    },
+    f32::consts::FRAC_PI_4,
     fmt::Write,
     path::PathBuf,
     time::Duration,
@@ -40,7 +38,6 @@ use bevy_ecs::{
 use color_eyre::eyre::Error;
 use nalgebra::{
     Point3,
-    UnitQuaternion,
     Vector3,
 };
 use palette::WithAlpha;
@@ -63,7 +60,10 @@ use crate::{
             WorldBuilder,
         },
         schedule,
-        transform::LocalTransform,
+        transform::{
+            GlobalTransform,
+            LocalTransform,
+        },
     },
     game::{
         block_type::BlockTypes,
@@ -72,6 +72,11 @@ use crate::{
             CameraControllerConfig,
             CameraControllerPlugin,
             CameraControllerState,
+        },
+        celestial::{
+            GeoCoords,
+            sky_orientation,
+            world_to_geo,
         },
         file::WorldFile,
         terrain::{
@@ -333,6 +338,7 @@ fn init_player(
         ChunkLoader {
             radius: Vector3::repeat(config.chunk_load_distance),
         },
+        Player,
     ));
 
     commands.spawn((
@@ -516,12 +522,25 @@ fn handle_keys(
     }
 }
 
-fn rotate_skybox(mut skybox: Single<&mut LocalTransform, With<Skybox>>, time: Res<Time>) {
-    let day_length = 60.0;
-    let rotation_axis = Vector3::y_axis();
+#[derive(Clone, Copy, Debug, Default, Component)]
+struct Player;
 
-    skybox.isometry.rotation = UnitQuaternion::from_axis_angle(
-        &rotation_axis,
-        time.tick_start_seconds() / day_length * TAU,
-    );
+fn rotate_skybox(
+    mut skybox: Single<&mut LocalTransform, With<Skybox>>,
+    player: Single<&GlobalTransform, With<Player>>,
+    time: Res<Time>,
+) {
+    const WORLD_ORIGIN: GeoCoords<f64> = GeoCoords {
+        latitude: 52.5169,
+        longitude: 13.3938,
+    };
+
+    const DAY_LENGTH: f32 = 60.0;
+    const TIME_WARP: f32 = 24.0 * 60.0 * 60.0 / DAY_LENGTH;
+
+    let observer = player.position();
+    let observer = world_to_geo(observer, WORLD_ORIGIN);
+    let time = time.app_start_utc + Duration::from_secs_f32(TIME_WARP * time.tick_start_seconds());
+
+    skybox.isometry.rotation = sky_orientation(observer, time);
 }

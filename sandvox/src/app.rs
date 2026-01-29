@@ -38,6 +38,10 @@ use bevy_ecs::{
         World,
     },
 };
+use chrono::{
+    DateTime,
+    Utc,
+};
 use clap::Parser;
 use color_eyre::{
     Section,
@@ -148,8 +152,10 @@ impl App {
             })?
             .insert_resource({
                 let now = Instant::now();
+                let now_utc = Utc::now();
                 Time {
                     app_start: now,
+                    app_start_utc: now_utc,
                     tick_start: now,
                     tick_delta: Duration::ZERO,
                     tick_count: 0,
@@ -767,6 +773,7 @@ fn ungrab_cursor(world: DeferredWorld, context: HookContext) {
 #[derive(Clone, Copy, Debug, Resource)]
 pub struct Time {
     pub app_start: Instant,
+    pub app_start_utc: DateTime<Utc>,
     pub tick_start: Instant,
     pub tick_delta: Duration,
     pub tick_count: u64,
