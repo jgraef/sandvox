@@ -147,6 +147,16 @@ pub struct RenderConfig {
 
     #[serde(default = "default_font")]
     pub default_font: PathBuf,
+
+    /// FOV in degrees
+    ///
+    /// # TODO
+    ///
+    /// We think this doesn't really belong in the renderer config. We wanted to
+    /// put it into [`GraphicsConfig`][crate::config::GraphicsConfig] first, but
+    /// moved it here, because we then have convenient access to it.
+    #[serde(default = "default_fov")]
+    pub fov: f32,
 }
 
 impl Default for RenderConfig {
@@ -154,10 +164,15 @@ impl Default for RenderConfig {
         Self {
             vsync: true,
             default_font: default_font(),
+            fov: default_fov(),
         }
     }
 }
 
 fn default_font() -> PathBuf {
     "assets/cozette.bdf".into()
+}
+
+fn default_fov() -> f32 {
+    60.0
 }

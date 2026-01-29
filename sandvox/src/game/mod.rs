@@ -35,6 +35,7 @@ use bevy_ecs::{
         Single,
     },
 };
+use chrono::Utc;
 use color_eyre::eyre::Error;
 use nalgebra::{
     Point3,
@@ -87,6 +88,7 @@ use crate::{
     },
     input::Keys,
     render::{
+        RenderConfig,
         RenderSystems,
         atlas::{
             Padding,
@@ -297,6 +299,7 @@ fn create_terrain_generator(
 
 fn init_player(
     config: Res<GameConfig>,
+    render_config: Res<RenderConfig>,
     sprites: Res<Sprites>,
     mut fps_counter_config: ResMut<FpsCounterConfig>,
     mut commands: Commands,
@@ -323,7 +326,7 @@ fn init_player(
         RenderTarget(window),
         Camera {
             aspect_ratio: 1.0,
-            fovy: 60.0f32.to_radians(),
+            fovy: render_config.fov.to_radians(),
             z_near: 0.1,
             z_far: config.chunk_render_distance as f32 * CHUNK_SIZE as f32,
         },
@@ -331,7 +334,7 @@ fn init_player(
         CameraController {
             state: CameraControllerState {
                 yaw: 0.0,
-                pitch: -FRAC_PI_4,
+                pitch: FRAC_PI_4,
             },
             config: config.camera_controller.clone(),
         },
@@ -343,7 +346,7 @@ fn init_player(
 
     commands.spawn((
         Skybox {
-            path: "assets/skybox".into(),
+            path: "assets/skybox/test_skybox".into(),
         },
         LocalTransform::identity(),
     ));
@@ -540,7 +543,9 @@ fn rotate_skybox(
 
     let observer = player.position();
     let observer = world_to_geo(observer, WORLD_ORIGIN);
-    let time = time.app_start_utc + Duration::from_secs_f32(TIME_WARP * time.tick_start_seconds());
+    //let time = time.app_start_utc + Duration::from_secs_f32(TIME_WARP *
+    // time.tick_start_seconds());
+    let time = Utc::now();
 
-    skybox.isometry.rotation = sky_orientation(observer, time);
+    //skybox.isometry.rotation = sky_orientation(observer, time);
 }

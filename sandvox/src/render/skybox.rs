@@ -22,7 +22,10 @@ use bytemuck::{
     Pod,
     Zeroable,
 };
-use color_eyre::eyre::Error;
+use color_eyre::{
+    Section,
+    eyre::Error,
+};
 use image::RgbaImage;
 use nalgebra::{
     Matrix4,
@@ -261,7 +264,12 @@ fn load_skybox(
     skyboxes: Populated<(Entity, &Skybox, Option<&GlobalTransform>), Without<SkyboxBindGroup>>,
     mut commands: Commands,
 ) {
-    const FACES: [&str; 6] = ["right", "left", "top", "bottom", "front", "back"];
+    // note: generate cube map from cylindrical: https://jaxry.github.io/panorama-to-cubemap/
+
+    // layout: https://gpuweb.github.io/gpuweb/#texture-view-creation
+
+    //const FACES: [&str; 6] = ["right", "left", "top", "bottom", "front", "back"];
+    const FACES: [&str; 6] = ["px", "nx", "py", "ny", "pz", "nz"];
 
     for (entity, skybox, transform) in skyboxes {
         tracing::debug!(?entity, path = %skybox.path.display(), "Loading skybox");
@@ -271,7 +279,9 @@ fn load_skybox(
 
         for (i, face) in FACES.into_iter().enumerate() {
             let path = skybox.path.join(format!("{face}.png"));
-            let image = RgbaImage::from_path(path).unwrap();
+            let image = RgbaImage::from_path(&path)
+                .with_note(|| path.display().to_string())
+                .unwrap();
 
             if i == 0 {
                 size = image.size();

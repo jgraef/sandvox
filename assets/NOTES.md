@@ -7,6 +7,7 @@
 - [Music][4]
 - [Font][5]
 - [Skybox][6]
+- [Night Sky][7]
 
 [1]: https://content.luanti.org/packages/Mirtilo/baunilha/
 [2]: https://flatus.itch.io/generic-dark-pixel-ui
@@ -14,3 +15,4 @@
 [4]: https://pizzadoggy.itch.io/cozy-tunes
 [5]: https://github.com/the-moonwitch/Cozette
 [6]: https://abhishta.itch.io/voidpix-skybox-pack
+[7]: https://svs.gsfc.nasa.gov/4851
