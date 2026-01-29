@@ -4,7 +4,10 @@ pub mod file;
 pub mod terrain;
 
 use std::{
-    f32::consts::FRAC_PI_4,
+    f32::consts::{
+        FRAC_PI_4,
+        TAU,
+    },
     fmt::Write,
     path::PathBuf,
     time::Duration,
@@ -37,6 +40,7 @@ use bevy_ecs::{
 use color_eyre::eyre::Error;
 use nalgebra::{
     Point3,
+    UnitQuaternion,
     Vector3,
 };
 use palette::WithAlpha;
@@ -241,8 +245,9 @@ impl Plugin for GamePlugin {
                     init_player.after(RenderSystems::Setup),
                 ),
             )
+            .add_systems(schedule::Update, rotate_skybox)
             .add_systems(
-                schedule::Update,
+                schedule::Render,
                 (
                     update_debug_overlay.run_if(
                         resource_changed::<FpsCounter>.and(any_with_component::<DebugOverlay>),
@@ -330,9 +335,12 @@ fn init_player(
         },
     ));
 
-    commands.spawn(Skybox {
-        path: "assets/skybox".into(),
-    });
+    commands.spawn((
+        Skybox {
+            path: "assets/skybox".into(),
+        },
+        LocalTransform::identity(),
+    ));
 
     // create cursor
     // todo
@@ -506,4 +514,14 @@ fn handle_keys(
             }
         }
     }
+}
+
+fn rotate_skybox(mut skybox: Single<&mut LocalTransform, With<Skybox>>, time: Res<Time>) {
+    let day_length = 60.0;
+    let rotation_axis = Vector3::y_axis();
+
+    skybox.isometry.rotation = UnitQuaternion::from_axis_angle(
+        &rotation_axis,
+        time.tick_start_seconds() / day_length * TAU,
+    );
 }

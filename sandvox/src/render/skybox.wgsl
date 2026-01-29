@@ -1,10 +1,3 @@
-struct VertexOutput {
-    @builtin(position)
-    position: vec4f,
-
-    @location(2)
-    uv: vec3f,
-}
 
 struct FrameUniform {
     viewport_size: vec2u,
@@ -33,9 +26,17 @@ var default_sampler: sampler;
 @binding(0)
 var skybox_texture: texture_cube<f32>;
 
+struct SkyboxData {
+    transform: mat4x4f,
+}
+
+@group(1)
+@binding(1)
+var<uniform> skybox_data: SkyboxData;
+
 
 @vertex
-fn skybox_vertex(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
+fn skybox_vertex(@builtin(vertex_index) vertex_index: u32) -> SkyboxOutput {
     // screen filling triangle
     let position = vec4f(
         f32((vertex_index & 1) << 2) - 1,
@@ -45,16 +46,25 @@ fn skybox_vertex(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
     );
 
     var unprojected = frame_uniform.camera.projection_inverse * position;
-    var uv = frame_uniform.camera.view_inverse * vec4f(unprojected.xyz, 0);
+    var view_vector = frame_uniform.camera.view_inverse * vec4f(unprojected.xyz, 0);
+    var texture_position = skybox_data.transform * view_vector;
 
-    return VertexOutput(
+    return SkyboxOutput(
         position,
-        uv.xyz,
+        texture_position.xyz,
     );
 }
 
+struct SkyboxOutput {
+    @builtin(position)
+    position: vec4f,
+
+    @location(2)
+    texture_position: vec3f,
+}
+
 @fragment
-fn skybox_fragment(input: VertexOutput) -> @location(0) vec4f {
-    let color = textureSample(skybox_texture, default_sampler, input.uv);
+fn skybox_fragment(input: SkyboxOutput) -> @location(0) vec4f {
+    let color = textureSample(skybox_texture, default_sampler, input.texture_position);
     return color;
 }
