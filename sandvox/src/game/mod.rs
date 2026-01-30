@@ -28,13 +28,20 @@ use bevy_ecs::{
     },
     system::{
         Commands,
+        ParamSet,
         Populated,
+        Query,
         Res,
         ResMut,
         Single,
     },
 };
+use chrono::{
+    DateTime,
+    Utc,
+};
 use color_eyre::eyre::Error;
+use image::RgbaImage;
 use nalgebra::{
     Point3,
     Vector3,
@@ -73,8 +80,8 @@ use crate::{
             CameraControllerState,
         },
         celestial::{
+            CelestialFrame,
             GeoCoords,
-            sky_orientation,
             world_to_geo,
         },
         file::WorldFile,
@@ -104,6 +111,7 @@ use crate::{
             RenderWireframes,
         },
         skybox::{
+            Planet,
             Skybox,
             SkyboxPlugin,
         },
@@ -126,6 +134,7 @@ use crate::{
     },
     util::{
         format_size,
+        image::ImageLoadExt,
         stats_alloc::bytes_allocated,
     },
     voxel::{
@@ -226,6 +235,10 @@ impl Plugin for GamePlugin {
 
         builder
             .insert_resource(self.game_config.clone())
+            .insert_resource({
+                // for debugging
+                AstroTime(Utc::now())
+            })
             .add_plugin(CameraControllerPlugin)?
             .add_plugin(ChunkMeshPlugin::<
                 TerrainVoxel,
@@ -245,12 +258,12 @@ impl Plugin for GamePlugin {
             .add_systems(
                 schedule::Startup,
                 (
-                    load_block_types.in_set(RenderSystems::Setup),
+                    (load_block_types, create_skybox).in_set(RenderSystems::Setup),
                     create_terrain_generator.after(load_block_types),
                     init_player.after(RenderSystems::Setup),
                 ),
             )
-            .add_systems(schedule::Update, rotate_skybox)
+            .add_systems(schedule::Update, update_sky)
             .add_systems(
                 schedule::Render,
                 (
@@ -284,6 +297,65 @@ fn load_block_types(
     })
     .unwrap();
     commands.insert_resource(block_types);
+}
+
+fn create_skybox(
+    wgpu: Res<WgpuContext>,
+    mut atlas: ResMut<DefaultAtlas>,
+    mut staging: ResMut<Staging>,
+    mut commands: Commands,
+) {
+    let skybox = Skybox::load(&wgpu, "assets/skybox").unwrap();
+
+    let mut make_planet = |id, path, size| {
+        // with a realistic planet size the sun and moon would only be a few pixels in
+        // diameter. e.g. with a fov of 60°, an angular diameter of 0.5° and a
+        // screen size of 1024 pixels, the planet would only be 8.5 pixels.
+        //
+        // thus we just make it larger
+        let size = size * 4.0;
+
+        let image = RgbaImage::from_path(path).unwrap();
+
+        let atlas_handle = atlas
+            .insert_image(&image, None, &wgpu.device, &mut staging)
+            .unwrap();
+
+        tracing::debug!(?path, ?atlas_handle, "loaded texture");
+
+        (
+            Name::new(format!("{id:?}")),
+            Planet {
+                texture: atlas_handle,
+                size,
+            },
+            GlobalTransform::identity(),
+            id,
+        )
+    };
+
+    commands
+        .spawn((skybox, GlobalTransform::identity()))
+        .with_children(|spawner| {
+            spawner.spawn(make_planet(
+                PlanetId::Sun,
+                "assets/skybox/sun.png",
+                // average angular size
+                0.536f32.to_radians(),
+            ));
+            spawner.spawn(make_planet(
+                PlanetId::Moon,
+                "assets/skybox/moon.png",
+                // average angular size
+                0.528f32.to_radians(),
+            ));
+        });
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Component)]
+enum PlanetId {
+    Sun,
+    Moon,
 }
 
 fn create_terrain_generator(
@@ -341,16 +413,6 @@ fn init_player(
         },
         Player,
     ));
-
-    commands.spawn((
-        Skybox {
-            path: "assets/skybox".into(),
-        },
-        LocalTransform::identity(),
-    ));
-
-    // create cursor
-    // todo
 
     // create debug ui
     fps_counter_config.measurement_inverval = Duration::from_millis(100);
@@ -452,15 +514,17 @@ fn update_debug_overlay(
     render_mesh: Res<RenderMeshStatistics>,
     mut debug_overlay: Single<&mut Text, With<DebugOverlay>>,
     player: Option<Single<&GlobalTransform, With<Player>>>,
+    astro_time: Res<AstroTime>,
 ) {
     debug_overlay.text.clear();
 
     writeln!(
         &mut debug_overlay.text,
-        "TIME: N={}, T={:.1}s, DT={:.1}ms",
+        "TIME: N={}, T={:.1}s, DT={:.1}ms, W={}",
         time.tick_count,
         time.tick_start_seconds(),
-        time.delta_seconds() * 1000.0
+        time.delta_seconds() * 1000.0,
+        astro_time.0.format("%Y-%m-%d %H:%M"),
     )
     .unwrap();
 
@@ -505,7 +569,7 @@ fn update_debug_overlay(
 
     if let Some(transform) = player {
         let position = transform.position();
-        let look_dir = transform.isometry() * Vector3::z();
+        let look_dir = transform.isometry * Vector3::z();
         writeln!(
             &mut debug_overlay.text,
             "POS: {:.1}, {:.1}, {:.1}; LOOK: {:.1}, {:.1}, {:.1}",
@@ -545,10 +609,14 @@ fn handle_keys(
 #[derive(Clone, Copy, Debug, Default, Component)]
 struct Player;
 
-fn rotate_skybox(
-    mut skybox: Single<&mut LocalTransform, With<Skybox>>,
-    player: Single<&GlobalTransform, With<Player>>,
+fn update_sky(
+    mut params: ParamSet<(
+        Single<&GlobalTransform, With<Player>>,
+        Single<&mut GlobalTransform, With<Skybox>>,
+        Query<(&mut GlobalTransform, &PlanetId)>,
+    )>,
     time: Res<Time>,
+    mut astro_time: ResMut<AstroTime>,
 ) {
     const WORLD_ORIGIN: GeoCoords<f64> = GeoCoords {
         // what's here?
@@ -559,10 +627,22 @@ fn rotate_skybox(
     const DAY_LENGTH: f32 = 600.0;
     const TIME_WARP: f32 = 24.0 * 60.0 * 60.0 / DAY_LENGTH;
 
-    let observer = player.position();
-    let observer = world_to_geo(observer, WORLD_ORIGIN);
-
+    let observer = world_to_geo(params.p0().position(), WORLD_ORIGIN);
     let time = time.app_start_utc + Duration::from_secs_f32(TIME_WARP * time.tick_start_seconds());
+    //let time = Utc::now();
+    let frame = CelestialFrame::new(observer, time);
 
-    skybox.isometry.rotation = sky_orientation(observer, time);
+    params.p1().isometry.rotation = frame.sky();
+
+    for (mut planet_transform, planet_id) in params.p2() {
+        planet_transform.isometry.rotation = match planet_id {
+            PlanetId::Sun => frame.sun(),
+            PlanetId::Moon => frame.moon(),
+        };
+    }
+
+    astro_time.0 = time;
 }
+
+#[derive(Debug, Resource)]
+struct AstroTime(DateTime<Utc>);

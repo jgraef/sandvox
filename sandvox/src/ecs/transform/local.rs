@@ -37,16 +37,6 @@ impl LocalTransform {
     }
 
     #[inline]
-    pub fn new(
-        translation: impl Into<Translation3<f32>>,
-        rotation: impl Into<UnitQuaternion<f32>>,
-    ) -> Self {
-        Self {
-            isometry: Isometry3::from_parts(translation.into(), rotation.into()),
-        }
-    }
-
-    #[inline]
     pub fn translate_local(&mut self, translation: &Translation3<f32>) {
         self.isometry.translation.vector +=
             self.isometry.rotation.transform_vector(&translation.vector);

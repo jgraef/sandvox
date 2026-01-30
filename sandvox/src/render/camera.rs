@@ -234,8 +234,8 @@ fn update_camera_matrices(
             frame_uniform.data.camera = CameraData {
                 projection: projection.to_matrix(),
                 projection_inverse: projection.to_inverse(),
-                view: transform.isometry().inverse().to_homogeneous(),
-                view_inverse: transform.isometry().to_homogeneous(),
+                view: transform.isometry.inverse().to_homogeneous(),
+                view_inverse: transform.isometry.to_homogeneous(),
                 position: transform.position().to_homogeneous(),
             };
         }

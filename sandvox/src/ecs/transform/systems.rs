@@ -45,7 +45,7 @@ pub(super) fn sync_simple_transforms(
         .p0()
         .par_iter_mut()
         .for_each(|(local_transform, mut global_transform)| {
-            *global_transform = GlobalTransform::from_local(*local_transform);
+            *global_transform = GlobalTransform::from(*local_transform);
         });
 
     {
@@ -54,7 +54,7 @@ pub(super) fn sync_simple_transforms(
         let mut iter = query.iter_many_mut(orphaned.read());
         while let Some((local_transform, mut global_transform)) = iter.fetch_next() {
             if !local_transform.is_changed() && !global_transform.is_added() {
-                *global_transform = GlobalTransform::from_local(*local_transform);
+                *global_transform = GlobalTransform::from(*local_transform);
             }
         }
     }
@@ -64,7 +64,7 @@ pub(super) fn sync_simple_transforms(
     query.p2().iter().for_each(|(entity, local_transform)| {
         let mut entity = commands.entity(entity);
         entity.insert((
-            GlobalTransform::from_local(*local_transform),
+            GlobalTransform::from(*local_transform),
             TransformTreeChanged,
         ));
     })
@@ -163,7 +163,7 @@ mod parallel {
         roots.par_iter_mut().for_each_init(
             || queue.local_queue.borrow_local_mut(),
             |outbox, (parent, local_transform, mut parent_transform, children)| {
-                *parent_transform = GlobalTransform::from_local(*local_transform);
+                *parent_transform = GlobalTransform::from(*local_transform);
 
                 // SAFETY: the parent entities passed into this function are taken from
                 // iterating over the root entity query. Queries iterate over
@@ -484,7 +484,7 @@ mod test {
     }
 
     fn global_transform_from_xyz(x: f32, y: f32, z: f32) -> GlobalTransform {
-        GlobalTransform::from_local(local_transform_from_xyz(x, y, z))
+        GlobalTransform::from(local_transform_from_xyz(x, y, z))
     }
 
     #[test]
@@ -492,7 +492,7 @@ mod test {
         ComputeTaskPool::get_or_init(TaskPool::default);
         let mut world = World::default();
         let offset_global_transform =
-            |offset| GlobalTransform::from_local(local_transform_from_xyz(offset, offset, offset));
+            |offset| GlobalTransform::from(local_transform_from_xyz(offset, offset, offset));
         let offset_transform = |offset| local_transform_from_xyz(offset, offset, offset);
 
         let mut schedule = Schedule::default();

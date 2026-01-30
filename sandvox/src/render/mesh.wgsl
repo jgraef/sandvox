@@ -164,7 +164,7 @@ fn mesh_wireframe_vertex(
     let instance = instance_buffer[instance_index];
 
     let world_position = instance.model_matrix * vertex.position;
-    let position =  frame_uniform.camera.projection * frame_uniform.camera.view * world_position;
+    let position = frame_uniform.camera.projection * frame_uniform.camera.view * world_position;
 
     return WireframeOutput(
         position,

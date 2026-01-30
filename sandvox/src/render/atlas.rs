@@ -261,9 +261,7 @@ impl Atlas {
 
         let (allocation_id, view_id) = self.allocate(
             texture_size,
-            padding_mode
-                .map(|padding_mode| padding_mode.padding)
-                .unwrap_or_default(),
+            padding_mode.map_or(Padding::uniform(1), |padding_mode| padding_mode.padding),
             Some(change_index),
         )?;
 
@@ -676,7 +674,7 @@ pub struct Padding {
 
 impl Padding {
     #[inline]
-    pub fn uniform(padding: u32) -> Self {
+    pub const fn uniform(padding: u32) -> Self {
         Self {
             left: padding,
             right: padding,

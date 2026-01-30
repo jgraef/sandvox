@@ -456,7 +456,7 @@ fn update_instance_buffer(
         let id = instance_data.len().try_into().unwrap();
 
         instance_data.push(Instance {
-            model_matrix: transform.isometry().to_homogeneous(),
+            model_matrix: transform.isometry.to_homogeneous(),
         });
 
         if let Some(mut instance_id) = instance_id {
@@ -512,7 +512,7 @@ fn render_meshes_with(
 
                 let camera_frustrum = Frustrum {
                     matrix: camera_projection.to_matrix()
-                        * camera_transform.isometry().inverse().to_homogeneous(),
+                        * camera_transform.isometry.inverse().to_homogeneous(),
                 };
 
                 for (mesh, instance_id, cull_aabb) in &meshes {

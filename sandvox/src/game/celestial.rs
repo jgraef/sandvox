@@ -1,3 +1,5 @@
+use std::f64::consts::PI;
+
 use chrono::{
     DateTime,
     Datelike,
@@ -7,7 +9,6 @@ use chrono::{
 use nalgebra::{
     Point3,
     UnitQuaternion,
-    UnitVector3,
     Vector3,
 };
 use serde::{
@@ -22,46 +23,66 @@ pub struct GeoCoords<T> {
     pub latitude: T,
 }
 
-pub fn sun_orientation(observer: GeoCoords<f64>, time: DateTime<Utc>) -> UnitQuaternion<f32> {
-    // time
-    let jd = utc_to_jd(time);
-    let mean_sidereal = astro::time::mn_sidr(jd);
-
-    // ecliptic coordinates
-    let (ecl_pos, _distance_au) = astro::sun::geocent_ecl_pos(jd);
-    let mn_oblq = astro::ecliptic::mn_oblq_IAU(jd);
-
-    // equatorial
-    let right_ascension = astro::coords::asc_frm_ecl(ecl_pos.long, ecl_pos.lat, mn_oblq);
-    let declination = astro::coords::dec_frm_ecl(ecl_pos.long, ecl_pos.lat, mn_oblq);
-    let hour_angle = astro::coords::hr_angl_frm_observer_long(
-        mean_sidereal,
-        observer.longitude,
-        right_ascension,
-    );
-
-    // horizontal
-    let altitude = astro::coords::alt_frm_eq(hour_angle, declination, observer.latitude);
-    let azimuth = astro::coords::az_frm_eq(hour_angle, declination, observer.latitude);
-
-    let sun_vector = Vector3::new(azimuth.sin(), altitude.sin(), azimuth.cos());
-    let sun_vector = UnitVector3::new_normalize(sun_vector);
-
-    UnitQuaternion::from_axis_angle(&sun_vector, hour_angle).cast()
+#[derive(Clone, Copy, Debug)]
+pub struct CelestialFrame {
+    jd: f64,
+    mean_obliqueness: f64,
+    hour_angle: f64,
+    observer_position: GeoCoords<f64>,
 }
 
-pub fn sky_orientation(observer: GeoCoords<f64>, time: DateTime<Utc>) -> UnitQuaternion<f32> {
-    // time
-    let jd = utc_to_jd(time);
-    let mean_sidereal = astro::time::mn_sidr(jd);
+impl CelestialFrame {
+    pub fn new(observer_position: GeoCoords<f64>, time: DateTime<Utc>) -> Self {
+        let jd = utc_to_jd(time);
+        let mean_sidereal = astro::time::mn_sidr(jd);
+        let mean_obliqueness = astro::ecliptic::mn_oblq_IAU(jd);
+        let hour_angle = mean_sidereal + observer_position.longitude;
 
-    // observer's hour angle
-    let hour_angle =
-        astro::coords::hr_angl_frm_observer_long(mean_sidereal, observer.longitude, 0.0);
+        Self {
+            jd,
+            mean_obliqueness,
+            hour_angle,
+            observer_position,
+        }
+    }
 
-    (UnitQuaternion::from_axis_angle(&Vector3::y_axis(), -hour_angle)
-        * UnitQuaternion::from_axis_angle(&Vector3::x_axis(), -observer.latitude))
-    .cast()
+    fn ecliptic_to_world_rotation(&self, ecl_pos: astro::coords::EclPoint) -> UnitQuaternion<f32> {
+        // equatorial
+        let right_ascension =
+            astro::coords::asc_frm_ecl(ecl_pos.long, ecl_pos.lat, self.mean_obliqueness);
+        let declination =
+            astro::coords::dec_frm_ecl(ecl_pos.long, ecl_pos.lat, self.mean_obliqueness);
+
+        let hour_angle = self.hour_angle - right_ascension;
+
+        // horizontal
+        let altitude =
+            astro::coords::alt_frm_eq(hour_angle, declination, self.observer_position.latitude);
+        let azimuth =
+            astro::coords::az_frm_eq(hour_angle, declination, self.observer_position.latitude);
+
+        // not sure why we need that + PI, but then the sun is where it is supposed to
+        // be :3
+        (UnitQuaternion::from_axis_angle(&Vector3::y_axis(), azimuth + PI)
+            * UnitQuaternion::from_axis_angle(&Vector3::x_axis(), -altitude))
+        .cast()
+    }
+
+    pub fn sky(&self) -> UnitQuaternion<f32> {
+        (UnitQuaternion::from_axis_angle(&Vector3::y_axis(), -self.hour_angle)
+            * UnitQuaternion::from_axis_angle(&Vector3::x_axis(), -self.observer_position.latitude))
+        .cast()
+    }
+
+    pub fn sun(&self) -> UnitQuaternion<f32> {
+        let (ecl_pos, _distance_au) = astro::sun::geocent_ecl_pos(self.jd);
+        self.ecliptic_to_world_rotation(ecl_pos)
+    }
+
+    pub fn moon(&self) -> UnitQuaternion<f32> {
+        let (ecl_pos, _distance_km) = astro::lunar::geocent_ecl_pos(self.jd);
+        self.ecliptic_to_world_rotation(ecl_pos)
+    }
 }
 
 /// Calculates longitude and latitude from a world position
@@ -85,7 +106,7 @@ fn utc_to_jd(time: DateTime<Utc>) -> f64 {
 }
 
 fn utc_to_astro_date(time: DateTime<Utc>) -> astro::time::Date {
-    let time = time.naive_local();
+    let time = time.naive_utc();
     let start_of_day = time.date();
     let start_of_next_day = start_of_day.succ_opt().unwrap();
     let seconds_in_this_day = (start_of_next_day - start_of_day).as_seconds_f64();

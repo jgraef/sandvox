@@ -18,36 +18,35 @@ use crate::ecs::transform::LocalTransform;
 #[reflect(Component)]
 pub struct GlobalTransform {
     #[reflect(ignore)]
-    isometry: Isometry3<f32>,
+    pub isometry: Isometry3<f32>,
 }
 
 impl GlobalTransform {
     #[inline]
-    pub(crate) fn from_local(local: LocalTransform) -> Self {
+    pub fn identity() -> Self {
         Self {
-            isometry: local.isometry,
+            isometry: Isometry3::identity(),
         }
     }
 
     #[inline]
-    pub(crate) fn with_local(self, local: &LocalTransform) -> Self {
+    pub fn with_local(self, local: &LocalTransform) -> Self {
         Self {
             isometry: self.isometry * local.isometry,
         }
     }
 
-    #[cfg(test)]
-    pub fn new_test(isometry: Isometry3<f32>) -> Self {
-        Self { isometry }
-    }
-
-    #[inline]
-    pub fn isometry(&self) -> &Isometry3<f32> {
-        &self.isometry
-    }
-
     #[inline]
     pub fn position(&self) -> Point3<f32> {
         self.isometry.translation.vector.into()
+    }
+}
+
+impl From<LocalTransform> for GlobalTransform {
+    #[inline]
+    fn from(value: LocalTransform) -> Self {
+        Self {
+            isometry: value.isometry,
+        }
     }
 }
