@@ -1,6 +1,8 @@
 use std::{
     collections::HashMap,
     fmt::Debug,
+    fs::File,
+    io::BufWriter,
     num::NonZero,
     path::Path,
     sync::Arc,
@@ -18,6 +20,7 @@ use nalgebra::{
 };
 use palette::LinSrgba;
 use parking_lot::Mutex;
+use serde::Serialize;
 
 use crate::{
     render::staging::Staging,
@@ -419,9 +422,33 @@ impl Atlas {
 
         // dump atlas texture for debugging
         {
-            let path = Path::new("tmp/atlas.png");
+            let json_path = Path::new("tmp/atlas.json");
+            let image_path = Path::new("tmp/atlas.png");
             let size = self.size;
-            tracing::debug!(path = %path.display(), ?size, "dumping texture atlas");
+            tracing::debug!(json = ?json_path, image = ?image_path, ?size, "dumping texture atlas");
+
+            #[derive(Debug, Serialize)]
+            struct JsonDump<'a> {
+                allocations: &'a SparseVec<AllocationId, Allocation>,
+                views: &'a SparseVec<ViewId, View>,
+            }
+            match File::create(&json_path) {
+                Ok(file) => {
+                    let writer = BufWriter::new(file);
+                    if let Err(error) = serde_json::to_writer_pretty(
+                        writer,
+                        &JsonDump {
+                            allocations: &self.allocations,
+                            views: &self.views,
+                        },
+                    ) {
+                        tracing::error!(%error);
+                    }
+                }
+                Err(error) => {
+                    tracing::error!(%error);
+                }
+            }
 
             let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("atlas read-back staging"),
@@ -464,8 +491,8 @@ impl Atlas {
                     )
                     .unwrap();
 
-                    if let Err(error) = image.save(path) {
-                        tracing::error!(path = %path.display(), "couldn't save texture atlas: {error}");
+                    if let Err(error) = image.save(image_path) {
+                        tracing::error!(path = %image_path.display(), "couldn't save texture atlas: {error}");
                     }
                 });
         }
@@ -542,13 +569,35 @@ impl Drop for Dropper {
 }
 
 #[derive(
-    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, derive_more::From, derive_more::Into,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    derive_more::From,
+    derive_more::Into,
+    Serialize,
 )]
+#[serde(transparent)]
 struct ViewId(usize);
 
 #[derive(
-    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, derive_more::From, derive_more::Into,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    derive_more::From,
+    derive_more::Into,
+    Serialize,
 )]
+#[serde(transparent)]
 struct AllocationId(usize);
 
 #[derive(Clone, Copy, Debug)]
@@ -561,9 +610,12 @@ pub struct AtlasResources<'a> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct AtlasVersion(usize);
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize)]
 struct Allocation {
+    #[serde(skip)]
     alloc_id: guillotiere::AllocId,
+
+    #[serde(skip)]
     pending_change: Option<usize>,
 
     /// Offset in the atlas texture with padding
@@ -579,10 +631,11 @@ struct Allocation {
     inner_size: Vector2<u32>,
 
     /// How many views reference this allocation
+    #[serde(skip)]
     ref_count: usize,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize)]
 struct View {
     allocation_id: AllocationId,
 

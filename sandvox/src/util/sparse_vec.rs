@@ -6,6 +6,11 @@ use std::{
     },
 };
 
+use serde::{
+    Serialize,
+    ser::SerializeMap,
+};
+
 #[derive(Debug)]
 pub struct SparseVec<I, T> {
     entries: Vec<Option<T>>,
@@ -117,5 +122,24 @@ where
             num_entries: self.num_entries,
             _marker: PhantomData,
         }
+    }
+}
+
+impl<I, T> Serialize for SparseVec<I, T>
+where
+    I: From<usize> + Serialize,
+    T: Serialize,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut map = serializer.serialize_map(Some(self.len()))?;
+
+        for (key, value) in self.iter() {
+            map.serialize_entry(&key, value)?;
+        }
+
+        map.end()
     }
 }
