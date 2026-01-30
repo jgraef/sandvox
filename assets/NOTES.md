@@ -8,6 +8,7 @@
 - [Font][5]
 - [Skybox][6]
 - [Night Sky][7]
+- [Moon][8]
 
 [1]: https://content.luanti.org/packages/Mirtilo/baunilha/
 [2]: https://flatus.itch.io/generic-dark-pixel-ui
@@ -16,3 +17,4 @@
 [5]: https://github.com/the-moonwitch/Cozette
 [6]: https://abhishta.itch.io/voidpix-skybox-pack
 [7]: https://svs.gsfc.nasa.gov/4851
+[8]: https://images.nasa.gov/details/GSFC_20171208_Archive_e001861
