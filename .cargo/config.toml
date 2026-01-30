@@ -1,2 +1,2 @@
 [alias]
-xtask = "run --package sandvox-xtask --"
+xtask = "run --package sandvox-xtask --release --"
