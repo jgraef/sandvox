@@ -59,6 +59,7 @@ use crate::{
         BlockFace,
         Voxel,
         chunk::Chunk,
+        chunk_map::ChunkStatistics,
     },
     wgpu::WgpuContext,
 };
@@ -143,6 +144,12 @@ where
         mesh_builder.clear();
 
         world_modifications.push(move |world: &mut World| {
+            if let Some(mesh) = &mesh {
+                let mut chunk_statistics = world.resource_mut::<ChunkStatistics>();
+                chunk_statistics.num_chunks_meshed += 1;
+                chunk_statistics.bytes_chunks_meshed += mesh.byte_size();
+            }
+
             let mut commands = world.commands();
             let mut entity = commands.entity(self.entity);
             entity.remove::<MeshChunkTaskDispatched>();

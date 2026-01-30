@@ -139,7 +139,11 @@ use crate::{
     },
     voxel::{
         chunk_generator::ChunkGeneratorPlugin,
-        chunk_map::ChunkMapPlugin,
+        chunk_map::{
+            ChunkMapPlugin,
+            ChunkPosition,
+            ChunkStatistics,
+        },
         loader::{
             ChunkLoader,
             ChunkLoaderPlugin,
@@ -515,6 +519,8 @@ fn update_debug_overlay(
     mut debug_overlay: Single<&mut Text, With<DebugOverlay>>,
     player: Option<Single<&GlobalTransform, With<Player>>>,
     astro_time: Res<AstroTime>,
+    chunks: Query<(), With<ChunkPosition>>,
+    chunk_statistics: Res<ChunkStatistics>,
 ) {
     debug_overlay.text.clear();
 
@@ -564,6 +570,17 @@ fn update_debug_overlay(
         &mut debug_overlay.text,
         "MESH: DRAW={}, VERT={}, CULL={}",
         render_mesh.num_rendered, render_mesh.num_vertices, render_mesh.num_culled,
+    )
+    .unwrap();
+
+    writeln!(
+        &mut debug_overlay.text,
+        "CHUNK: T={}, L={}/{}, M={}/{}",
+        chunks.count(),
+        chunk_statistics.num_chunks_loaded,
+        format_size(chunk_statistics.bytes_chunks_loaded),
+        chunk_statistics.num_chunks_meshed,
+        format_size(chunk_statistics.bytes_chunks_meshed),
     )
     .unwrap();
 

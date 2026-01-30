@@ -42,7 +42,10 @@ use crate::{
     voxel::{
         Voxel,
         chunk::Chunk,
-        chunk_map::ChunkPosition,
+        chunk_map::{
+            ChunkPosition,
+            ChunkStatistics,
+        },
     },
 };
 
@@ -147,6 +150,10 @@ where
     fn run(self, world_modifications: &mut CommandQueue) {
         if let Some(chunk) = self.chunk_generator.generate_chunk(self.position) {
             world_modifications.push(move |world: &mut World| {
+                let mut chunk_statistics = world.resource_mut::<ChunkStatistics>();
+                chunk_statistics.num_chunks_loaded += 1;
+                chunk_statistics.bytes_chunks_loaded += chunk.byte_size();
+
                 world.commands().entity(self.entity).insert(chunk);
             });
         }

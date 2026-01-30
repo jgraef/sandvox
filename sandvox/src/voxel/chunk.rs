@@ -44,22 +44,31 @@ impl<V, const CHUNK_SIZE: usize> Chunk<V, CHUNK_SIZE> {
         Self { voxels }
     }
 
-    pub fn as_slice(&self) -> &[V] {
-        &self.voxels
-    }
-
     pub fn iter(&self) -> impl Iterator<Item = (Point3<u16>, &V)> {
         self.voxels.iter().enumerate().map(|(i, voxel)| {
             let point = Point3::from(morton_decode::<u16, 3>(i.try_into().unwrap()));
             (point, voxel)
         })
     }
+
+    #[inline]
+    pub fn byte_size(&self) -> usize {
+        size_of::<V>() * self.voxels.len()
+    }
 }
 
 impl<V, const CHUNK_SIZE: usize> Index<Point3<u16>> for Chunk<V, CHUNK_SIZE> {
     type Output = V;
 
+    #[inline]
     fn index(&self, index: Point3<u16>) -> &V {
         &self.voxels[morton_encode(index.into()) as usize]
+    }
+}
+
+impl<V, const CHUNK_SIZE: usize> AsRef<[V]> for Chunk<V, CHUNK_SIZE> {
+    #[inline]
+    fn as_ref(&self) -> &[V] {
+        &self.voxels
     }
 }

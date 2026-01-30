@@ -172,7 +172,8 @@ impl MeshBuilder {
                     usage: wgpu::BufferUsages::STORAGE,
                 });
 
-            let num_vertices = 3 * u32::try_from(self.faces.len()).unwrap();
+            let num_vertices = self.vertices.len();
+            let num_indices = 3 * self.faces.len();
 
             let bind_group = wgpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some(&format!("{label} bind group")),
@@ -193,6 +194,7 @@ impl MeshBuilder {
                 vertex_buffer,
                 index_buffer,
                 num_vertices,
+                num_indices,
                 bind_group,
             })
         }
@@ -220,10 +222,16 @@ pub struct Mesh {
     pub vertex_buffer: wgpu::Buffer,
     pub index_buffer: wgpu::Buffer,
 
-    /// How many vertices are actually rendered (not how many are in the buffer)
-    pub num_vertices: u32,
+    pub num_vertices: usize,
+    pub num_indices: usize,
 
     pub bind_group: wgpu::BindGroup,
+}
+
+impl Mesh {
+    pub fn byte_size(&self) -> usize {
+        size_of::<Vertex>() * self.num_vertices + size_of::<u32>() * self.num_indices
+    }
 }
 
 #[derive(Debug, Resource)]
@@ -524,7 +532,7 @@ fn render_meshes_with(
                     }
                     else {
                         frame.render_pass.set_bind_group(2, &mesh.bind_group, &[]);
-                        let num_vertices = map_num_vertices(mesh.num_vertices);
+                        let num_vertices = map_num_vertices(mesh.num_indices.try_into().unwrap());
                         frame
                             .render_pass
                             .draw(0..num_vertices, instance_id.0..(instance_id.0 + 1));

@@ -33,6 +33,7 @@ impl Plugin for ChunkMapPlugin {
         builder
             .add_message::<ChunkMapMessage>()
             .insert_resource(ChunkMap::default())
+            .insert_resource(ChunkStatistics::default())
             .add_systems(schedule::Update, update_chunk_map);
 
         Ok(())
@@ -94,4 +95,12 @@ fn update_chunk_map(
             }
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, Resource)]
+pub struct ChunkStatistics {
+    pub num_chunks_loaded: usize,
+    pub bytes_chunks_loaded: usize,
+    pub num_chunks_meshed: usize,
+    pub bytes_chunks_meshed: usize,
 }
