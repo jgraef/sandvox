@@ -420,19 +420,26 @@ fn init_player(
 }
 
 fn format_build_tag() -> String {
+    let mut s = String::with_capacity(64);
+
+    write!(&mut s, "SANDVOX: ").unwrap();
+
     match BUILD_INFO.profile {
         "release" => {
-            format!("SANDVOX: {}", BUILD_INFO.version)
+            write!(&mut s, "{}", BUILD_INFO.version).unwrap();
         }
         _ => {
-            if let Some(commit) = BUILD_INFO.git_commit {
-                format!("SANDVOX: DEV/{}", &commit[..7])
+            write!(&mut s, "DEV").unwrap();
+            if let Some(branch) = BUILD_INFO.git_branch {
+                write!(&mut s, "/{}", &branch).unwrap();
             }
-            else {
-                format!("SANDVOX: DEV/UNKNOWN")
+            if let Some(commit) = BUILD_INFO.git_commit {
+                write!(&mut s, "/{}", &commit[..7]).unwrap();
             }
         }
     }
+
+    s
 }
 
 #[derive(Clone, Copy, Debug, Default, Component)]
