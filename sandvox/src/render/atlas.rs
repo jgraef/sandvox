@@ -96,6 +96,7 @@ pub struct Atlas {
 }
 
 impl Atlas {
+    #[profiling::function]
     pub fn new(device: &wgpu::Device, config: AtlasConfig) -> Self {
         let AtlasConfig {
             initial_size,
@@ -179,6 +180,7 @@ impl Atlas {
         }
     }
 
+    #[profiling::function]
     fn allocate(
         &mut self,
         size: Vector2<u32>,
@@ -243,6 +245,7 @@ impl Atlas {
         Ok((allocation_id, view_id))
     }
 
+    #[profiling::function]
     pub fn insert_texture(
         &mut self,
         texture_view: wgpu::TextureView,
@@ -278,6 +281,7 @@ impl Atlas {
         })
     }
 
+    #[profiling::function]
     pub fn insert_image(
         &mut self,
         image: &RgbaImage,
@@ -334,6 +338,7 @@ impl Atlas {
         self.views[handle.view_id].size
     }
 
+    #[profiling::function]
     pub fn flush(&mut self, device: &wgpu::Device, mut staging: &mut Staging) -> bool {
         self.handle_drops();
 

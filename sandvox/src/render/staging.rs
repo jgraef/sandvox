@@ -26,6 +26,7 @@ pub(super) fn initialize_staging(wgpu: Res<WgpuContext>, mut commands: Commands)
 ///
 /// This is done in the setup schedule after rendering setup systems have run.
 /// During rendering this is done in `end_frames`
+#[profiling::function]
 pub(super) fn flush_staging(wgpu: Res<WgpuContext>, mut staging: ResMut<Staging>) {
     wgpu.queue.submit([staging.flush(&wgpu).finish()]);
 }

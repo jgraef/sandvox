@@ -258,6 +258,7 @@ fn render_skybox(
     }
 }
 
+#[profiling::function]
 fn load_skybox(
     wgpu: Res<WgpuContext>,
     layout: Res<PipelineLayout>,
@@ -265,10 +266,8 @@ fn load_skybox(
     mut commands: Commands,
 ) {
     // note: generate cube map from cylindrical: https://jaxry.github.io/panorama-to-cubemap/
-
     // layout: https://gpuweb.github.io/gpuweb/#texture-view-creation
 
-    //const FACES: [&str; 6] = ["right", "left", "top", "bottom", "front", "back"];
     const FACES: [&str; 6] = ["px", "nx", "py", "ny", "pz", "nz"];
 
     for (entity, skybox, transform) in skyboxes {
@@ -278,6 +277,8 @@ fn load_skybox(
         let mut size = Vector2::zeros();
 
         for (i, face) in FACES.into_iter().enumerate() {
+            profiling::scope!("load face");
+
             let path = skybox.path.join(format!("{face}.png"));
             let image = RgbaImage::from_path(&path)
                 .with_note(|| path.display().to_string())
@@ -295,25 +296,29 @@ fn load_skybox(
 
         tracing::debug!(size = ?size, bytes = %format_size(data.len()), "skybox");
 
-        let texture = wgpu.device.create_texture_with_data(
-            &wgpu.queue,
-            &wgpu::TextureDescriptor {
-                label: Some("skybox"),
-                size: wgpu::Extent3d {
-                    width: size.x,
-                    height: size.y,
-                    depth_or_array_layers: 6,
+        let texture = {
+            profiling::scope!("create_texture");
+
+            wgpu.device.create_texture_with_data(
+                &wgpu.queue,
+                &wgpu::TextureDescriptor {
+                    label: Some("skybox"),
+                    size: wgpu::Extent3d {
+                        width: size.x,
+                        height: size.y,
+                        depth_or_array_layers: 6,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                    view_formats: &[],
                 },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8UnormSrgb,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                view_formats: &[],
-            },
-            wgpu::util::TextureDataOrder::LayerMajor,
-            &data,
-        );
+                wgpu::util::TextureDataOrder::LayerMajor,
+                &data,
+            )
+        };
 
         let texture_view = texture.create_view(&wgpu::TextureViewDescriptor {
             label: Some("skybox"),

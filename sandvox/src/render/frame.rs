@@ -58,6 +58,7 @@ use crate::{
     },
 };
 
+#[profiling::function]
 pub(super) fn create_frame_bind_group_layout(wgpu: Res<WgpuContext>, mut commands: Commands) {
     let bind_group_layout =
         wgpu.device
@@ -132,6 +133,7 @@ pub(super) fn create_frame_bind_group_layout(wgpu: Res<WgpuContext>, mut command
     commands.insert_resource(FrameBindGroupLayout { bind_group_layout });
 }
 
+#[profiling::function]
 pub(super) fn create_frames(
     wgpu: Res<WgpuContext>,
     frame_bind_group_layout: Res<FrameBindGroupLayout>,
@@ -170,6 +172,7 @@ pub(super) fn create_frames(
     }
 }
 
+#[profiling::function]
 pub(super) fn begin_frames(
     wgpu: Res<WgpuContext>,
     surfaces: Populated<(
@@ -247,6 +250,7 @@ pub(super) fn begin_frames(
     }
 }
 
+#[profiling::function]
 pub fn end_frames(
     wgpu: Res<WgpuContext>,
     frames: Query<&mut Frame>,
@@ -422,6 +426,7 @@ pub struct CameraData {
     pub position: Vector4<f32>,
 }
 
+#[profiling::function]
 pub(super) fn update_frame_uniform(
     frame_uniforms: Populated<&mut FrameUniform>,
     mut staging: ResMut<Staging>,
@@ -438,6 +443,7 @@ pub(super) fn update_frame_uniform(
     }
 }
 
+#[profiling::function]
 pub(super) fn update_frame_bind_groups(
     wgpu: Res<WgpuContext>,
     frame_bind_groups: Query<(&mut FrameBindGroup, &FrameUniform)>,
@@ -465,6 +471,7 @@ pub(super) fn update_frame_bind_groups(
     }
 }
 
+#[profiling::function]
 pub(super) fn create_default_resources(
     wgpu: Res<WgpuContext>,
     config: Res<RenderConfig>,
