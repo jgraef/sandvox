@@ -22,12 +22,14 @@ pub struct GlobalTransform {
 }
 
 impl GlobalTransform {
+    #[inline]
     pub(crate) fn from_local(local: LocalTransform) -> Self {
         Self {
             isometry: local.isometry,
         }
     }
 
+    #[inline]
     pub(crate) fn with_local(self, local: &LocalTransform) -> Self {
         Self {
             isometry: self.isometry * local.isometry,
@@ -39,10 +41,12 @@ impl GlobalTransform {
         Self { isometry }
     }
 
+    #[inline]
     pub fn isometry(&self) -> &Isometry3<f32> {
         &self.isometry
     }
 
+    #[inline]
     pub fn position(&self) -> Point3<f32> {
         self.isometry.translation.vector.into()
     }

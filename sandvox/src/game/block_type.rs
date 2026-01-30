@@ -49,6 +49,7 @@ struct Inner {
 }
 
 impl BlockTypes {
+    #[profiling::function]
     pub fn load(
         path: impl AsRef<Path>,
         mut insert_image: impl FnMut(&RgbaImage) -> Result<AtlasHandle, Error>,
@@ -113,6 +114,7 @@ impl BlockTypes {
         })
     }
 
+    #[inline]
     pub fn lookup(&self, name: &str) -> Option<BlockType> {
         self.inner.by_name.get(name).copied()
     }
@@ -121,12 +123,14 @@ impl BlockTypes {
 impl Index<BlockType> for BlockTypes {
     type Output = BlockTypeData;
 
+    #[inline]
     fn index(&self, index: BlockType) -> &Self::Output {
         &self.inner.blocks[index.0 as usize]
     }
 }
 
 impl<'a, 'w> From<&'a Res<'w, BlockTypes>> for BlockTypes {
+    #[inline]
     fn from(value: &'a Res<'w, BlockTypes>) -> Self {
         (*value).clone()
     }
@@ -140,6 +144,7 @@ pub struct BlockTypeData {
 }
 
 impl BlockTypeData {
+    #[inline]
     pub fn face_texture(&self, face: BlockFace) -> Option<&AtlasHandle> {
         self.textures
             .as_ref()

@@ -296,7 +296,10 @@ impl<'a> BlitterTransaction<'a> {
         self.blitter.transaction_workspace.push_fill(fill_data);
     }
 
+    #[profiling::function]
     pub fn finish(self, device: &wgpu::Device, mut staging: &mut Staging) {
+        // todo: use gpu profiler
+
         let any_blits = self.num_blits > 0;
         let any_fills = !self.blitter.transaction_workspace.fills.is_empty();
 

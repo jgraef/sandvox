@@ -29,12 +29,14 @@ pub struct LocalTransform {
 }
 
 impl LocalTransform {
+    #[inline]
     pub fn identity() -> Self {
         Self {
             isometry: Isometry3::identity(),
         }
     }
 
+    #[inline]
     pub fn new(
         translation: impl Into<Translation3<f32>>,
         rotation: impl Into<UnitQuaternion<f32>>,
@@ -44,28 +46,34 @@ impl LocalTransform {
         }
     }
 
+    #[inline]
     pub fn translate_local(&mut self, translation: &Translation3<f32>) {
         self.isometry.translation.vector +=
             self.isometry.rotation.transform_vector(&translation.vector);
     }
 
+    #[inline]
     pub fn translate_global(&mut self, translation: &Translation3<f32>) {
         self.isometry.translation.vector += &translation.vector;
     }
 
+    #[inline]
     pub fn rotate_local(&mut self, rotation: &UnitQuaternion<f32>) {
         self.isometry.rotation *= rotation;
     }
 
+    #[inline]
     pub fn rotate_global(&mut self, rotation: &UnitQuaternion<f32>) {
         self.isometry.append_rotation_mut(rotation);
     }
 
+    #[inline]
     pub fn rotate_around(&mut self, anchor: &Point3<f32>, rotation: &UnitQuaternion<f32>) {
         self.isometry
             .append_rotation_wrt_point_mut(rotation, anchor);
     }
 
+    #[inline]
     pub fn look_at(eye: &Point3<f32>, target: &Point3<f32>, up: &Vector3<f32>) -> Self {
         Self {
             isometry: Isometry3::face_towards(eye, target, up),
@@ -86,36 +94,42 @@ impl LocalTransform {
         self.isometry.rotation *= rotation;
     }
 
+    #[inline]
     pub fn position(&self) -> Point3<f32> {
         self.isometry.translation.vector.into()
     }
 }
 
 impl From<Isometry3<f32>> for LocalTransform {
+    #[inline]
     fn from(value: Isometry3<f32>) -> Self {
         Self { isometry: value }
     }
 }
 
 impl From<Translation3<f32>> for LocalTransform {
+    #[inline]
     fn from(value: Translation3<f32>) -> Self {
         Self::from(Isometry3::from(value))
     }
 }
 
 impl From<Vector3<f32>> for LocalTransform {
+    #[inline]
     fn from(value: Vector3<f32>) -> Self {
         Self::from(Isometry3::from(value))
     }
 }
 
 impl From<Point3<f32>> for LocalTransform {
+    #[inline]
     fn from(value: Point3<f32>) -> Self {
         Self::from(value.coords)
     }
 }
 
 impl From<UnitQuaternion<f32>> for LocalTransform {
+    #[inline]
     fn from(value: UnitQuaternion<f32>) -> Self {
         Self::from(Isometry3::from_parts(Default::default(), value))
     }

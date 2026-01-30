@@ -337,6 +337,7 @@ impl Atlas {
         }
     }
 
+    #[inline]
     pub fn view_size(&self, handle: &AtlasHandle) -> Vector2<u32> {
         self.views[handle.view_id].size
     }
@@ -508,10 +509,12 @@ impl Atlas {
         }
     }
 
+    #[inline]
     pub fn version(&self) -> AtlasVersion {
         self.version
     }
 
+    #[inline]
     pub fn resources(&self) -> AtlasResources<'_> {
         AtlasResources {
             texture: &self.atlas_texture,
@@ -672,6 +675,7 @@ pub struct Padding {
 }
 
 impl Padding {
+    #[inline]
     pub fn uniform(padding: u32) -> Self {
         Self {
             left: padding,
@@ -681,10 +685,12 @@ impl Padding {
         }
     }
 
+    #[inline]
     pub fn additional_size(&self) -> Vector2<u32> {
         Vector2::new(self.left + self.right, self.top + self.bottom)
     }
 
+    #[inline]
     pub fn inner_offset(&self) -> Vector2<u32> {
         Vector2::new(self.left, self.top)
     }
@@ -700,6 +706,7 @@ impl SamplerMode {
     pub const RESIZE: Self = Self::both(wgpu::AddressMode::ClampToEdge);
     pub const REPEAT: Self = Self::both(wgpu::AddressMode::Repeat);
 
+    #[inline]
     pub const fn both(address_mode: wgpu::AddressMode) -> Self {
         Self {
             address_mode_u: address_mode,
@@ -730,6 +737,7 @@ impl PaddingFill {
     };
 }
 
+#[inline]
 fn vector2_to_guillotiere(size: Vector2<u32>) -> guillotiere::Size {
     guillotiere::Size::new(
         i32::try_from(size.x).unwrap(),
@@ -737,6 +745,7 @@ fn vector2_to_guillotiere(size: Vector2<u32>) -> guillotiere::Size {
     )
 }
 
+#[inline]
 fn guillotiere_to_vector2(point: guillotiere::Point) -> Vector2<u32> {
     Vector2::new(point.x.try_into().unwrap(), point.y.try_into().unwrap())
 }
@@ -907,6 +916,7 @@ impl<'a> AtlasBlitterTransaction<'a> {
         }
     }
 
+    #[inline]
     pub fn finish(self, device: &wgpu::Device, staging: &mut Staging) {
         self.inner.finish(device, staging);
     }

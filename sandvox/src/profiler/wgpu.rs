@@ -154,7 +154,7 @@ impl RenderPassProfiler {
     }
 }
 
-#[inline(always)]
+#[inline]
 fn get_reference_timestamp() -> i64 {
     #![allow(unused)]
 

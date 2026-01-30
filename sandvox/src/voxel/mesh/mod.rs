@@ -207,7 +207,7 @@ pub struct UnorientedQuad {
 }
 
 impl UnorientedQuad {
-    #[inline(always)]
+    #[inline]
     fn xy_vertices(&self) -> [Point3<u16>; 4] {
         [
             [self.ij0.x, self.ij0.y, self.k],
@@ -218,7 +218,7 @@ impl UnorientedQuad {
         .map(Into::into)
     }
 
-    #[inline(always)]
+    #[inline]
     fn zy_vertices(&self) -> [Point3<u16>; 4] {
         [
             [self.k, self.ij1.y, self.ij0.x],
@@ -229,7 +229,7 @@ impl UnorientedQuad {
         .map(Into::into)
     }
 
-    #[inline(always)]
+    #[inline]
     fn xz_vertices(&self) -> [Point3<u16>; 4] {
         [
             [self.ij0.x, self.k, self.ij1.y],
@@ -240,7 +240,7 @@ impl UnorientedQuad {
         .map(Into::into)
     }
 
-    #[inline(always)]
+    #[inline]
     fn uvs(&self, face: BlockFace) -> [Point2<u16>; 4] {
         let dx = self.ij1.x - self.ij0.x;
         let dy = self.ij1.y - self.ij0.y;

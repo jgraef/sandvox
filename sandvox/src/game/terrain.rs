@@ -73,6 +73,7 @@ impl Voxel for TerrainVoxel {
     type FetchData = Res<'static, BlockTypes>;
     type Data = BlockTypes;
 
+    #[inline]
     fn texture<'a>(
         &'a self,
         face: BlockFace,
@@ -81,11 +82,13 @@ impl Voxel for TerrainVoxel {
         block_types[self.block_type].face_texture(face)
     }
 
+    #[inline]
     fn is_opaque(&self, block_types: &BlockTypes) -> bool {
         let block_type_data = &block_types[self.block_type];
         block_type_data.is_opaque
     }
 
+    #[inline]
     fn can_merge(&self, other: &Self, block_types: &BlockTypes) -> bool {
         let _ = block_types;
         // todo: proper check (e.g. for log textures). this needs to know the face.

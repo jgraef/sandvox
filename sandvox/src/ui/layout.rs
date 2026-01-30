@@ -247,12 +247,12 @@ struct Node<L: LeafMeasure> {
     leaf: Option<L::Node>,
 }
 
-#[inline(always)]
+#[inline]
 fn node_id_to_entity(node_id: NodeId) -> Entity {
     Entity::from_bits(node_id.into())
 }
 
-#[inline(always)]
+#[inline]
 fn entity_to_node_id(entity: Entity) -> NodeId {
     entity.to_bits().into()
 }

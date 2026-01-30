@@ -358,31 +358,31 @@ impl<const CHUNK_SIZE: usize> OpacityMasks<CHUNK_SIZE> {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn opacity_xy(&self, xy: Point2<u16>) -> u64 {
         let i: usize = morton_encode(xy.into()).try_into().unwrap();
         self.xy[i]
     }
 
-    #[inline(always)]
+    #[inline]
     fn opacity_zy(&self, zy: Point2<u16>) -> u64 {
         let i: usize = morton_encode(zy.into()).try_into().unwrap();
         self.zy[i]
     }
 
-    #[inline(always)]
+    #[inline]
     fn opacity_xz(&self, xz: Point2<u16>) -> u64 {
         let i: usize = morton_encode(xz.into()).try_into().unwrap();
         self.xz[i]
     }
 }
 
-#[inline(always)]
+#[inline]
 fn front_face_mask(opacity_mask: u64) -> u64 {
     opacity_mask & !(opacity_mask << 1)
 }
 
-#[inline(always)]
+#[inline]
 fn back_face_mask(opacity_mask: u64) -> u64 {
     opacity_mask & !(opacity_mask >> 1)
 }
@@ -404,6 +404,7 @@ mod tranpose {
     }
 
     impl View for RowView {
+        #[inline]
         fn index(&self, index: usize) -> usize {
             usize::try_from(morton_encode([u16::try_from(index).unwrap(), self.y])).unwrap()
         }
@@ -415,6 +416,7 @@ mod tranpose {
     }
 
     impl View for ColumnView {
+        #[inline]
         fn index(&self, index: usize) -> usize {
             usize::try_from(morton_encode([self.x, u16::try_from(index).unwrap()])).unwrap()
         }
@@ -431,10 +433,12 @@ mod tranpose {
     where
         V: View,
     {
+        #[inline]
         fn len(&self) -> usize {
             self.side_length
         }
 
+        #[inline]
         fn get_mut_2(&mut self, rows: [usize; 2]) -> [&mut u64; 2] {
             let indices = rows.map(|row| self.view.index(row));
             slice_get_mut_2(self.mask, indices)
@@ -484,10 +488,12 @@ mod tranpose {
     }
 
     impl BitMatrix for [u64] {
+        #[inline]
         fn len(&self) -> usize {
             <[_]>::len(self)
         }
 
+        #[inline]
         fn get_mut_2(&mut self, rows: [usize; 2]) -> [&mut u64; 2] {
             slice_get_mut_2(self, rows)
         }
@@ -508,6 +514,7 @@ mod tranpose {
     }
 }
 
+#[inline]
 fn bitmask(n: usize) -> u64 {
     assert!(n <= 64);
     if n < 64 {

@@ -290,7 +290,7 @@ mod bdf {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn coord_to_vector2(coord: bdf_parser::Coord) -> Vector2<i32> {
         Vector2::new(coord.x, coord.y)
     }

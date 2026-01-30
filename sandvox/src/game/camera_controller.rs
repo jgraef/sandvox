@@ -279,6 +279,7 @@ pub enum Movement {
 }
 
 impl Movement {
+    #[inline]
     fn apply(&self, transform: &mut LocalTransform, speed: f32) {
         match self {
             Movement::Local(direction) => {
