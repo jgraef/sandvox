@@ -7,7 +7,6 @@ use bevy_ecs::{
         Changed,
         Or,
         QueryData,
-        With,
         Without,
     },
     schedule::IntoScheduleConfigs,
@@ -30,7 +29,7 @@ use crate::{
         schedule,
     },
     render::{
-        frame::DefaultFont,
+        DefaultFont,
         text::{
             Text,
             TextColor,
@@ -38,13 +37,13 @@ use crate::{
         },
     },
     ui::{
+        FinalLayout,
         LayoutCache,
         LeafMeasure,
-        RedrawRequested,
         Root,
-        RoundedLayout,
         UiSystems,
         render::RenderBufferBuilder,
+        view::View,
     },
 };
 
@@ -124,10 +123,11 @@ impl LeafMeasure for TextLeafMeasure {
 
 fn request_redraw(
     nodes: Populated<&Root, Or<(Changed<TextBuffer>, Changed<TextSize>)>>,
-    mut commands: Commands,
+    mut views: Populated<&mut View>,
 ) {
     for root in nodes {
-        commands.entity(root.viewport).insert(RedrawRequested);
+        let mut view = views.get_mut(root.root).unwrap();
+        view.render = true;
     }
 }
 
@@ -139,29 +139,22 @@ fn render_texts(
         &TextBuffer,
         Option<&TextSize>,
         Option<&TextColor>,
-        &RoundedLayout,
+        &FinalLayout,
         &Root,
     )>,
-    requested_redraw: Populated<(), With<RedrawRequested>>,
-    mut surfaces: Populated<&mut RenderBufferBuilder>,
+    mut views: Populated<(&View, &mut RenderBufferBuilder)>,
 ) {
     let displacement = font.glyph_displacement();
 
-    for (entity, text, text_buffer, text_size, text_color, rounded_layout, root) in nodes {
-        // - check if the root of the ui tree is requested to be redrawn
-        // - get the render target
-        // - get the render buffer builder for the render target
-        if let Ok(()) = requested_redraw.get(root.viewport)
-            && let Some(render_target) = root.render_target
-            && let Ok(mut render_buffer_builder) = surfaces.get_mut(render_target)
-        {
-            let content_offset = Vector2::new(
-                rounded_layout.content_box_x(),
-                rounded_layout.content_box_y(),
-            );
+    for (entity, text, text_buffer, text_size, text_color, final_layout, root) in nodes {
+        let (view, mut render_buffer_builder) = views.get_mut(root.root).unwrap();
+
+        if view.render {
+            let content_offset =
+                Vector2::new(final_layout.content_box_x(), final_layout.content_box_y());
             let content_size = Vector2::new(
-                rounded_layout.content_box_width(),
-                rounded_layout.content_box_height(),
+                final_layout.content_box_width(),
+                final_layout.content_box_height(),
             );
 
             let text_size = text_size.copied().unwrap_or_default().scaling;
@@ -170,7 +163,7 @@ fn render_texts(
 
             let text_color = text_color.copied().map(|color| color.color);
 
-            tracing::trace!(?entity, text = ?text.text, ?content_offset, ?content_size, "render text");
+            tracing::trace!(?entity, text = ?text.text, ?content_offset, ?content_size, depth = ?final_layout.depth, "render text");
 
             for positioned in text_buffer.calculate_positions(Some(width_constraint)) {
                 match positioned {
@@ -192,7 +185,7 @@ fn render_texts(
                                     .push_quad(
                                         glyph_offset.cast::<f32>() * text_size + offset,
                                         glyph_size.cast::<f32>() * text_size,
-                                        rounded_layout.order,
+                                        final_layout.depth,
                                         text_color,
                                     )
                                     .set_glyph_texture(glyph_id);

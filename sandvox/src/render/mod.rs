@@ -1,8 +1,11 @@
 pub mod atlas;
 pub mod camera;
+pub mod command;
 pub mod fps_counter;
-pub mod frame;
 pub mod mesh;
+pub mod pass;
+pub mod render_target;
+pub mod shadow_map;
 pub mod skybox;
 pub mod staging;
 pub mod surface;
@@ -16,6 +19,11 @@ use bevy_ecs::{
         IntoScheduleConfigs,
         SystemSet,
         common_conditions::resource_changed,
+    },
+    system::{
+        Commands,
+        Res,
+        ResMut,
     },
 };
 use color_eyre::eyre::Error;
@@ -33,29 +41,35 @@ use crate::{
         schedule,
     },
     render::{
-        frame::{
-            DefaultAtlas,
-            begin_frames,
-            create_default_resources,
-            create_frame_bind_group_layout,
-            create_frames,
-            end_frames,
-            update_frame_bind_groups,
-            update_frame_uniform,
-        },
+        atlas::Atlas,
+        command::RenderFunctions,
         mesh::RenderMeshStatistics,
+        pass::{
+            context::{
+                PendingCommandBuffers,
+                flush_command_buffers,
+            },
+            main_pass,
+            ui_pass,
+        },
         staging::{
+            Staging,
             flush_staging,
             initialize_staging,
         },
         surface::{
             create_surfaces,
+            present_surfaces,
             reconfigure_surfaces,
-            update_viewports,
+            set_swap_chain_texture,
         },
+        text::Font,
     },
     util::serde::default_true,
-    wgpu::WgpuSystems,
+    wgpu::{
+        WgpuContext,
+        WgpuSystems,
+    },
 };
 
 #[derive(Clone, Debug, Default)]
@@ -66,42 +80,74 @@ pub struct RenderPlugin {
 impl Plugin for RenderPlugin {
     fn setup(&self, builder: &mut WorldBuilder) -> Result<(), Error> {
         builder
+            // create resources
             .insert_resource(self.config.clone())
-            .insert_resource(RenderMeshStatistics::default())
+            .init_resource::<RenderMeshStatistics>()
+            .init_resource::<PendingCommandBuffers>()
+            // startup systems
             .add_systems(
                 schedule::Startup,
                 (
                     // initialize rendering
                     (
                         initialize_staging,
-                        create_frame_bind_group_layout,
+                        main_pass::create_layout,
+                        ui_pass::create_layout,
                         create_default_resources.after(initialize_staging),
                     )
                         .after(WgpuSystems::CreateContext)
                         .before(RenderSystems::Setup),
-                    // update frame uniform
-                    (update_frame_bind_groups, update_frame_uniform)
+                    (
+                        // create main pass
+                        main_pass::create_layout,
+                        main_pass::create_main_pass,
+                        main_pass::update_main_pass_uniform,
+                        main_pass::update_main_pass,
+                        // create ui pass
+                        ui_pass::create_layout,
+                        ui_pass::create_ui_pass,
+                        ui_pass::update_ui_pass_uniform,
+                        ui_pass::update_ui_pass,
+                    )
+                        .chain()
                         .after(RenderSystems::Setup)
                         .before(flush_staging),
                     // flush staging
                     flush_staging.after(RenderSystems::Setup),
                 ),
             )
+            // render systems
             .add_systems(
                 schedule::Render,
                 (
-                    (update_viewports, create_surfaces, reconfigure_surfaces)
-                        .before(RenderSystems::BeginFrame),
-                    (create_frames, begin_frames)
-                        .chain()
-                        .in_set(RenderSystems::BeginFrame),
+                    (create_surfaces, reconfigure_surfaces).before(RenderSystems::BeginFrame),
+                    set_swap_chain_texture
+                        .after(create_surfaces)
+                        .after(reconfigure_surfaces)
+                        .before(RenderSystems::RenderWorld),
                     (
-                        update_frame_bind_groups.run_if(resource_changed::<DefaultAtlas>),
-                        update_frame_uniform,
+                        (main_pass::create_layout, main_pass::create_main_pass).chain(),
+                        (ui_pass::create_layout, ui_pass::create_ui_pass).chain(),
                     )
-                        .in_set(RenderSystems::EndFrame)
-                        .before(end_frames),
-                    end_frames.in_set(RenderSystems::EndFrame),
+                        .in_set(RenderSystems::BeginFrame),
+                    main_pass::render_main_pass.in_set(RenderSystems::RenderWorld),
+                    ui_pass::render_ui_pass.in_set(RenderSystems::RenderUi),
+                    (
+                        (
+                            main_pass::update_main_pass_uniform,
+                            main_pass::update_main_pass.run_if(resource_changed::<DefaultAtlas>),
+                        )
+                            .chain(),
+                        (
+                            ui_pass::update_ui_pass_uniform,
+                            ui_pass::update_ui_pass.run_if(resource_changed::<DefaultAtlas>),
+                        )
+                            .chain(),
+                    )
+                        .before(flush_command_buffers),
+                    (flush_command_buffers, present_surfaces)
+                        .chain()
+                        .after(RenderSystems::RenderUi),
                 ),
             )
             .configure_system_sets(
@@ -176,3 +222,36 @@ fn default_font() -> PathBuf {
 fn default_fov() -> f32 {
     60.0
 }
+
+#[profiling::function]
+fn create_default_resources(
+    wgpu: Res<WgpuContext>,
+    config: Res<RenderConfig>,
+    mut commands: Commands,
+    mut staging: ResMut<Staging>,
+) {
+    let sampler = wgpu.device.create_sampler(&Default::default());
+
+    let atlas = Atlas::new(&wgpu.device, Default::default());
+
+    let font = Font::open(&config.default_font, &wgpu.device, &mut *staging).unwrap_or_else(|e| {
+        panic!(
+            "Error while loading font: {e}: {}",
+            config.default_font.display()
+        )
+    });
+
+    commands.insert_resource(DefaultSampler(sampler));
+    commands.insert_resource(DefaultAtlas(atlas));
+    commands.insert_resource(DefaultFont(font));
+}
+
+// todo: make this a resource that contains all the samplers we use
+#[derive(Clone, Debug, Resource)]
+pub struct DefaultSampler(pub wgpu::Sampler);
+
+#[derive(Debug, Resource, derive_more::Deref, derive_more::DerefMut)]
+pub struct DefaultAtlas(pub Atlas);
+
+#[derive(Debug, Resource, derive_more::Deref, derive_more::DerefMut)]
+pub struct DefaultFont(pub Font);

@@ -62,7 +62,7 @@ use crate::{
         MouseButtons,
         MousePosition,
     },
-    render::surface::RenderTarget,
+    render::render_target::RenderTarget,
 };
 
 #[derive(Clone, Copy, Debug, Default)]

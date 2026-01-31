@@ -10,10 +10,7 @@ use std::{
 use bevy_ecs::{
     component::Component,
     name::NameOrEntity,
-    query::{
-        Changed,
-        With,
-    },
+    query::Changed,
     resource::Resource,
     schedule::IntoScheduleConfigs,
     system::{
@@ -40,6 +37,7 @@ use crate::{
         schedule,
     },
     render::{
+        DefaultAtlas,
         RenderSystems,
         atlas::{
             Atlas,
@@ -48,16 +46,15 @@ use crate::{
             PaddingFill,
             PaddingMode,
         },
-        frame::DefaultAtlas,
         staging::Staging,
     },
     ui::{
-        RedrawRequested,
+        FinalLayout,
         RenderBufferBuilder,
         Root,
-        RoundedLayout,
         UiSystems,
         sprites::ui_defs::MarginDef,
+        view::View,
     },
     util::image::ImageLoadExt,
     wgpu::WgpuContext,
@@ -294,7 +291,7 @@ impl NinePatch {
         render_buffer_builder: &mut RenderBufferBuilder,
         offset: Point2<f32>,
         size: Vector2<f32>,
-        order: u32,
+        depth: u32,
         pixel_size: f32,
     ) {
         fn patch_sizes(size: f32, margin_low: f32, margin_high: f32) -> [f32; 3] {
@@ -328,7 +325,7 @@ impl NinePatch {
                     .push_quad(
                         cursor,
                         Vector2::new(horizontal[x], vertical[y]),
-                        order,
+                        depth,
                         None,
                     )
                     .set_atlas_texture(&self.patches[y][x]);
@@ -364,33 +361,30 @@ fn load_sprites(
     commands.insert_resource(sprites);
 }
 
-fn request_redraw(nodes: Populated<&Root, Changed<Background>>, mut commands: Commands) {
+fn request_redraw(nodes: Populated<&Root, Changed<Background>>, mut views: Populated<&mut View>) {
     for root in nodes {
-        commands.entity(root.viewport).insert(RedrawRequested);
+        let mut view = views.get_mut(root.root).unwrap();
+        view.render = true;
     }
 }
 
 fn render_sprites(
-    nodes: Populated<(NameOrEntity, &Background, &RoundedLayout, &Root)>,
-    requested_redraw: Populated<(), With<RedrawRequested>>,
-    mut surfaces: Populated<&mut RenderBufferBuilder>,
+    nodes: Populated<(NameOrEntity, &Background, &FinalLayout, &Root)>,
+    mut views: Populated<(&View, &mut RenderBufferBuilder)>,
 ) {
-    for (entity, background, rounded_layout, root) in nodes {
-        // - check if the root of the ui tree is requested to be redrawn
-        // - get the render target
-        // - get the render buffer builder for the render target
-        if let Ok(()) = requested_redraw.get(root.viewport)
-            && let Some(render_target) = root.render_target
-            && let Ok(mut render_buffer_builder) = surfaces.get_mut(render_target)
-        {
-            let offset = Point2::new(rounded_layout.location.x, rounded_layout.location.y);
-            let size = Vector2::new(rounded_layout.size.width, rounded_layout.size.height);
+    for (entity, background, final_layout, root) in nodes {
+        let (view, mut render_buffer_builder) = views.get_mut(root.root).unwrap();
+
+        if view.render {
+            let offset = Point2::new(final_layout.location.x, final_layout.location.y);
+            let size = Vector2::new(final_layout.size.width, final_layout.size.height);
 
             tracing::trace!(
                 %entity,
                 ?background,
                 ?offset,
                 ?size,
+                depth = ?final_layout.depth,
                 "render background"
             );
 
@@ -399,13 +393,13 @@ fn render_sprites(
                     &mut render_buffer_builder,
                     offset,
                     size,
-                    rounded_layout.order,
+                    final_layout.depth,
                     background.pixel_size,
                 );
             }
             else {
                 render_buffer_builder
-                    .push_quad(offset, size, rounded_layout.order, None)
+                    .push_quad(offset, size, final_layout.depth, None)
                     .set_atlas_texture(&background.sprite.atlas_handle);
             }
         }

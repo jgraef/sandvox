@@ -14,13 +14,12 @@ use bevy_ecs::{
         ChildOf,
         Children,
     },
+    name::NameOrEntity,
     query::{
         Changed,
-        Has,
         Or,
         QueryData,
         With,
-        Without,
     },
     resource::Resource,
     schedule::{
@@ -53,12 +52,10 @@ use crate::{
         plugin::WorldBuilder,
         schedule,
     },
-    render::surface::RenderTarget,
     ui::{
-        RedrawRequested,
         Root,
         UiSystems,
-        Viewport,
+        view::View,
     },
 };
 
@@ -82,59 +79,71 @@ where
     builder.insert_resource(layout_config).add_systems(
         schedule::Render,
         (
-            initialize_layout_components,
-            purge_dirty_cache_entries,
-            layout_trees::<L>
-                .run_if(any_match_filter::<Or<(Changed<LayoutCache>, Changed<Viewport>)>>)
-                .after(initialize_layout_components)
-                .after(purge_dirty_cache_entries)
+            purge_invalid_cache_entries,
+            (calculate_tree_layouts::<L>, finalize_tree_layouts::<L>)
+                .chain()
+                .run_if(any_match_filter::<Or<(Changed<LayoutCache>, Changed<View>)>>)
+                .after(purge_invalid_cache_entries)
                 .after(UiSystems::Layout)
                 .before(UiSystems::Render),
             request_redraw
                 .before(UiSystems::Render)
-                .after(layout_trees::<L>),
+                .after(finalize_tree_layouts::<L>),
         ),
     );
 }
 
-fn request_redraw(nodes: Populated<&Root, Changed<RoundedLayout>>, mut commands: Commands) {
+fn request_redraw(nodes: Populated<&Root, Changed<FinalLayout>>, mut views: Populated<&mut View>) {
     for root in nodes {
-        commands.entity(root.viewport).insert(RedrawRequested);
+        let mut view = views.get_mut(root.root).unwrap();
+        view.render = true;
     }
 }
 
-/// System that computes the layout of all UI trees
+/// System that computes the (unrounded) layout of all UI trees
 ///
 /// # TODO
 ///
 /// make this run only if something changes. Preferably only compute subtrees
-///   if they changed. taffy caches them, but we do know when stuff changes.
-///   Could work like the transform hierarchy.
+/// if they changed. taffy caches them, but we do know when stuff changes.
+/// Could work like the transform hierarchy.
 ///
 /// This might help too:
 ///
 /// ```no_run
 /// .run_if(any_match_filter::<Or<(Changed<Style>, Changed<LeafMeasure>)>>)
 /// ```
-fn layout_trees<L>(
-    mut tree: TreeInner<L>,
-    roots: Populated<(Entity, &Viewport, Option<&RenderTarget>), (With<Style>, Without<ChildOf>)>,
-) where
+#[profiling::function]
+fn calculate_tree_layouts<L>(mut tree: TreeInner<L>, views: Populated<(Entity, &View)>)
+where
     L: LeafMeasure,
 {
-    for (entity, surface, render_target) in roots.iter() {
+    for (entity, view) in views.iter() {
         let mut tree = Tree {
             inner: &mut tree,
-            root: Root {
-                viewport: entity,
-                render_target: render_target.map(|render_target| render_target.0),
-            },
+            root: Root { root: entity },
         };
-        tree.compute_root_layout(entity, surface.size.cast());
+        tree.compute_layout(view.size.cast());
     }
 }
 
+/// System that computes the rounded layouts
 #[profiling::function]
+fn finalize_tree_layouts<L>(mut tree: TreeInner<L>, views: Populated<Entity, With<View>>)
+where
+    L: LeafMeasure,
+{
+    for entity in views.iter() {
+        let mut tree = Tree {
+            inner: &mut tree,
+            root: Root { root: entity },
+        };
+        tree.finalize_layout();
+    }
+}
+
+// not needed anymore
+/*#[profiling::function]
 fn initialize_layout_components(
     nodes: Populated<
         (Entity, Has<LayoutCache>, Has<UnroundedLayout>),
@@ -154,10 +163,15 @@ fn initialize_layout_components(
             entity.insert(UnroundedLayout::default());
         }
     }
-}
+}*/
 
+/// This purges all cache entries that have become invalid
+///
+/// # TODO
+///
+/// I'm not sure if this is correct
 #[profiling::function]
-fn purge_dirty_cache_entries(
+fn purge_invalid_cache_entries(
     mut params: ParamSet<(
         Populated<Entity, Or<(Changed<LayoutCache>, Changed<ChildOf>, Changed<Children>)>>,
         Query<(&mut LayoutCache, Option<&ChildOf>)>,
@@ -226,25 +240,10 @@ impl LayoutCache {
 struct UnroundedLayout(taffy::Layout);
 
 #[derive(Clone, Debug, Component, derive_more::Deref)]
-pub struct RoundedLayout(taffy::Layout);
-
-#[derive(Clone, Copy, Debug, Component)]
-struct DebugLabel(&'static str);
-
-// note: the derive macro for `QueryData` doesn't like it when we put the trait
-// bound `L: Leaf` into a where clause. we think this is a bug with bevy_ecs
-// that should be reported.
-#[derive(Debug, QueryData)]
-#[query_data(mutable)]
-struct Node<L: LeafMeasure> {
-    style: &'static Style,
-    unrounded_layout: &'static mut UnroundedLayout,
-    rounded_layout: Option<&'static mut RoundedLayout>,
-    root: Option<&'static mut Root>,
-    cache: &'static mut LayoutCache,
-    debug_label: Option<&'static DebugLabel>,
-    children: Option<&'static Children>,
-    leaf: Option<L::Node>,
+pub struct FinalLayout {
+    #[deref]
+    layout: taffy::Layout,
+    pub depth: u32,
 }
 
 #[inline]
@@ -262,7 +261,7 @@ pub(super) struct LayoutConfig<L> {
     pub leaf_measure: L,
 }
 
-pub(super) struct Tree<'t, 'w, 's, L>
+struct Tree<'t, 'w, 's, L>
 where
     L: LeafMeasure,
 {
@@ -271,13 +270,26 @@ where
 }
 
 #[derive(SystemParam)]
-pub(super) struct TreeInner<'w, 's, L>
+struct TreeInner<'w, 's, L>
 where
     L: LeafMeasure,
 {
-    nodes: Query<'w, 's, Node<L>>,
+    styles: Query<'w, 's, &'static Style>,
+    unrounded_layouts: Query<'w, 's, &'static mut UnroundedLayout>,
+    final_layouts: Query<'w, 's, &'static mut FinalLayout>,
+    roots: Query<'w, 's, &'static mut Root>,
+    cache: Query<'w, 's, &'static mut LayoutCache>,
+    children: Query<'w, 's, &'static Children>,
+    leafs: Query<'w, 's, <L as LeafMeasure>::Node>,
+
+    /// for displaying better error messages
+    names: Query<'w, 's, NameOrEntity>,
+
+    /// data required by the leaf-measurement function
     leaf_data: StaticSystemParam<'w, 's, <L as LeafMeasure>::Data>,
+
     layout_config: Res<'w, LayoutConfig<L>>,
+
     commands: Commands<'w, 's>,
 }
 
@@ -285,31 +297,66 @@ impl<'t, 'w, 's, L> Tree<'t, 'w, 's, L>
 where
     L: LeafMeasure,
 {
-    fn compute_root_layout(&mut self, root: Entity, surface_size: Vector2<f32>) {
-        let root = entity_to_node_id(root);
-
+    fn compute_layout(&mut self, view_size: Vector2<f32>) {
         let available_size = Size {
-            width: AvailableSpace::Definite(surface_size.x),
-            height: AvailableSpace::Definite(surface_size.y),
+            width: AvailableSpace::Definite(view_size.x),
+            height: AvailableSpace::Definite(view_size.y),
         };
 
+        let root = entity_to_node_id(self.root.root);
         taffy::compute_root_layout(self, root, available_size);
-        taffy::round_layout(self, root);
     }
 
-    #[allow(dead_code)]
-    pub fn print(&self, root: Entity) {
-        let root = entity_to_node_id(root);
-        taffy::print_tree(self, root);
+    fn finalize_layout(&mut self) {
+        let root = entity_to_node_id(self.root.root);
+        taffy::round_layout(self, root);
+
+        // the `order` field in `taffy::Layout` is not global for the whole tree, so we
+        // need to assign our own order values
+        //
+        // https://github.com/DioxusLabs/taffy/issues/226
+
+        fn toposort(
+            entity: Entity,
+            depth: u32,
+            mut final_layouts: &mut Query<&mut FinalLayout>,
+            children_query: &Query<&Children>,
+        ) {
+            if let Ok(mut final_layout) = final_layouts.get_mut(entity) {
+                if final_layout.depth != depth {
+                    final_layout.depth = depth;
+                }
+
+                if let Ok(children) = children_query.get(entity) {
+                    for child in children.iter() {
+                        toposort(*child, depth + 1, &mut final_layouts, children_query);
+                    }
+                }
+            }
+        }
+
+        toposort(
+            self.root.root,
+            0,
+            &mut self.inner.final_layouts,
+            &self.inner.children,
+        );
     }
 
     fn get_style_for_node(&self, node_id: NodeId) -> &taffy::Style {
-        &*self
-            .inner
-            .nodes
-            .get(node_id_to_entity(node_id))
-            .unwrap()
-            .style
+        let entity = node_id_to_entity(node_id);
+
+        /*let style = self.inner.styles.get(entity).unwrap_or_else(|error| {
+            let name = self.inner.names.get(entity).unwrap();
+            panic!("Can't get style for UI node `{name}`: {error}");
+        });
+        &**style
+        */
+
+        self.inner.styles.get(entity).map_or_else(
+            |_error| get_default_style_for_node(&self.root, entity),
+            |style| &**style,
+        )
     }
 
     fn compute_uncached_child_layout(
@@ -320,16 +367,19 @@ where
         let entity = node_id_to_entity(node_id);
         tracing::trace!(?entity, "computing tree layout for node");
 
-        let mut node = self.inner.nodes.get_mut(entity).unwrap();
+        if let Ok(mut leaf) = self.inner.leafs.get_mut(entity) {
+            let style = self.inner.styles.get(entity).map_or_else(
+                |_error| get_default_style_for_node(&self.root, entity),
+                |style| &**style,
+            );
 
-        if let Some(leaf) = &mut node.leaf {
             taffy::compute_leaf_layout(
                 inputs,
-                &**node.style,
+                style,
                 |_calc_ptr, _parent_size| 0.0,
                 |known_dimensions, available_space| {
                     self.inner.layout_config.leaf_measure.measure(
-                        leaf,
+                        &mut leaf,
                         &mut self.inner.leaf_data,
                         known_dimensions,
                         available_space,
@@ -338,13 +388,11 @@ where
             )
         }
         else {
-            // we need to explicitely drop the node.
-            //
-            // Node is generic over L, so we don't know if it has a Drop impl, thus it can
-            // potentially live until the end of the scope. But we its lifetime to stop here
-            // so we can pass the tree to the recursive call.
-            let display = node.style.display;
-            drop(node);
+            let display = self
+                .inner
+                .styles
+                .get(entity)
+                .map_or(const { taffy::Display::DEFAULT }, |style| style.display);
 
             match display {
                 taffy::Display::Block => taffy::compute_block_layout(self, node_id, inputs),
@@ -372,15 +420,19 @@ where
     }
 
     fn set_unrounded_layout(&mut self, node_id: taffy::NodeId, layout: &taffy::Layout) {
-        let mut unrounded_layout = self
-            .inner
-            .nodes
-            .get_mut(node_id_to_entity(node_id))
-            .unwrap()
-            .unrounded_layout;
+        let entity = node_id_to_entity(node_id);
 
-        if &unrounded_layout.0 != layout {
-            unrounded_layout.0 = *layout;
+        if let Ok(mut unrounded_layout) = self.inner.unrounded_layouts.get_mut(entity) {
+            // only modify if it really changed
+            if &unrounded_layout.0 != layout {
+                unrounded_layout.0 = *layout;
+            }
+        }
+        else {
+            self.inner
+                .commands
+                .entity(entity)
+                .insert(UnroundedLayout(*layout));
         }
     }
 
@@ -411,30 +463,39 @@ where
         Self: 'a;
 
     fn child_ids(&self, node_id: NodeId) -> Self::ChildIter<'_> {
-        ChildIter {
-            inner: self
-                .inner
-                .nodes
-                .get(node_id_to_entity(node_id))
-                .ok()
-                .and_then(|node| node.children)
-                .map_or([].iter(), |children| children.iter()),
-        }
+        let entity = node_id_to_entity(node_id);
+        let inner = self
+            .inner
+            .children
+            .get(entity)
+            .ok()
+            .map_or([].iter(), |children| children.iter());
+
+        ChildIter { inner }
     }
 
     fn child_count(&self, node_id: NodeId) -> usize {
+        let entity = node_id_to_entity(node_id);
         self.inner
-            .nodes
-            .get(node_id_to_entity(node_id))
-            .ok()
-            .and_then(|node| node.children)
+            .children
+            .get(entity)
             .map_or(0, |children| children.len())
     }
 
     fn get_child_id(&self, node_id: NodeId, index: usize) -> NodeId {
-        let node = self.inner.nodes.get(node_id_to_entity(node_id)).unwrap();
-        let children = node.children.unwrap();
-        entity_to_node_id(children[index])
+        let entity = node_id_to_entity(node_id);
+
+        let children = self.inner.children.get(entity).unwrap_or_else(|_| {
+            let name = self.inner.names.get(entity).unwrap();
+            panic!("Node `{name}` has no children");
+        });
+
+        let child = children.get(index).unwrap_or_else(|| {
+            let name = self.inner.names.get(entity).unwrap();
+            panic!("Node `{name}` has no child with index `{index}`");
+        });
+
+        entity_to_node_id(*child)
     }
 }
 
@@ -451,11 +512,12 @@ where
         available_space: taffy::Size<taffy::AvailableSpace>,
         run_mode: taffy::RunMode,
     ) -> Option<taffy::LayoutOutput> {
+        let entity = node_id_to_entity(node_id);
+
         self.inner
-            .nodes
-            .get(node_id_to_entity(node_id))
-            .ok()?
             .cache
+            .get(entity)
+            .ok()?
             .0
             .get(known_dimensions, available_space, run_mode)
     }
@@ -468,16 +530,28 @@ where
         run_mode: taffy::RunMode,
         layout_output: taffy::LayoutOutput,
     ) {
-        if let Ok(mut node) = self.inner.nodes.get_mut(node_id_to_entity(node_id)) {
-            node.cache
+        let entity = node_id_to_entity(node_id);
+
+        if let Ok(mut cache) = self.inner.cache.get_mut(entity) {
+            cache
                 .0
                 .store(known_dimensions, available_space, run_mode, layout_output);
+        }
+        else {
+            let mut cache = LayoutCache::default();
+
+            cache
+                .0
+                .store(known_dimensions, available_space, run_mode, layout_output);
+
+            self.inner.commands.entity(entity).insert(cache);
         }
     }
 
     fn cache_clear(&mut self, node_id: NodeId) {
-        if let Ok(mut node) = self.inner.nodes.get_mut(node_id_to_entity(node_id)) {
-            node.cache.0.clear();
+        let entity = node_id_to_entity(node_id);
+        if let Ok(mut cache) = self.inner.cache.get_mut(entity) {
+            cache.0.clear();
         }
     }
 }
@@ -556,74 +630,56 @@ where
     L: LeafMeasure,
 {
     fn get_unrounded_layout(&self, node_id: NodeId) -> taffy::Layout {
-        self.inner
-            .nodes
-            .get(node_id_to_entity(node_id))
-            .unwrap()
-            .unrounded_layout
-            .0
+        let entity = node_id_to_entity(node_id);
+
+        let unrounded_layout = self
+            .inner
+            .unrounded_layouts
+            .get(entity)
+            .unwrap_or_else(|_| {
+                let name = self.inner.names.get(entity).unwrap();
+                panic!("Node `{name}` has no unrounded layout");
+            });
+
+        unrounded_layout.0
     }
 
     fn set_final_layout(&mut self, node_id: NodeId, layout: &taffy::Layout) {
         let entity = node_id_to_entity(node_id);
-        let node = self.inner.nodes.get_mut(entity).unwrap();
-        let rounded_layout = node.rounded_layout;
 
-        if layout.size == taffy::Size::ZERO {
-            if rounded_layout.is_some() {
+        if let Ok(mut rounded_layout) = self.inner.final_layouts.get_mut(entity) {
+            if layout.size == taffy::Size::ZERO {
+                // remove final layout
+
                 self.inner
                     .commands
                     .entity(entity)
-                    .try_remove::<RoundedLayout>();
+                    .try_remove::<FinalLayout>();
             }
+            else if &rounded_layout.layout != layout {
+                // update final layout
+
+                tracing::trace!(?entity, ?layout, "final layout");
+                rounded_layout.layout = *layout;
+            }
+        }
+        else if layout.size != taffy::Size::ZERO {
+            // insert final layout
+
+            tracing::trace!(?entity, ?layout, "final layout");
+            self.inner.commands.entity(entity).insert(FinalLayout {
+                layout: *layout,
+                depth: 0,
+            });
+        }
+
+        // update/insert root
+        if let Ok(mut root) = self.inner.roots.get_mut(entity) {
+            root.set_if_neq(self.root);
         }
         else {
-            if let Some(mut rounded_layout) = rounded_layout {
-                if &rounded_layout.0 != layout {
-                    tracing::trace!(?entity, ?layout, "final layout");
-                    rounded_layout.0 = *layout;
-                }
-            }
-            else {
-                tracing::trace!(?entity, ?layout, "final layout");
-                self.inner
-                    .commands
-                    .entity(entity)
-                    .insert(RoundedLayout(*layout));
-            }
-
-            if let Some(mut root) = node.root {
-                root.set_if_neq(self.root);
-            }
-            else {
-                self.inner.commands.entity(entity).insert(self.root);
-            }
+            self.inner.commands.entity(entity).insert(self.root);
         }
-    }
-}
-
-impl<'t, 'w, 's, L> taffy::PrintTree for Tree<'t, 'w, 's, L>
-where
-    L: LeafMeasure,
-{
-    fn get_debug_label(&self, node_id: NodeId) -> &'static str {
-        self.inner
-            .nodes
-            .get(node_id_to_entity(node_id))
-            .unwrap()
-            .debug_label
-            .map(|label| label.0)
-            .unwrap_or_default()
-    }
-
-    fn get_final_layout(&self, node_id: NodeId) -> taffy::Layout {
-        self.inner
-            .nodes
-            .get(node_id_to_entity(node_id))
-            .unwrap()
-            .rounded_layout
-            .map(|rounded_layout| rounded_layout.0)
-            .unwrap_or_default()
     }
 }
 
@@ -678,4 +734,26 @@ mod style_not_send_sync_patch {
         reason = "This wrapper is safe while the calc feature is disabled."
     )]
     unsafe impl<S> Sync for Style<S> where S: CheapCloneStr {}
+}
+
+fn get_default_style_for_node(root: &Root, entity: Entity) -> &'static taffy::Style {
+    if entity == root.root {
+        const ROOT_DEFAULT: taffy::Style = const {
+            let mut root_default = taffy::Style::DEFAULT;
+
+            let full = taffy::Dimension::percent(1.0);
+            root_default.size = taffy::Size {
+                width: full,
+                height: full,
+            };
+            root_default.display = taffy::Display::None;
+
+            root_default
+        };
+
+        const { &ROOT_DEFAULT }
+    }
+    else {
+        const { &taffy::Style::DEFAULT }
+    }
 }

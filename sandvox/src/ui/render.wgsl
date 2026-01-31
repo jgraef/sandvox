@@ -1,12 +1,12 @@
-struct FrameUniform {
+struct UiPassUniform {
     viewport_size: vec2u,
-    // padding: 8 bytes
-    camera_matrix: mat4x4f,
+    time: f32,
+    // padding: 4 bytes
 }
 
 @group(0)
 @binding(0)
-var<uniform> frame_uniform: FrameUniform;
+var<uniform> ui_pass_uniform: UiPassUniform;
 
 @group(0)
 @binding(1)
@@ -46,12 +46,13 @@ var font_texture: texture_2d<f32>;
 @binding(5)
 var<storage, read> font_data: FontData;
 
+const GLYPH_BIT: u32 = 0x80000000;
 
 struct Quad {
     position: vec2f,
     size: vec2f,
     texture_id: u32,
-    depth: f32,
+    depth: u32,
     // padding 8 bytes
     tint: vec4f,
 }
@@ -68,7 +69,6 @@ const DEBUG_VERTICES = array(
     vec2f(1, 1), vec2f(1, 0),
     vec2f(1, 0), vec2f(0, 0),
 );
-const DEBUG_COLOR: vec4f = vec4f(1, 0, 0, 1);
 
 @vertex
 fn debug_vertex(@builtin(vertex_index) vertex_index: u32) -> DebugVertexOutput {
@@ -76,21 +76,35 @@ fn debug_vertex(@builtin(vertex_index) vertex_index: u32) -> DebugVertexOutput {
     let vertex = DEBUG_VERTICES[vertex_index % 8];
 
     let position = vertex * quad.size + quad.position;
-    let clip_position = vec4f(vec2f(2, -2) * position / vec2f(frame_uniform.viewport_size) + vec2f(-1, 1), quad.depth, 1.0);
+    let clip_position = vec4f(vec2f(2, -2) * position / vec2f(ui_pass_uniform.viewport_size) + vec2f(-1, 1), 0.0, 1.0);
+
+    var color: vec4f;
+    if quad.texture_id == 0xffffffff {
+        color = vec4f(1, 0, 0, 1);
+    }
+    else if (quad.texture_id & GLYPH_BIT) == 0 {
+        color = vec4f(0, 0, 1, 1);
+    }
+    else {
+        color = vec4f(0, 1, 0, 1);
+    }
 
     return DebugVertexOutput(
         clip_position,
+        color,
     );
 }
 
 struct DebugVertexOutput {
     @builtin(position)
     position: vec4f,
+    @location(0)
+    color: vec4f,
 }
 
 @fragment
 fn debug_fragment(input: DebugVertexOutput) -> @location(0) vec4f {
-    return DEBUG_COLOR;
+    return input.color;
 }
 
 
@@ -115,7 +129,7 @@ fn quad_vertex(@builtin(vertex_index) vertex_index: u32) -> QuadVertexOutput {
     else {
         let vertex = QUAD_VERTICES[vertex_index % 6];
         let position = vertex * quad.size + quad.position;
-        output.position = vec4f(vec2f(2, -2) * position / vec2f(frame_uniform.viewport_size) + vec2f(-1, 1), quad.depth, 1.0);
+        output.position = vec4f(vec2f(2, -2) * position / vec2f(ui_pass_uniform.viewport_size) + vec2f(-1, 1), 0.0, 1.0);
         output.uv = vertex;
         output.texture_id = quad.texture_id;
         output.tint = quad.tint;
@@ -141,8 +155,6 @@ struct QuadVertexOutput {
 
 @fragment
 fn quad_fragment(input: QuadVertexOutput) -> @location(0) vec4f {
-    const GLYPH_BIT: u32 = 0x80000000;
-
     if (input.texture_id & GLYPH_BIT) == 0 {
         // atlas texture
 
@@ -183,19 +195,3 @@ fn glyph_map_uv(glyph_id: u32, uv: vec2f) -> vec2f {
     return (vec2f(glyph.atlas_offset) + uv * vec2f(glyph.size)) / vec2f(font_data.atlas_size);
 }
 
-
-
-@vertex
-fn clear_depth_vertex(@builtin(vertex_index) vertex_index: u32) -> @builtin(position) vec4f {
-    return vec4f(
-        f32((vertex_index & 1) << 2) - 1,
-        f32((vertex_index & 2) << 1) - 1,
-        1,
-        1,
-    );
-}
-
-@fragment
-fn clear_depth_fragment(@builtin(position) position: vec4f) -> @location(0) vec4f {
-    return vec4f(0, 0, 0, 0);
-}

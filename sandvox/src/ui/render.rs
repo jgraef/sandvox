@@ -1,32 +1,31 @@
+use std::ops::Range;
+
 use bevy_ecs::{
+    change_detection::DetectChangesMut,
     component::Component,
-    entity::{
-        Entity,
-        EntityHashSet,
-    },
     name::NameOrEntity,
     query::{
-        Added,
         Changed,
-        Or,
+        ROQueryItem,
         With,
         Without,
     },
-    relationship::RelationshipTarget,
     resource::Resource,
     schedule::IntoScheduleConfigs,
     system::{
         Commands,
-        Local,
         Populated,
+        Query,
         Res,
         ResMut,
+        SystemParamItem,
     },
 };
 use bytemuck::{
     Pod,
     Zeroable,
 };
+use itertools::Itertools;
 use nalgebra::{
     Point2,
     Vector2,
@@ -44,22 +43,26 @@ use crate::{
     render::{
         RenderSystems,
         atlas::AtlasHandle,
-        frame::{
-            Frame,
-            FrameBindGroupLayout,
+        command::{
+            AddRenderFunction,
+            RenderFunction,
         },
+        pass::{
+            RenderPass,
+            phase,
+            ui_pass::{
+                UiPass,
+                UiPassLayout,
+            },
+        },
+        render_target::RenderTarget,
         staging::Staging,
-        surface::{
-            RenderSources,
-            RenderTarget,
-            Surface,
-        },
+        surface::Surface,
         text::GlyphId,
     },
     ui::{
-        RedrawRequested,
         UiSystems,
-        Viewport,
+        view::View,
     },
     wgpu::{
         WgpuContext,
@@ -72,29 +75,23 @@ pub(super) fn setup_render_systems(builder: &mut WorldBuilder) {
     builder
         .add_systems(
             schedule::Startup,
-            create_pipeline_layout.in_set(RenderSystems::Setup),
+            create_layout.in_set(RenderSystems::Setup),
         )
         .add_systems(
             schedule::Render,
             (
-                (create_pipeline, create_render_buffer).in_set(RenderSystems::BeginFrame),
-                (
-                    flush_render_buffers.after(UiSystems::Render),
-                    render_ui.after(flush_render_buffers),
-                )
-                    .in_set(RenderSystems::RenderUi),
+                create_render_buffer.in_set(RenderSystems::BeginFrame),
+                (create_pipeline, flush_render_buffers).before(RenderSystems::RenderUi),
                 clear_render_requests.after(UiSystems::Render),
-                propagate_render_requests
-                    .before(UiSystems::Render)
-                    .after(UiSystems::Layout),
             ),
-        );
+        )
+        .add_render_function::<phase::Ui, _>(RenderUi);
 }
 
 #[profiling::function]
-fn create_pipeline_layout(
+fn create_layout(
     wgpu: Res<WgpuContext>,
-    frame_bind_group_layout: Res<FrameBindGroupLayout>,
+    ui_pass_layout: Res<UiPassLayout>,
     mut commands: Commands,
 ) {
     let shader = wgpu
@@ -121,197 +118,148 @@ fn create_pipeline_layout(
         .device
         .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("ui"),
-            bind_group_layouts: &[
-                &frame_bind_group_layout.bind_group_layout,
-                &bind_group_layout,
-            ],
+            bind_group_layouts: &[&ui_pass_layout.bind_group_layout, &bind_group_layout],
             immediate_size: 0,
         });
 
-    commands.insert_resource(PipelineLayout {
+    commands.insert_resource(UiLayout {
         shader,
         bind_group_layout,
         pipeline_layout,
     });
 }
 
+#[profiling::function]
 fn create_pipeline(
     wgpu: Res<WgpuContext>,
-    debug_pipeline_layout: Res<PipelineLayout>,
-    surfaces: Populated<(Entity, &Surface), Without<Pipeline>>,
+    debug_pipeline_layout: Res<UiLayout>,
+    surfaces: Populated<(NameOrEntity, &Surface)>,
+    views: Populated<
+        (NameOrEntity, &RenderTarget),
+        (
+            // todo: this should really check if there's *any* view that needs to render *anything*
+            // opaque
+            With<UiPass>,
+            With<View>,
+            Without<UiPipeline>,
+        ),
+    >,
     mut commands: Commands,
 ) {
-    for (entity, surface) in surfaces {
-        let debug_pipeline = wgpu
-            .device
-            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("ui/debug"),
-                layout: Some(&debug_pipeline_layout.pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &debug_pipeline_layout.shader,
-                    entry_point: Some("debug_vertex"),
-                    compilation_options: Default::default(),
-                    buffers: &[],
-                },
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::LineList,
-                    strip_index_format: None,
-                    front_face: wgpu::FrontFace::Ccw,
-                    cull_mode: None,
-                    unclipped_depth: false,
-                    polygon_mode: wgpu::PolygonMode::Fill,
-                    conservative: false,
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: surface.depth_texture_format(),
-                    depth_write_enabled: false,
-                    depth_compare: wgpu::CompareFunction::Always,
-                    stencil: Default::default(),
-                    bias: Default::default(),
-                }),
-                multisample: Default::default(),
-                fragment: Some(wgpu::FragmentState {
-                    module: &debug_pipeline_layout.shader,
-                    entry_point: Some("debug_fragment"),
-                    compilation_options: Default::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: surface.surface_texture_format(),
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                multiview_mask: None,
-                cache: None,
+    for (view_entity, render_target) in views {
+        if let Ok((surface_entity, surface)) = surfaces.get(render_target.0) {
+            tracing::debug!(surface = %surface_entity, view = %view_entity, "creating ui render pipeline for surface");
+            let debug_pipeline =
+                wgpu.device
+                    .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                        label: Some("ui/debug"),
+                        layout: Some(&debug_pipeline_layout.pipeline_layout),
+                        vertex: wgpu::VertexState {
+                            module: &debug_pipeline_layout.shader,
+                            entry_point: Some("debug_vertex"),
+                            compilation_options: Default::default(),
+                            buffers: &[],
+                        },
+                        primitive: wgpu::PrimitiveState {
+                            topology: wgpu::PrimitiveTopology::LineList,
+                            strip_index_format: None,
+                            front_face: wgpu::FrontFace::Ccw,
+                            cull_mode: None,
+                            unclipped_depth: false,
+                            polygon_mode: wgpu::PolygonMode::Fill,
+                            conservative: false,
+                        },
+                        depth_stencil: None,
+                        multisample: Default::default(),
+                        fragment: Some(wgpu::FragmentState {
+                            module: &debug_pipeline_layout.shader,
+                            entry_point: Some("debug_fragment"),
+                            compilation_options: Default::default(),
+                            targets: &[Some(wgpu::ColorTargetState {
+                                format: surface.surface_format(),
+                                blend: None,
+                                write_mask: wgpu::ColorWrites::ALL,
+                            })],
+                        }),
+                        multiview_mask: None,
+                        cache: None,
+                    });
+
+            let quad_pipeline =
+                wgpu.device
+                    .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                        label: Some("ui/quad"),
+                        layout: Some(&debug_pipeline_layout.pipeline_layout),
+                        vertex: wgpu::VertexState {
+                            module: &debug_pipeline_layout.shader,
+                            entry_point: Some("quad_vertex"),
+                            compilation_options: Default::default(),
+                            buffers: &[],
+                        },
+                        primitive: wgpu::PrimitiveState {
+                            topology: wgpu::PrimitiveTopology::TriangleList,
+                            strip_index_format: None,
+                            front_face: wgpu::FrontFace::Ccw,
+                            cull_mode: None,
+                            unclipped_depth: false,
+                            polygon_mode: wgpu::PolygonMode::Fill,
+                            conservative: false,
+                        },
+                        depth_stencil: None,
+                        multisample: Default::default(),
+                        fragment: Some(wgpu::FragmentState {
+                            module: &debug_pipeline_layout.shader,
+                            entry_point: Some("quad_fragment"),
+                            compilation_options: Default::default(),
+                            targets: &[Some(wgpu::ColorTargetState {
+                                format: surface.surface_format(),
+                                blend: None,
+                                write_mask: wgpu::ColorWrites::ALL,
+                            })],
+                        }),
+                        multiview_mask: None,
+                        cache: None,
+                    });
+
+            commands.entity(view_entity.entity).insert(UiPipeline {
+                debug_pipeline,
+                quad_pipeline,
             });
-
-        let quad_pipeline = wgpu
-            .device
-            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("ui/quad"),
-                layout: Some(&debug_pipeline_layout.pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &debug_pipeline_layout.shader,
-                    entry_point: Some("quad_vertex"),
-                    compilation_options: Default::default(),
-                    buffers: &[],
-                },
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    strip_index_format: None,
-                    front_face: wgpu::FrontFace::Ccw,
-                    cull_mode: None,
-                    unclipped_depth: false,
-                    polygon_mode: wgpu::PolygonMode::Fill,
-                    conservative: false,
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: surface.depth_texture_format(),
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::Less,
-                    stencil: Default::default(),
-                    bias: Default::default(),
-                }),
-                multisample: Default::default(),
-                fragment: Some(wgpu::FragmentState {
-                    module: &debug_pipeline_layout.shader,
-                    entry_point: Some("quad_fragment"),
-                    compilation_options: Default::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: surface.surface_texture_format(),
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                multiview_mask: None,
-                cache: None,
-            });
-
-        let clear_depth_pipeline =
-            wgpu.device
-                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some("ui/clear-depth"),
-                    layout: Some(&debug_pipeline_layout.pipeline_layout),
-                    vertex: wgpu::VertexState {
-                        module: &debug_pipeline_layout.shader,
-                        entry_point: Some("clear_depth_vertex"),
-                        compilation_options: Default::default(),
-                        buffers: &[],
-                    },
-                    primitive: wgpu::PrimitiveState {
-                        topology: wgpu::PrimitiveTopology::TriangleList,
-                        strip_index_format: None,
-                        front_face: wgpu::FrontFace::Ccw,
-                        cull_mode: None,
-                        unclipped_depth: false,
-                        polygon_mode: wgpu::PolygonMode::Fill,
-                        conservative: false,
-                    },
-                    depth_stencil: Some(wgpu::DepthStencilState {
-                        format: surface.depth_texture_format(),
-                        depth_write_enabled: true,
-                        depth_compare: wgpu::CompareFunction::Always,
-                        stencil: Default::default(),
-                        bias: Default::default(),
-                    }),
-                    multisample: Default::default(),
-                    fragment: Some(wgpu::FragmentState {
-                        module: &debug_pipeline_layout.shader,
-                        entry_point: Some("clear_depth_fragment"),
-                        compilation_options: Default::default(),
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format: surface.surface_texture_format(),
-                            blend: None,
-                            write_mask: wgpu::ColorWrites::empty(),
-                        })],
-                    }),
-                    multiview_mask: None,
-                    cache: None,
-                });
-
-        commands.entity(entity).insert(Pipeline {
-            debug_pipeline,
-            quad_pipeline,
-            clear_depth_pipeline,
-        });
+        }
     }
 }
 
 #[profiling::function]
 fn create_render_buffer(
     wgpu: Res<WgpuContext>,
-    viewports: Populated<
-        (NameOrEntity, &RenderTarget),
-        Or<((Changed<RenderTarget>, With<Viewport>), Added<Viewport>)>,
-    >,
-    surfaces: Populated<NameOrEntity, Without<RenderBuffer>>,
+    views: Populated<NameOrEntity, (With<UiPass>, Without<RenderBuffer>)>,
     mut commands: Commands,
 ) {
     // todo: remove stale buffers (e.g. from a surface that is not a ui render
     // target anymore)
 
-    for (viewport_entity, render_target) in viewports {
-        if let Ok(surface_entity) = surfaces.get(render_target.0) {
-            tracing::debug!(viewport = %viewport_entity, surface = %surface_entity, "creating render buffer");
+    for view_entity in views {
+        tracing::debug!(viewport = %view_entity, "creating render buffer");
 
-            commands.entity(render_target.0).insert((
-                RenderBuffer {
-                    buffer: TypedArrayBuffer::new(
-                        wgpu.device.clone(),
-                        "ui/render",
-                        wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                    ),
-                    bind_group: None,
-                },
-                RenderBufferBuilder::default(),
-            ));
-        }
+        commands.entity(view_entity.entity).insert((
+            RenderBuffer {
+                buffer: TypedArrayBuffer::new(
+                    wgpu.device.clone(),
+                    "ui/render",
+                    wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                ),
+                bind_group: None,
+                layers: vec![],
+            },
+            RenderBufferBuilder::default(),
+        ));
     }
 }
 
 #[profiling::function]
 fn flush_render_buffers(
     wgpu: Res<WgpuContext>,
-    pipeline_layout: Res<PipelineLayout>,
+    pipeline_layout: Res<UiLayout>,
     render_buffers: Populated<
         (&mut RenderBuffer, &mut RenderBufferBuilder),
         Changed<RenderBufferBuilder>,
@@ -321,7 +269,12 @@ fn flush_render_buffers(
     tracing::trace!("flusing render buffers");
 
     for (mut render_buffer, mut render_buffer_builder) in render_buffers {
-        let max_order_inv = 1.0 / (render_buffer_builder.max_order + 2) as f32;
+        // sort quads by order
+        render_buffer_builder.sort();
+
+        // determine layers
+        render_buffer.layers.clear();
+        render_buffer.layers.extend(render_buffer_builder.layers());
 
         // upload buffer
         let render_buffer = &mut *render_buffer;
@@ -329,10 +282,7 @@ fn flush_render_buffers(
             render_buffer_builder.quads.len(),
             |view| {
                 for (target, source) in view.iter_mut().zip(&render_buffer_builder.quads) {
-                    *target = source.quad;
-
-                    // set depth value for quad
-                    target.depth = 1.0 - (source.order + 1) as f32 * max_order_inv;
+                    *target = *source;
                 }
             },
             |new_buffer| {
@@ -363,101 +313,74 @@ fn flush_render_buffers(
     }
 }
 
-#[profiling::function]
-fn render_ui(
-    surfaces: Populated<(&mut Frame, &Pipeline, &RenderBuffer)>,
-    show_debug_outlines: Option<Res<ShowDebugOutlines>>,
-) {
-    for (mut frame, render_pipeline, render_buffer) in surfaces {
+#[derive(Debug)]
+struct RenderUi;
+
+impl RenderFunction for RenderUi {
+    type Param = (Option<Res<'static, ShowDebugOutlines>>,);
+    type ViewQuery = (&'static UiPipeline, &'static RenderBuffer);
+    type ItemQuery = ();
+
+    #[profiling::function]
+    fn render(
+        &self,
+        param: SystemParamItem<Self::Param>,
+        render_pass: &mut RenderPass<'_>,
+        view: ROQueryItem<Self::ViewQuery>,
+        items: Query<Self::ItemQuery>,
+    ) {
+        let show_debug_outlines = param.0.is_some();
+        let (pipeline, render_buffer) = view;
+        let _ = items;
+
         if let Some(bind_group) = &render_buffer.bind_group {
-            let frame = frame.active_mut();
-            let span = frame.enter_span("ui");
+            let span = render_pass.enter_span("ui");
 
             // bind bind group containing the render buffer
-            frame.render_pass.set_bind_group(1, Some(bind_group), &[]);
-
-            // clear z buffer
-            frame
-                .render_pass
-                .set_pipeline(&render_pipeline.clear_depth_pipeline);
-            frame.render_pass.draw(0..3, 0..1);
+            render_pass.set_bind_group(1, Some(bind_group), &[]);
 
             // draw render buffer (textured quads)
-            frame
-                .render_pass
-                .set_pipeline(&render_pipeline.quad_pipeline);
-
-            let num_quads: u32 = render_buffer.buffer.len().try_into().unwrap();
-            frame.render_pass.draw(0..(6 * num_quads), 0..1);
+            render_pass.set_pipeline(&pipeline.quad_pipeline);
+            for layer in &render_buffer.layers {
+                let start = layer.start * 6;
+                let end = layer.end * 6;
+                render_pass.draw(start..end, 0..1);
+            }
 
             // draw debug outlines for render buffer
-            if show_debug_outlines.is_some() {
-                frame
-                    .render_pass
-                    .set_pipeline(&render_pipeline.debug_pipeline);
-                frame.render_pass.draw(0..(8 * num_quads), 0..1);
+            if show_debug_outlines {
+                let num_quads: u32 = render_buffer.buffer.len().try_into().unwrap();
+
+                render_pass.set_pipeline(&pipeline.debug_pipeline);
+                render_pass.draw(0..(8 * num_quads), 0..1);
             }
 
-            frame.exit_span(span);
+            render_pass.exit_span(span);
         }
     }
 }
 
-// this is more of a hack. `RedrawRequested` is attached to the UI viewport,
-// but all viewports of a render surface must be drawn at the same time.
 #[profiling::function]
-fn propagate_render_requests(
-    requests: Populated<(Entity, &RenderTarget), With<RedrawRequested>>,
-    surfaces: Populated<&RenderSources>,
-    mut already_requesting: Local<EntityHashSet>,
-    mut propagate_to: Local<EntityHashSet>,
-    mut commands: Commands,
-) {
-    assert!(already_requesting.is_empty());
-    assert!(propagate_to.is_empty());
-
-    for (entity, render_target) in requests {
-        already_requesting.insert(entity);
-
-        if let Ok(render_sources) = surfaces.get(render_target.0) {
-            for render_source in render_sources.iter() {
-                propagate_to.insert(render_source);
-            }
+fn clear_render_requests(requests: Populated<(NameOrEntity, &mut View), Changed<View>>) {
+    for (entity, mut view) in requests {
+        if view.render {
+            tracing::trace!(%entity, "clearing render request");
+            view.bypass_change_detection().render = false;
         }
-    }
-
-    for entity in propagate_to.drain() {
-        if !already_requesting.contains(&entity) {
-            commands.entity(entity).insert(RedrawRequested);
-        }
-    }
-
-    already_requesting.clear();
-}
-
-#[profiling::function]
-fn clear_render_requests(
-    requests: Populated<Entity, With<RedrawRequested>>,
-    mut commands: Commands,
-) {
-    for entity in requests {
-        tracing::trace!(?entity, "clearing render request");
-        commands.entity(entity).try_remove::<RedrawRequested>();
     }
 }
 
 #[derive(Debug, Resource)]
-struct PipelineLayout {
+struct UiLayout {
     shader: wgpu::ShaderModule,
     bind_group_layout: wgpu::BindGroupLayout,
     pipeline_layout: wgpu::PipelineLayout,
 }
 
 #[derive(Debug, Component)]
-struct Pipeline {
+struct UiPipeline {
     debug_pipeline: wgpu::RenderPipeline,
     quad_pipeline: wgpu::RenderPipeline,
-    clear_depth_pipeline: wgpu::RenderPipeline,
 }
 
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -466,20 +389,14 @@ struct Quad {
     position: Point2<f32>,
     size: Vector2<f32>,
     texture_id: u32,
-    depth: f32,
+    order: u32,
     _padding: [u32; 2],
     tint: LinSrgba<f32>,
 }
 
-#[derive(Debug)]
-struct LayeredQuad {
-    order: u32,
-    quad: Quad,
-}
-
 #[derive(Debug, Default, Component)]
 pub struct RenderBufferBuilder {
-    quads: Vec<LayeredQuad>,
+    quads: Vec<Quad>,
     max_order: u32,
 }
 
@@ -493,19 +410,16 @@ impl RenderBufferBuilder {
     ) -> QuadBuilder<'_> {
         let index = self.quads.len();
 
-        self.quads.push(LayeredQuad {
+        self.quads.push(Quad {
+            position,
+            size,
+            texture_id: u32::MAX,
             order,
-            quad: Quad {
-                position,
-                size,
-                texture_id: u32::MAX,
-                depth: 0.0,
-                _padding: Default::default(),
-                tint: tint.map_or_else(
-                    || LinSrgba::new(0.0, 0.0, 0.0, 1.0),
-                    |tint| tint.into_linear(),
-                ),
-            },
+            _padding: Default::default(),
+            tint: tint.map_or_else(
+                || LinSrgba::new(0.0, 0.0, 0.0, 1.0),
+                |tint| tint.into_linear(),
+            ),
         });
 
         self.max_order = self.max_order.max(order);
@@ -519,16 +433,54 @@ impl RenderBufferBuilder {
         self.quads.clear();
         self.max_order = 0;
     }
+
+    fn sort(&mut self) {
+        self.quads.sort_unstable_by_key(|quad| quad.order);
+    }
+
+    fn layers(&self) -> impl Iterator<Item = Range<u32>> {
+        #[derive(Debug)]
+        struct Layer {
+            first: u32,
+            last: u32,
+            order: u32,
+        }
+
+        self.quads
+            .iter()
+            .enumerate()
+            .map(|(i, quad)| {
+                let i = u32::try_from(i).unwrap();
+                Layer {
+                    first: i,
+                    last: i,
+                    order: quad.order,
+                }
+            })
+            .coalesce(|previous, current| {
+                if previous.order == current.order {
+                    Ok(Layer {
+                        first: previous.first,
+                        last: current.last,
+                        order: current.order,
+                    })
+                }
+                else {
+                    Err((previous, current))
+                }
+            })
+            .map(|layer| layer.first..(layer.last + 1))
+    }
 }
 
 #[derive(Debug)]
 pub struct QuadBuilder<'a> {
-    quad: &'a mut LayeredQuad,
+    quad: &'a mut Quad,
 }
 
 impl<'a> QuadBuilder<'a> {
     pub fn set_atlas_texture(&mut self, atlas_handle: &AtlasHandle) -> &mut Self {
-        self.quad.quad.texture_id = atlas_handle.id();
+        self.quad.texture_id = atlas_handle.id();
         self
     }
 
@@ -539,7 +491,7 @@ impl<'a> QuadBuilder<'a> {
         assert!(glyph_id & GLYPH_BIT == 0);
         glyph_id |= GLYPH_BIT;
 
-        self.quad.quad.texture_id = glyph_id;
+        self.quad.texture_id = glyph_id;
         self
     }
 }
@@ -552,6 +504,8 @@ struct RenderBuffer {
     // the FrameBindGroup. So theoretically they can be merged. We think eventually we'd like to
     // have separate render-pass-global bindgroups for 3D and UI.
     bind_group: Option<wgpu::BindGroup>,
+
+    layers: Vec<Range<u32>>,
 }
 
 #[derive(Clone, Copy, Debug, Resource)]

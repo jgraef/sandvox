@@ -13,6 +13,10 @@ use bevy_ecs::{
         Populated,
     },
 };
+use bytemuck::{
+    Pod,
+    Zeroable,
+};
 use color_eyre::eyre::Error;
 use nalgebra::{
     Matrix4,
@@ -34,11 +38,8 @@ use crate::{
     },
     render::{
         RenderSystems,
-        frame::{
-            CameraData,
-            FrameUniform,
-        },
-        surface::{
+        pass::main_pass::MainPassUniform,
+        render_target::{
             RenderSources,
             RenderTarget,
         },
@@ -219,31 +220,43 @@ fn update_camera_projections(
 
 fn update_camera_matrices(
     cameras: Populated<
-        (&CameraProjection, &GlobalTransform, &RenderTarget),
+        (
+            &CameraProjection,
+            &GlobalTransform,
+            // todo: this should also work for other passes that require this camera matrix
+            &mut MainPassUniform,
+        ),
         Or<(
             Changed<CameraProjection>,
             Changed<GlobalTransform>,
             Changed<RenderTarget>,
         )>,
     >,
-    mut frame_uniforms: Populated<&mut FrameUniform>,
 ) {
-    for (projection, transform, render_target) in cameras {
-        if let Ok(mut frame_uniform) = frame_uniforms.get_mut(render_target.0) {
-            frame_uniform.data.camera = CameraData {
-                projection: projection.to_matrix(),
-                projection_inverse: projection.to_inverse(),
-                view: transform.isometry.inverse().to_homogeneous(),
-                view_inverse: transform.isometry.to_homogeneous(),
-                position: transform.position().to_homogeneous(),
-            };
-        }
+    for (projection, transform, mut main_pass_uniform) in cameras {
+        main_pass_uniform.data.camera = CameraData {
+            projection: projection.to_matrix(),
+            projection_inverse: projection.to_inverse(),
+            view: transform.isometry.inverse().to_homogeneous(),
+            view_inverse: transform.isometry.to_homogeneous(),
+            position: transform.position().to_homogeneous(),
+        };
     }
 }
 
 #[derive(Clone, Copy, Debug, Component)]
 pub struct FrustrumCulled {
     pub aabb: Aabb,
+}
+
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+#[repr(C)]
+pub struct CameraData {
+    pub projection: Matrix4<f32>,
+    pub projection_inverse: Matrix4<f32>,
+    pub view: Matrix4<f32>,
+    pub view_inverse: Matrix4<f32>,
+    pub position: Vector4<f32>,
 }
 
 #[cfg(test)]

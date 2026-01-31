@@ -1,9 +1,8 @@
 
-struct FrameUniform {
-    viewport_size: vec2u,
-    time: f32,
-    // padding: 4 bytes
+struct MainPassUniform {
     camera: Camera,
+    time: f32,
+    // padding: 12 bytes
 }
 
 struct Camera {
@@ -16,7 +15,7 @@ struct Camera {
 
 @group(0)
 @binding(0)
-var<uniform> frame_uniform: FrameUniform;
+var<uniform> main_pass_uniform: MainPassUniform;
 
 @group(0)
 @binding(1)
@@ -69,8 +68,8 @@ fn skybox_vertex(@builtin(vertex_index) vertex_index: u32) -> SkyboxOutput {
         1,
     );
 
-    var unprojected = frame_uniform.camera.projection_inverse * position;
-    var view_vector = frame_uniform.camera.view_inverse * vec4f(unprojected.xyz, 0);
+    var unprojected = main_pass_uniform.camera.projection_inverse * position;
+    var view_vector = main_pass_uniform.camera.view_inverse * vec4f(unprojected.xyz, 0);
     var texture_position = skybox_data.model_matrix * view_vector;
 
     return SkyboxOutput(
@@ -106,7 +105,7 @@ fn planet_vertex(@builtin(vertex_index) vertex_index: u32) -> PlanetOutput {
     let uv = QUAD_VERTICES[vertex_index % 6];
     let vertex_offset = planet.size * (vec2f(1, -1) * uv + vec2f(-1, 1));
 
-    //let far = (frame_uniform.camera.projection_inverse * vec4f(0, 0, 1, 1));
+    //let far = (main_pass_uniform.camera.projection_inverse * vec4f(0, 0, 1, 1));
 
     var position = vec4f(0, 0, 1.0, 0);
 
@@ -114,13 +113,13 @@ fn planet_vertex(@builtin(vertex_index) vertex_index: u32) -> PlanetOutput {
 
     // transform planet position to camera coordinate frame, but without translations
     position.w = 0;
-    position = frame_uniform.camera.view * position;
+    position = main_pass_uniform.camera.view * position;
 
     // add vertex offset so we're actually drawing the relevant vertex
     position += vec4f(vertex_offset, 0, 0);
 
     // apply camera projection for correct aspect ratio
-    position = frame_uniform.camera.projection * position;
+    position = main_pass_uniform.camera.projection * position;
 
     // we only care about the screen position.
     // depth is used for depth testing

@@ -1,6 +1,5 @@
 use bevy_ecs::{
     component::Component,
-    entity::Entity,
     name::NameOrEntity,
     query::{
         Changed,
@@ -20,13 +19,11 @@ use crate::{
         WindowHandle,
         WindowSize,
     },
-    render::{
-        RenderConfig,
-        frame::FrameUniform,
-    },
+    render::RenderConfig,
     wgpu::WgpuContext,
 };
 
+#[profiling::function]
 pub(super) fn create_surfaces(
     wgpu: Res<WgpuContext>,
     config: Res<RenderConfig>,
@@ -41,15 +38,7 @@ pub(super) fn create_surfaces(
     }
 }
 
-// todo: this should be handled by UI I think
-pub(super) fn update_viewports(
-    windows: Populated<(&mut FrameUniform, &WindowSize), Changed<WindowSize>>,
-) {
-    for (mut frame_uniform, window_size) in windows {
-        frame_uniform.data.viewport_size = window_size.size;
-    }
-}
-
+#[profiling::function]
 pub(super) fn reconfigure_surfaces(
     wgpu: Res<WgpuContext>,
     windows: Populated<(&mut Surface, &WindowSize), Changed<WindowSize>>,
@@ -59,12 +48,27 @@ pub(super) fn reconfigure_surfaces(
     }
 }
 
+#[profiling::function]
+pub(super) fn set_swap_chain_texture(windows: Populated<&mut Surface>) {
+    for mut surface in windows {
+        surface.ensure_swap_chain_texture();
+    }
+}
+
+#[profiling::function]
+pub(super) fn present_surfaces(windows: Populated<&mut Surface>) {
+    for mut surface in windows {
+        surface.present();
+    }
+}
+
 #[derive(Debug, Component)]
 pub struct Surface {
     surface: wgpu::Surface<'static>,
     config: wgpu::SurfaceConfiguration,
-    depth_texture: wgpu::Texture,
-    depth_stencil_format: wgpu::TextureFormat,
+    depth_texture: wgpu::TextureView,
+    depth_format: wgpu::TextureFormat,
+    swap_chain_texture: Option<SwapChainTexture>,
 }
 
 impl Surface {
@@ -74,8 +78,6 @@ impl Surface {
         size: Vector2<u32>,
         config: &RenderConfig,
     ) -> Self {
-        tracing::debug!(?size, "creating surface");
-
         let surface = wgpu.instance.create_surface(window.window.clone()).unwrap();
 
         let capabilities = surface.get_capabilities(&wgpu.adapter);
@@ -90,6 +92,8 @@ impl Surface {
                     .first()
                     .expect("Surface has no supported texture formats")
             });
+
+        tracing::debug!(?size, format = ?surface_texture_format, "created surface");
 
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -116,7 +120,8 @@ impl Surface {
             surface,
             config,
             depth_texture,
-            depth_stencil_format,
+            depth_format: depth_stencil_format,
+            swap_chain_texture: None,
         }
     }
 
@@ -132,28 +137,59 @@ impl Surface {
             self.config.height = size.y;
             self.surface.configure(&wgpu.device, &self.config);
 
-            self.depth_texture = create_depth_texture(wgpu, size, self.depth_stencil_format);
+            self.depth_texture = create_depth_texture(wgpu, size, self.depth_format);
         }
     }
 
-    pub fn surface_texture(&self) -> wgpu::SurfaceTexture {
-        self.surface.get_current_texture().unwrap()
+    pub fn surface_texture(&self) -> &wgpu::TextureView {
+        let swap_chain_texture = self.swap_chain_texture.as_ref().unwrap();
+        &swap_chain_texture.texture_view
     }
 
-    pub fn depth_texture(&self) -> wgpu::TextureView {
-        self.depth_texture
-            .create_view(&wgpu::TextureViewDescriptor {
-                label: Some("depth"),
-                ..Default::default()
-            })
+    pub fn depth_texture(&self) -> &wgpu::TextureView {
+        &self.depth_texture
     }
 
-    pub fn surface_texture_format(&self) -> wgpu::TextureFormat {
+    pub fn surface_format(&self) -> wgpu::TextureFormat {
         self.config.format
     }
 
-    pub fn depth_texture_format(&self) -> wgpu::TextureFormat {
-        self.depth_stencil_format
+    pub fn depth_format(&self) -> wgpu::TextureFormat {
+        self.depth_format
+    }
+
+    pub fn ensure_swap_chain_texture(&mut self) {
+        if self.swap_chain_texture.is_none() {
+            self.swap_chain_texture = Some(SwapChainTexture::new(&self.surface));
+        }
+    }
+
+    pub fn present(&mut self) {
+        if let Some(swap_chain_texture) = self.swap_chain_texture.take() {
+            swap_chain_texture.surface_texture.present();
+        }
+    }
+}
+
+#[derive(Debug)]
+struct SwapChainTexture {
+    surface_texture: wgpu::SurfaceTexture,
+    texture_view: wgpu::TextureView,
+}
+
+impl SwapChainTexture {
+    fn new(surface: &wgpu::Surface) -> Self {
+        let surface_texture = surface.get_current_texture().unwrap();
+        let texture_view = surface_texture
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor {
+                label: Some("surface"),
+                ..Default::default()
+            });
+        Self {
+            surface_texture,
+            texture_view,
+        }
     }
 }
 
@@ -161,8 +197,8 @@ fn create_depth_texture(
     wgpu: &WgpuContext,
     size: Vector2<u32>,
     format: wgpu::TextureFormat,
-) -> wgpu::Texture {
-    wgpu.device.create_texture(&wgpu::TextureDescriptor {
+) -> wgpu::TextureView {
+    let depth_texture = wgpu.device.create_texture(&wgpu::TextureDescriptor {
         label: Some("depth texture"),
         size: wgpu::Extent3d {
             width: size.x,
@@ -175,6 +211,11 @@ fn create_depth_texture(
         format,
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TRANSIENT,
         view_formats: &[],
+    });
+
+    depth_texture.create_view(&wgpu::TextureViewDescriptor {
+        label: Some("depth texture"),
+        ..Default::default()
     })
 }
 
@@ -186,11 +227,3 @@ impl Default for ClearColor {
         Self(Srgba::new(0.0, 0.0, 0.0, 1.0))
     }
 }
-
-#[derive(Clone, Copy, Debug, Component)]
-#[relationship(relationship_target = RenderSources)]
-pub struct RenderTarget(pub Entity);
-
-#[derive(Clone, Debug, Component)]
-#[relationship_target(relationship = RenderTarget)]
-pub struct RenderSources(Vec<Entity>);

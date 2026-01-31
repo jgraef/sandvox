@@ -1,22 +1,9 @@
 const PI: f32 = 3.141592653589793;
 
-struct Vertex {
-    position: vec4f,
-    normal: vec4f,
-    uv: vec2f,
-    texture_id: u32,
-    // padding: 4 bytes
-}
-
-struct Instance {
-    model_matrix: mat4x4f,
-}
-
-struct FrameUniform {
-    viewport_size: vec2u,
-    time: f32,
-    // padding: 4 bytes
+struct MainPassUniform {
     camera: Camera,
+    time: f32,
+    // padding: 12 bytes
 }
 
 struct Camera {
@@ -29,7 +16,7 @@ struct Camera {
 
 @group(0)
 @binding(0)
-var<uniform> frame_uniform: FrameUniform;
+var<uniform> main_pass_uniform: MainPassUniform;
 
 @group(0)
 @binding(1)
@@ -49,7 +36,19 @@ struct AtlasEntry {
 var<storage, read> atlas_data: array<AtlasEntry>;
 
 
-// todo: merge this into the render pass bind group
+
+struct Vertex {
+    position: vec4f,
+    normal: vec4f,
+    uv: vec2f,
+    texture_id: u32,
+    // padding: 4 bytes
+}
+
+struct Instance {
+    model_matrix: mat4x4f,
+}
+
 @group(1)
 @binding(0)
 var<storage, read> instance_buffer: array<Instance>;
@@ -75,7 +74,7 @@ fn mesh_shaded_vertex(
     let world_position = instance.model_matrix * vertex.position;
     let normal = instance.model_matrix * vertex.normal;
 
-    let position = frame_uniform.camera.projection * frame_uniform.camera.view * world_position;
+    let position = main_pass_uniform.camera.projection * main_pass_uniform.camera.view * world_position;
 
     return ShadedOutput(
         position,
@@ -111,7 +110,7 @@ fn mesh_shaded_fragment(input: ShadedOutput) -> @location(0) vec4f {
 
     // todo: figure out where the sun is (https://iurietarlev.github.io/SunpathDiagram/),
     // but move this out of shader and send light direction/color via frame uniform
-    //let sun_phase = frame_uniform.time / 60.0 * 2.0 * PI;
+    //let sun_phase = main_pass_uniform.time / 60.0 * 2.0 * PI;
     //let light_dir = normalize(vec3f(sin(sun_phase), cos(sun_phase), 0.5));
 
     let light_color = vec3f(1);
@@ -164,7 +163,7 @@ fn mesh_wireframe_vertex(
     let instance = instance_buffer[instance_index];
 
     let world_position = instance.model_matrix * vertex.position;
-    let position = frame_uniform.camera.projection * frame_uniform.camera.view * world_position;
+    let position = main_pass_uniform.camera.projection * main_pass_uniform.camera.view * world_position;
 
     return WireframeOutput(
         position,

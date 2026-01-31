@@ -51,6 +51,10 @@ use serde::{
     Deserialize,
     Serialize,
 };
+use taffy::prelude::{
+    TaffyAuto,
+    TaffyZero,
+};
 use winit::keyboard::KeyCode;
 
 use crate::{
@@ -93,6 +97,7 @@ use crate::{
     },
     input::Keys,
     render::{
+        DefaultAtlas,
         RenderConfig,
         RenderSystems,
         atlas::{
@@ -105,21 +110,18 @@ use crate::{
             FpsCounter,
             FpsCounterConfig,
         },
-        frame::DefaultAtlas,
         mesh::{
             RenderMeshStatistics,
             RenderWireframes,
         },
+        render_target::RenderTarget,
         skybox::{
             Planet,
             Skybox,
             SkyboxPlugin,
         },
         staging::Staging,
-        surface::{
-            ClearColor,
-            RenderTarget,
-        },
+        surface::ClearColor,
         text::{
             Text,
             TextColor,
@@ -131,6 +133,7 @@ use crate::{
         ShowDebugOutlines,
         Sprites,
         Style,
+        View,
     },
     util::{
         format_size,
@@ -390,7 +393,6 @@ fn init_player(
             WindowConfig {
                 title: "SandVox".to_owned(),
             },
-            ClearColor(palette::named::LIGHTSKYBLUE.into_format().with_alpha(1.0)),
         ))
         .id();
 
@@ -398,6 +400,7 @@ fn init_player(
     commands.spawn((
         Name::new("main_camera"),
         RenderTarget(window),
+        ClearColor(palette::named::LIGHTSKYBLUE.into_format().with_alpha(1.0)),
         Camera {
             aspect_ratio: 1.0,
             fovy: render_config.fov.to_radians(),
@@ -418,71 +421,82 @@ fn init_player(
         Player,
     ));
 
-    // create debug ui
-    fps_counter_config.measurement_inverval = Duration::from_millis(100);
-    let pixel_size = 2.0;
-    let text_style = (
-        TextSize {
-            scaling: pixel_size,
-        },
-        TextColor {
-            color: palette::named::WHITESMOKE.into_format().with_alpha(1.0),
-        },
-    );
-    commands
-        .spawn({
-            let sprite = &sprites["panel"];
-            let background = Background {
-                sprite: sprite.clone(),
-                pixel_size,
-            };
+    {
+        // create UI
+        fps_counter_config.measurement_inverval = Duration::from_millis(100);
+        let pixel_size = 2.0;
+        let text_style = (
+            TextSize {
+                scaling: pixel_size,
+            },
+            TextColor {
+                color: palette::named::WHITESMOKE.into_format().with_alpha(1.0),
+            },
+        );
 
-            let mut style = Style::default();
-            style.display = taffy::style::Display::Flex;
-            style.flex_direction = taffy::style::FlexDirection::Column;
-            if let Some(padding) = sprite.padding(pixel_size) {
-                style.padding = padding;
-            }
+        commands
+            .spawn((Name::new("ui"), View::default(), RenderTarget(window)))
+            .with_children(|ui| {
+                // create debug panel
+                ui.spawn({
+                    let sprite = &sprites["panel"];
+                    let background = Background {
+                        sprite: sprite.clone(),
+                        pixel_size,
+                    };
 
-            (
-                style,
-                background,
-                RenderTarget(window),
-                Name::new("debug_panel"),
-            )
-        })
-        .with_children(|spawner| {
-            spawner.spawn((Text::from(format_build_tag()), text_style, Style::default()));
-            spawner.spawn((Text::default(), text_style, Style::default(), DebugOverlay));
-        });
+                    let mut style = Style::default();
+                    style.display = taffy::style::Display::Flex;
+                    style.flex_direction = taffy::style::FlexDirection::Column;
+                    style.margin = taffy::Rect {
+                        left: taffy::LengthPercentageAuto::ZERO,
+                        right: taffy::LengthPercentageAuto::AUTO,
+                        top: taffy::LengthPercentageAuto::ZERO,
+                        bottom: taffy::LengthPercentageAuto::AUTO,
+                    };
+                    if let Some(padding) = sprite.padding(pixel_size) {
+                        style.padding = padding;
+                    }
 
-    // create crosshair
-    commands
-        .spawn({
-            let mut style = Style::default();
-            style.display = taffy::style::Display::Flex;
-            style.size = taffy::Size::percent(1.0);
+                    (style, background, Name::new("debug_panel"))
+                })
+                .with_children(|panel| {
+                    panel.spawn((
+                        Name::new("build_tag"),
+                        Text::from(format_build_tag()),
+                        text_style,
+                        Style::default(),
+                    ));
+                    panel.spawn((
+                        Name::new("debug_info"),
+                        Text::default(),
+                        text_style,
+                        Style::default(),
+                        DebugOverlay,
+                    ));
+                });
 
-            (style, RenderTarget(window), Name::new("crosshair"))
-        })
-        .with_child({
-            let sprite = &sprites["crosshair"];
-            let background = Background {
-                sprite: sprite.clone(),
-                pixel_size,
-            };
+                // create crosshair
+                ui.spawn({
+                    let sprite = &sprites["crosshair"];
+                    let background = Background {
+                        sprite: sprite.clone(),
+                        pixel_size,
+                    };
 
-            let mut style = Style::default();
-            style.display = taffy::style::Display::Flex;
-            style.margin = taffy::Rect::auto();
-            style.size = taffy::Size::from_lengths(
-                sprite.size.x as f32 * pixel_size,
-                sprite.size.y as f32 * pixel_size,
-            );
-            style.align_self = Some(taffy::AlignSelf::Center);
+                    let mut style = Style::default();
+                    style.display = taffy::style::Display::Block;
+                    style.position = taffy::Position::Absolute;
+                    style.margin = taffy::Rect::auto();
+                    style.size = taffy::Size::from_lengths(
+                        sprite.size.x as f32 * pixel_size,
+                        sprite.size.y as f32 * pixel_size,
+                    );
 
-            (style, background)
-        });
+                    (Name::new("crosshair"), style, background)
+                });
+            });
+    }
 }
 
 fn format_build_tag() -> String {

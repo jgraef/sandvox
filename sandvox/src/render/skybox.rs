@@ -24,7 +24,6 @@ use bevy_ecs::{
         Query,
         Res,
         ResMut,
-        Single,
     },
     world::Ref,
 };
@@ -55,15 +54,20 @@ use crate::{
     render::{
         RenderSystems,
         atlas::AtlasHandle,
-        frame::{
-            Frame,
-            FrameBindGroupLayout,
+        command::{
+            AddRenderFunction,
+            RenderFunction,
         },
+        pass::{
+            main_pass::{
+                MainPass,
+                MainPassLayout,
+            },
+            phase,
+        },
+        render_target::RenderTarget,
         staging::Staging,
-        surface::{
-            RenderTarget,
-            Surface,
-        },
+        surface::Surface,
     },
     util::{
         format_size,
@@ -94,22 +98,21 @@ impl Plugin for SkyboxPlugin {
             )
             .add_systems(
                 schedule::Render,
-                (
-                    (
-                        create_pipeline,
-                        load_skybox,
-                        update_skybox.run_if(
-                            any_match_filter::<(Changed<GlobalTransform>, With<SkyboxBindGroup>)>
-                                .or(any_match_filter::<(
-                                    Or<(Changed<GlobalTransform>, Changed<Planet>)>,
-                                    With<Planet>,
-                                )>),
+                ((
+                    create_pipeline,
+                    load_skybox,
+                    update_skybox.run_if(
+                        any_match_filter::<(Changed<GlobalTransform>, With<SkyboxBindGroup>)>.or(
+                            any_match_filter::<(
+                                Or<(Changed<GlobalTransform>, Changed<Planet>)>,
+                                With<Planet>,
+                            )>,
                         ),
-                    )
-                        .in_set(RenderSystems::BeginFrame),
-                    render_skybox.in_set(RenderSystems::RenderWorld),
-                ),
-            );
+                    ),
+                )
+                    .in_set(RenderSystems::BeginFrame),),
+            )
+            .add_render_function::<phase::Skybox, _>(RenderSkybox);
 
         Ok(())
     }
@@ -121,6 +124,7 @@ pub struct Skybox {
 }
 
 impl Skybox {
+    #[profiling::function]
     pub fn load(wgpu: &WgpuContext, path: impl AsRef<Path>) -> Result<Self, Error> {
         // note: generate cube map from cylindrical: https://jaxry.github.io/panorama-to-cubemap/
         // layout: https://gpuweb.github.io/gpuweb/#texture-view-creation
@@ -203,21 +207,21 @@ struct SkyboxBindGroup {
 }
 
 #[derive(Debug, Resource)]
-struct PipelineLayout {
+struct SkyboxLayout {
     layout: wgpu::PipelineLayout,
     shader: wgpu::ShaderModule,
     bind_group_layout: wgpu::BindGroupLayout,
 }
 
 #[derive(Debug, Component)]
-struct Pipeline {
+struct SkyboxPipeline {
     skybox_pipeline: wgpu::RenderPipeline,
     planet_pipeline: wgpu::RenderPipeline,
 }
 
 fn create_pipeline_layout(
     wgpu: Res<WgpuContext>,
-    frame_bind_group_layout: Res<FrameBindGroupLayout>,
+    main_pass_layout: Res<MainPassLayout>,
     mut commands: Commands,
 ) {
     let bind_group_layout =
@@ -252,10 +256,7 @@ fn create_pipeline_layout(
         .device
         .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("skybox"),
-            bind_group_layouts: &[
-                &frame_bind_group_layout.bind_group_layout,
-                &bind_group_layout,
-            ],
+            bind_group_layouts: &[&main_pass_layout.bind_group_layout, &bind_group_layout],
             immediate_size: 0,
         });
 
@@ -263,7 +264,7 @@ fn create_pipeline_layout(
         .device
         .create_shader_module(wgpu::include_wgsl!("skybox.wgsl"));
 
-    commands.insert_resource(PipelineLayout {
+    commands.insert_resource(SkyboxLayout {
         layout,
         shader,
         bind_group_layout,
@@ -272,108 +273,121 @@ fn create_pipeline_layout(
 
 fn create_pipeline(
     wgpu: Res<WgpuContext>,
-    pipeline_layout: Res<PipelineLayout>,
-    surfaces: Populated<(Entity, NameOrEntity, &Surface), Without<Pipeline>>,
+    pipeline_layout: Res<SkyboxLayout>,
+    surfaces: Populated<(NameOrEntity, &Surface)>,
+    cameras: Populated<
+        (NameOrEntity, &RenderTarget),
+        (
+            // todo: this should really check if there's *any* view that needs to render *anything*
+            // opaque
+            With<MainPass>,
+            Without<SkyboxPipeline>,
+        ),
+    >,
     mut commands: Commands,
 ) {
-    for (entity, name, surface) in surfaces {
-        tracing::trace!(surface = %name, "creating skybox render pipeline for surface");
+    for (camera_entity, render_target) in cameras {
+        if let Ok((surface_entity, surface)) = surfaces.get(render_target.0) {
+            tracing::debug!(surface = %surface_entity, camera = %camera_entity, "creating skybox render pipeline for surface");
 
-        let skybox_pipeline = wgpu
-            .device
-            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("skybox/stars"),
-                layout: Some(&pipeline_layout.layout),
-                vertex: wgpu::VertexState {
-                    module: &pipeline_layout.shader,
-                    entry_point: Some("skybox_vertex"),
-                    compilation_options: Default::default(),
-                    buffers: &[],
-                },
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    strip_index_format: None,
-                    front_face: wgpu::FrontFace::Ccw,
-                    cull_mode: None,
-                    unclipped_depth: false,
-                    polygon_mode: wgpu::PolygonMode::Fill,
-                    conservative: false,
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: surface.depth_texture_format(),
-                    depth_write_enabled: false,
-                    depth_compare: wgpu::CompareFunction::LessEqual,
-                    stencil: Default::default(),
-                    bias: Default::default(),
-                }),
-                multisample: Default::default(),
-                fragment: Some(wgpu::FragmentState {
-                    module: &pipeline_layout.shader,
-                    entry_point: Some("skybox_fragment"),
-                    compilation_options: Default::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: surface.surface_texture_format(),
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                multiview_mask: None,
-                cache: None,
-            });
+            let skybox_pipeline =
+                wgpu.device
+                    .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                        label: Some("skybox/stars"),
+                        layout: Some(&pipeline_layout.layout),
+                        vertex: wgpu::VertexState {
+                            module: &pipeline_layout.shader,
+                            entry_point: Some("skybox_vertex"),
+                            compilation_options: Default::default(),
+                            buffers: &[],
+                        },
+                        primitive: wgpu::PrimitiveState {
+                            topology: wgpu::PrimitiveTopology::TriangleList,
+                            strip_index_format: None,
+                            front_face: wgpu::FrontFace::Ccw,
+                            cull_mode: None,
+                            unclipped_depth: false,
+                            polygon_mode: wgpu::PolygonMode::Fill,
+                            conservative: false,
+                        },
+                        depth_stencil: Some(wgpu::DepthStencilState {
+                            format: surface.depth_format(),
+                            depth_write_enabled: false,
+                            depth_compare: wgpu::CompareFunction::LessEqual,
+                            stencil: Default::default(),
+                            bias: Default::default(),
+                        }),
+                        multisample: Default::default(),
+                        fragment: Some(wgpu::FragmentState {
+                            module: &pipeline_layout.shader,
+                            entry_point: Some("skybox_fragment"),
+                            compilation_options: Default::default(),
+                            targets: &[Some(wgpu::ColorTargetState {
+                                format: surface.surface_format(),
+                                blend: None,
+                                write_mask: wgpu::ColorWrites::ALL,
+                            })],
+                        }),
+                        multiview_mask: None,
+                        cache: None,
+                    });
 
-        let planet_pipeline = wgpu
-            .device
-            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("skybox/planets"),
-                layout: Some(&pipeline_layout.layout),
-                vertex: wgpu::VertexState {
-                    module: &pipeline_layout.shader,
-                    entry_point: Some("planet_vertex"),
-                    compilation_options: Default::default(),
-                    buffers: &[],
-                },
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    strip_index_format: None,
-                    front_face: wgpu::FrontFace::Ccw,
-                    cull_mode: None,
-                    unclipped_depth: false,
-                    polygon_mode: wgpu::PolygonMode::Fill,
-                    conservative: false,
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: surface.depth_texture_format(),
-                    depth_write_enabled: false,
-                    depth_compare: wgpu::CompareFunction::LessEqual,
-                    stencil: Default::default(),
-                    bias: Default::default(),
-                }),
-                multisample: Default::default(),
-                fragment: Some(wgpu::FragmentState {
-                    module: &pipeline_layout.shader,
-                    entry_point: Some("planet_fragment"),
-                    compilation_options: Default::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: surface.surface_texture_format(),
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                multiview_mask: None,
-                cache: None,
-            });
+            let planet_pipeline =
+                wgpu.device
+                    .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                        label: Some("skybox/planets"),
+                        layout: Some(&pipeline_layout.layout),
+                        vertex: wgpu::VertexState {
+                            module: &pipeline_layout.shader,
+                            entry_point: Some("planet_vertex"),
+                            compilation_options: Default::default(),
+                            buffers: &[],
+                        },
+                        primitive: wgpu::PrimitiveState {
+                            topology: wgpu::PrimitiveTopology::TriangleList,
+                            strip_index_format: None,
+                            front_face: wgpu::FrontFace::Ccw,
+                            cull_mode: None,
+                            unclipped_depth: false,
+                            polygon_mode: wgpu::PolygonMode::Fill,
+                            conservative: false,
+                        },
+                        depth_stencil: Some(wgpu::DepthStencilState {
+                            format: surface.depth_format(),
+                            depth_write_enabled: false,
+                            depth_compare: wgpu::CompareFunction::LessEqual,
+                            stencil: Default::default(),
+                            bias: Default::default(),
+                        }),
+                        multisample: Default::default(),
+                        fragment: Some(wgpu::FragmentState {
+                            module: &pipeline_layout.shader,
+                            entry_point: Some("planet_fragment"),
+                            compilation_options: Default::default(),
+                            targets: &[Some(wgpu::ColorTargetState {
+                                format: surface.surface_format(),
+                                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                                write_mask: wgpu::ColorWrites::ALL,
+                            })],
+                        }),
+                        multiview_mask: None,
+                        cache: None,
+                    });
 
-        commands.entity(entity).insert(Pipeline {
-            skybox_pipeline,
-            planet_pipeline,
-        });
+            commands
+                .entity(camera_entity.entity)
+                .insert(SkyboxPipeline {
+                    skybox_pipeline,
+                    planet_pipeline,
+                });
+        }
     }
 }
 
 #[profiling::function]
 fn load_skybox(
     wgpu: Res<WgpuContext>,
-    layout: Res<PipelineLayout>,
+    layout: Res<SkyboxLayout>,
     skyboxes: Populated<
         (Entity, &Skybox, Option<&GlobalTransform>, Option<&Children>),
         Without<SkyboxBindGroup>,
@@ -472,35 +486,40 @@ fn update_skybox(
     }
 }
 
-#[profiling::function]
-fn render_skybox(
-    cameras: Populated<&RenderTarget>,
-    mut frames: Populated<(&mut Frame, &Pipeline)>,
-    bind_group: Single<&SkyboxBindGroup>,
-) {
-    // todo: associate skybox with camera that it renders to
-    // we likely will do this after we refactor the render pass
+#[derive(Debug)]
+struct RenderSkybox;
 
-    for render_target in cameras {
-        if let Ok((mut frame, pipeline)) = frames.get_mut(render_target.0) {
-            let frame = frame.active_mut();
-            let span = frame.enter_span("skybox");
+impl RenderFunction for RenderSkybox {
+    type Param = ();
+    type ViewQuery = &'static SkyboxPipeline;
+    type ItemQuery = &'static SkyboxBindGroup;
 
-            frame
-                .render_pass
-                .set_bind_group(1, Some(&bind_group.bind_group), &[]);
+    #[profiling::function]
+    fn render(
+        &self,
+        param: bevy_ecs::system::SystemParamItem<Self::Param>,
+        render_pass: &mut super::pass::RenderPass<'_>,
+        view: bevy_ecs::query::ROQueryItem<Self::ViewQuery>,
+        items: Query<Self::ItemQuery>,
+    ) {
+        let _ = param;
 
-            frame.render_pass.set_pipeline(&pipeline.skybox_pipeline);
-            frame.render_pass.draw(0..3, 0..1);
+        if let Ok(bind_group) = items.single() {
+            let pipeline = view;
+
+            let span = render_pass.enter_span("skybox");
+
+            render_pass.set_bind_group(1, Some(&bind_group.bind_group), &[]);
+
+            render_pass.set_pipeline(&pipeline.skybox_pipeline);
+            render_pass.draw(0..3, 0..1);
 
             if bind_group.num_planets > 0 {
-                frame.render_pass.set_pipeline(&pipeline.planet_pipeline);
-                frame
-                    .render_pass
-                    .draw(0..(bind_group.num_planets * 6), 0..1);
+                render_pass.set_pipeline(&pipeline.planet_pipeline);
+                render_pass.draw(0..(bind_group.num_planets * 6), 0..1);
             }
 
-            frame.exit_span(span);
+            render_pass.exit_span(span);
         }
     }
 }

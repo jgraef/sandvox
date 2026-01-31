@@ -2,37 +2,27 @@ mod layout;
 mod render;
 mod sprites;
 mod text;
+mod view;
 
 use bevy_ecs::{
     component::Component,
     entity::Entity,
-    hierarchy::ChildOf,
-    name::NameOrEntity,
     query::{
         AnyOf,
-        Changed,
         QueryData,
-        With,
-        Without,
     },
-    relationship::RelationshipTarget,
     schedule::{
         IntoScheduleConfigs,
         SystemSet,
     },
-    system::{
-        Commands,
-        Populated,
-    },
 };
 use color_eyre::eyre::Error;
-use nalgebra::Vector2;
 
 pub use crate::ui::{
     layout::{
+        FinalLayout,
         LayoutCache,
         LeafMeasure,
-        RoundedLayout,
         Style,
     },
     render::{
@@ -44,9 +34,9 @@ pub use crate::ui::{
         Background,
         Sprites,
     },
+    view::View,
 };
 use crate::{
-    app::WindowSize,
     ecs::{
         plugin::{
             Plugin,
@@ -54,13 +44,7 @@ use crate::{
         },
         schedule,
     },
-    render::{
-        RenderSystems,
-        surface::{
-            RenderSources,
-            RenderTarget,
-        },
-    },
+    render::RenderSystems,
     ui::{
         layout::{
             LayoutConfig,
@@ -72,6 +56,7 @@ use crate::{
             TextLeafMeasure,
             setup_text_systems,
         },
+        view::setup_view_systems,
     },
 };
 
@@ -80,6 +65,7 @@ pub struct UiPlugin;
 
 impl Plugin for UiPlugin {
     fn setup(&self, builder: &mut WorldBuilder) -> Result<(), Error> {
+        setup_view_systems(builder);
         setup_layout_systems(
             builder,
             LayoutConfig {
@@ -91,14 +77,6 @@ impl Plugin for UiPlugin {
         setup_sprite_systems(builder);
 
         builder
-            .add_systems(
-                schedule::Render,
-                (
-                    create_viewports_from_render_targets,
-                    update_viewport_from_surfaces,
-                )
-                    .before(UiSystems::Layout),
-            )
             .configure_system_sets(
                 schedule::Render,
                 UiSystems::Layout.before(UiSystems::Render),
@@ -118,50 +96,10 @@ pub enum UiSystems {
     Render,
 }
 
-#[derive(Clone, Copy, Debug, Default, Component)]
-pub struct Viewport {
-    pub size: Vector2<u32>,
-}
-
-fn create_viewports_from_render_targets(
-    windows: Populated<(NameOrEntity, &WindowSize)>,
-    roots: Populated<
-        (NameOrEntity, &RenderTarget),
-        (With<Style>, Without<ChildOf>, Without<Viewport>),
-    >,
-    mut commands: Commands,
-) {
-    for (viewport_entity, render_target) in roots {
-        if let Ok((window_name, window_size)) = windows.get(render_target.0) {
-            tracing::debug!(window = %window_name, viewport = %viewport_entity, size = ?window_size.size, "create ui viewport");
-
-            commands.entity(viewport_entity.entity).insert(Viewport {
-                size: window_size.size,
-            });
-        }
-    }
-}
-
-fn update_viewport_from_surfaces(
-    windows: Populated<(&WindowSize, &RenderSources), Changed<WindowSize>>,
-    mut viewports: Populated<&mut Viewport>,
-) {
-    for (window_size, render_sources) in windows {
-        for entity in render_sources.iter() {
-            if let Ok(mut viewport) = viewports.get_mut(entity) {
-                viewport.size = window_size.size;
-            }
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Component)]
-pub struct RedrawRequested;
-
+/// Attached to UI nodes and points to root node
 #[derive(Clone, Copy, Debug, Component, PartialEq, Eq)]
 pub struct Root {
-    pub viewport: Entity,
-    pub render_target: Option<Entity>,
+    pub root: Entity,
 }
 
 #[derive(Clone, Copy, Debug, Default)]

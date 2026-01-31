@@ -1,7 +1,6 @@
 pub mod blit;
 pub mod buffer;
 pub mod image;
-
 pub mod query;
 
 use std::{
@@ -20,7 +19,10 @@ use bevy_ecs::{
 };
 use color_eyre::eyre::Error;
 use nalgebra::Vector2;
-use palette::LinSrgba;
+use palette::{
+    LinSrgba,
+    Srgba,
+};
 use serde::{
     Deserialize,
     Serialize,
@@ -383,5 +385,14 @@ impl TextureSourceLayout {
                 rows_per_image: self.rows_per_image,
             },
         }
+    }
+}
+
+pub fn srgba_to_wgpu(color: Srgba<f32>) -> wgpu::Color {
+    wgpu::Color {
+        r: color.red as f64,
+        g: color.green as f64,
+        b: color.blue as f64,
+        a: color.alpha as f64,
     }
 }
