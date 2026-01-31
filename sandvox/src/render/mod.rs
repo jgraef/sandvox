@@ -38,6 +38,7 @@ use crate::{
         schedule,
     },
     render::{
+        command::RenderFunctions,
         frame::{
             DefaultAtlas,
             begin_frames,
@@ -49,6 +50,11 @@ use crate::{
             update_frame_uniform,
         },
         mesh::RenderMeshStatistics,
+        phase::{
+            Opaque,
+            OpaquePrepass,
+            Wireframe,
+        },
         staging::{
             flush_staging,
             initialize_staging,
@@ -71,8 +77,14 @@ pub struct RenderPlugin {
 impl Plugin for RenderPlugin {
     fn setup(&self, builder: &mut WorldBuilder) -> Result<(), Error> {
         builder
+            // create resources
             .insert_resource(self.config.clone())
-            .insert_resource(RenderMeshStatistics::default())
+            .init_resource::<RenderMeshStatistics>()
+            // render functions
+            .init_resource::<RenderFunctions<Opaque>>()
+            .init_resource::<RenderFunctions<OpaquePrepass>>()
+            .init_resource::<RenderFunctions<Wireframe>>()
+            // startup systems
             .add_systems(
                 schedule::Startup,
                 (
@@ -92,6 +104,7 @@ impl Plugin for RenderPlugin {
                     flush_staging.after(RenderSystems::Setup),
                 ),
             )
+            // render systems
             .add_systems(
                 schedule::Render,
                 (

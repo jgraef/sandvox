@@ -1,4 +1,7 @@
-use std::any::TypeId;
+use std::{
+    any::TypeId,
+    marker::PhantomData,
+};
 
 use bevy_ecs::{
     entity::Entity,
@@ -42,7 +45,7 @@ where
     item: QueryState<C::ItemQuery>,
 }
 
-impl<C> Draw for RenderCommandState<C>
+impl<C> RenderFunction for RenderCommandState<C>
 where
     C: RenderCommand + 'static,
     C::Param: ReadOnlySystemParam,
@@ -71,15 +74,17 @@ where
 }
 
 pub trait AddRenderCommand {
-    fn add_render_command<C: RenderCommand>(&mut self)
+    fn add_render_command<P, C: RenderCommand>(&mut self) -> &mut Self
     where
+        P: 'static,
         C: RenderCommand + 'static,
         C::Param: ReadOnlySystemParam;
 }
 
 impl AddRenderCommand for WorldBuilder {
-    fn add_render_command<C>(&mut self)
+    fn add_render_command<P, C>(&mut self) -> &mut Self
     where
+        P: 'static,
         C: RenderCommand + 'static,
         C::Param: ReadOnlySystemParam,
     {
@@ -89,12 +94,14 @@ impl AddRenderCommand for WorldBuilder {
             item: self.world.query(),
         };
 
-        let mut render_commands = self.world.resource_mut::<DrawFunctions>();
+        let mut render_commands = self.world.resource_mut::<RenderFunctions<P>>();
         render_commands.insert(render_command_state);
+
+        self
     }
 }
 
-pub trait Draw: Send + Sync + 'static {
+pub trait RenderFunction: Send + Sync + 'static {
     fn prepare(&mut self, world: &World);
 
     fn render<'w>(
@@ -107,23 +114,48 @@ pub trait Draw: Send + Sync + 'static {
 }
 
 #[derive(derive_more::Debug, Resource)]
-struct DrawFunctions {
+pub(super) struct RenderFunctions<P> {
     #[debug(skip)]
-    draw_functions: Vec<Box<dyn Draw>>,
-    by_type_id: TypeIdMap<DrawFunctionId>,
+    draw_functions: Vec<Box<dyn RenderFunction>>,
+    by_type_id: TypeIdMap<RenderFunctionId<P>>,
 }
 
-impl DrawFunctions {
-    fn insert<D>(&mut self, draw_function: D) -> DrawFunctionId
+impl<P> RenderFunctions<P> {
+    fn insert<F>(&mut self, render_function: F) -> RenderFunctionId<P>
     where
-        D: Draw,
+        F: RenderFunction,
     {
-        let id = DrawFunctionId(self.draw_functions.len());
-        self.draw_functions.push(Box::new(draw_function));
-        self.by_type_id.insert(TypeId::of::<D>(), id);
+        let id = RenderFunctionId {
+            index: self.draw_functions.len(),
+            _marker: PhantomData,
+        };
+
+        self.draw_functions.push(Box::new(render_function));
+        self.by_type_id.insert(TypeId::of::<F>(), id);
+
         id
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-struct DrawFunctionId(usize);
+impl<P> Default for RenderFunctions<P> {
+    fn default() -> Self {
+        Self {
+            draw_functions: Default::default(),
+            by_type_id: Default::default(),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+struct RenderFunctionId<P> {
+    index: usize,
+    _marker: PhantomData<fn() -> P>,
+}
+
+impl<P> Clone for RenderFunctionId<P> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<P> Copy for RenderFunctionId<P> {}

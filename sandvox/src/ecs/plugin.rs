@@ -33,7 +33,10 @@ use bevy_ecs::{
         Schedules,
     },
     system::ScheduleSystem,
-    world::World,
+    world::{
+        FromWorld,
+        World,
+    },
 };
 use color_eyre::eyre::Error;
 
@@ -100,6 +103,14 @@ impl WorldBuilder {
             plugin.setup(self)?;
         }
         Ok(self)
+    }
+
+    pub fn init_resource<R>(&mut self) -> &mut Self
+    where
+        R: Resource + FromWorld,
+    {
+        self.world.init_resource::<R>();
+        self
     }
 
     pub fn insert_resource(&mut self, resource: impl Resource) -> &mut Self {

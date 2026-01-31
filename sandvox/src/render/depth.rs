@@ -1,7 +1,9 @@
 use bevy_ecs::component::Component;
 
-#[derive(Clone, Copy, Debug, Default, Component)]
-pub struct DepthPrepass;
+#[derive(Debug, Component)]
+pub struct DepthPrepass {
+    texture_view: wgpu::TextureView,
+}
 
 fn render_depth_prepass() {
     todo!();
