@@ -362,7 +362,7 @@ fn create_mesh_pipeline(
                     conservative: false,
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
-                    format: surface.depth_texture_format(),
+                    format: surface.depth_format(),
                     depth_write_enabled: true,
                     depth_compare: wgpu::CompareFunction::Less,
                     stencil: Default::default(),
@@ -374,7 +374,7 @@ fn create_mesh_pipeline(
                     entry_point: Some("mesh_shaded_fragment"),
                     compilation_options: Default::default(),
                     targets: &[Some(wgpu::ColorTargetState {
-                        format: surface.surface_texture_format(),
+                        format: surface.surface_format(),
                         blend: None,
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
@@ -404,7 +404,7 @@ fn create_mesh_pipeline(
                         conservative: false,
                     },
                     depth_stencil: Some(wgpu::DepthStencilState {
-                        format: surface.depth_texture_format(),
+                        format: surface.depth_format(),
                         depth_write_enabled: false,
                         depth_compare: wgpu::CompareFunction::LessEqual,
                         stencil: Default::default(),
@@ -416,7 +416,7 @@ fn create_mesh_pipeline(
                         entry_point: Some("mesh_wireframe_fragment"),
                         compilation_options: Default::default(),
                         targets: &[Some(wgpu::ColorTargetState {
-                            format: surface.surface_texture_format(),
+                            format: surface.surface_format(),
                             blend: None,
                             write_mask: wgpu::ColorWrites::ALL,
                         })],

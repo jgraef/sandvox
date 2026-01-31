@@ -163,7 +163,7 @@ fn create_pipeline(
                     conservative: false,
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
-                    format: surface.depth_texture_format(),
+                    format: surface.depth_format(),
                     depth_write_enabled: false,
                     depth_compare: wgpu::CompareFunction::Always,
                     stencil: Default::default(),
@@ -175,7 +175,7 @@ fn create_pipeline(
                     entry_point: Some("debug_fragment"),
                     compilation_options: Default::default(),
                     targets: &[Some(wgpu::ColorTargetState {
-                        format: surface.surface_texture_format(),
+                        format: surface.surface_format(),
                         blend: None,
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
@@ -205,7 +205,7 @@ fn create_pipeline(
                     conservative: false,
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
-                    format: surface.depth_texture_format(),
+                    format: surface.depth_format(),
                     depth_write_enabled: true,
                     depth_compare: wgpu::CompareFunction::Less,
                     stencil: Default::default(),
@@ -217,7 +217,7 @@ fn create_pipeline(
                     entry_point: Some("quad_fragment"),
                     compilation_options: Default::default(),
                     targets: &[Some(wgpu::ColorTargetState {
-                        format: surface.surface_texture_format(),
+                        format: surface.surface_format(),
                         blend: None,
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
@@ -247,7 +247,7 @@ fn create_pipeline(
                         conservative: false,
                     },
                     depth_stencil: Some(wgpu::DepthStencilState {
-                        format: surface.depth_texture_format(),
+                        format: surface.depth_format(),
                         depth_write_enabled: true,
                         depth_compare: wgpu::CompareFunction::Always,
                         stencil: Default::default(),
@@ -259,7 +259,7 @@ fn create_pipeline(
                         entry_point: Some("clear_depth_fragment"),
                         compilation_options: Default::default(),
                         targets: &[Some(wgpu::ColorTargetState {
-                            format: surface.surface_texture_format(),
+                            format: surface.surface_format(),
                             blend: None,
                             write_mask: wgpu::ColorWrites::empty(),
                         })],

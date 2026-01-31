@@ -1,8 +1,13 @@
 pub mod atlas;
 pub mod camera;
+pub mod command;
+pub mod depth;
 pub mod fps_counter;
 pub mod frame;
+pub mod light;
 pub mod mesh;
+pub mod phase;
+pub mod shadow_map;
 pub mod skybox;
 pub mod staging;
 pub mod surface;

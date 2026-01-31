@@ -63,8 +63,8 @@ pub(super) fn reconfigure_surfaces(
 pub struct Surface {
     surface: wgpu::Surface<'static>,
     config: wgpu::SurfaceConfiguration,
-    depth_texture: wgpu::Texture,
-    depth_stencil_format: wgpu::TextureFormat,
+    depth_texture: wgpu::TextureView,
+    depth_format: wgpu::TextureFormat,
 }
 
 impl Surface {
@@ -74,8 +74,6 @@ impl Surface {
         size: Vector2<u32>,
         config: &RenderConfig,
     ) -> Self {
-        tracing::debug!(?size, "creating surface");
-
         let surface = wgpu.instance.create_surface(window.window.clone()).unwrap();
 
         let capabilities = surface.get_capabilities(&wgpu.adapter);
@@ -90,6 +88,8 @@ impl Surface {
                     .first()
                     .expect("Surface has no supported texture formats")
             });
+
+        tracing::debug!(?size, format = ?surface_texture_format, "created surface");
 
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -116,7 +116,7 @@ impl Surface {
             surface,
             config,
             depth_texture,
-            depth_stencil_format,
+            depth_format: depth_stencil_format,
         }
     }
 
@@ -132,7 +132,7 @@ impl Surface {
             self.config.height = size.y;
             self.surface.configure(&wgpu.device, &self.config);
 
-            self.depth_texture = create_depth_texture(wgpu, size, self.depth_stencil_format);
+            self.depth_texture = create_depth_texture(wgpu, size, self.depth_format);
         }
     }
 
@@ -140,20 +140,16 @@ impl Surface {
         self.surface.get_current_texture().unwrap()
     }
 
-    pub fn depth_texture(&self) -> wgpu::TextureView {
-        self.depth_texture
-            .create_view(&wgpu::TextureViewDescriptor {
-                label: Some("depth"),
-                ..Default::default()
-            })
+    pub fn depth_texture(&self) -> &wgpu::TextureView {
+        &self.depth_texture
     }
 
-    pub fn surface_texture_format(&self) -> wgpu::TextureFormat {
+    pub fn surface_format(&self) -> wgpu::TextureFormat {
         self.config.format
     }
 
-    pub fn depth_texture_format(&self) -> wgpu::TextureFormat {
-        self.depth_stencil_format
+    pub fn depth_format(&self) -> wgpu::TextureFormat {
+        self.depth_format
     }
 }
 
@@ -161,8 +157,8 @@ fn create_depth_texture(
     wgpu: &WgpuContext,
     size: Vector2<u32>,
     format: wgpu::TextureFormat,
-) -> wgpu::Texture {
-    wgpu.device.create_texture(&wgpu::TextureDescriptor {
+) -> wgpu::TextureView {
+    let depth_texture = wgpu.device.create_texture(&wgpu::TextureDescriptor {
         label: Some("depth texture"),
         size: wgpu::Extent3d {
             width: size.x,
@@ -175,6 +171,11 @@ fn create_depth_texture(
         format,
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TRANSIENT,
         view_formats: &[],
+    });
+
+    depth_texture.create_view(&wgpu::TextureViewDescriptor {
+        label: Some("depth texture"),
+        ..Default::default()
     })
 }
 

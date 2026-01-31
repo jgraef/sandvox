@@ -44,3 +44,24 @@ where
 {
     humansize::SizeFormatter::new(value, humansize::BINARY)
 }
+
+#[macro_export]
+macro_rules! define_atomic_id {
+    ($name:ident) => {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        pub struct $name(std::num::NonZero<usize>);
+
+        impl $name {
+            fn new() -> Self {
+                static NEXT: std::sync::atomic::AtomicUsize =
+                    std::sync::atomic::AtomicUsize::new(1);
+
+                let next = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let id = std::num::NonZero::<usize>::new(next)
+                    .unwrap_or_else(|| panic!("ID overflow for `{}`", stringify!($name)));
+
+                Self(id)
+            }
+        }
+    };
+}

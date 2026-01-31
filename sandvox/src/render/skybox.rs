@@ -55,6 +55,7 @@ use crate::{
     render::{
         RenderSystems,
         atlas::AtlasHandle,
+        camera::Camera,
         frame::{
             Frame,
             FrameBindGroupLayout,
@@ -300,7 +301,7 @@ fn create_pipeline(
                     conservative: false,
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
-                    format: surface.depth_texture_format(),
+                    format: surface.depth_format(),
                     depth_write_enabled: false,
                     depth_compare: wgpu::CompareFunction::LessEqual,
                     stencil: Default::default(),
@@ -312,7 +313,7 @@ fn create_pipeline(
                     entry_point: Some("skybox_fragment"),
                     compilation_options: Default::default(),
                     targets: &[Some(wgpu::ColorTargetState {
-                        format: surface.surface_texture_format(),
+                        format: surface.surface_format(),
                         blend: None,
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
@@ -342,7 +343,7 @@ fn create_pipeline(
                     conservative: false,
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
-                    format: surface.depth_texture_format(),
+                    format: surface.depth_format(),
                     depth_write_enabled: false,
                     depth_compare: wgpu::CompareFunction::LessEqual,
                     stencil: Default::default(),
@@ -354,7 +355,7 @@ fn create_pipeline(
                     entry_point: Some("planet_fragment"),
                     compilation_options: Default::default(),
                     targets: &[Some(wgpu::ColorTargetState {
-                        format: surface.surface_texture_format(),
+                        format: surface.surface_format(),
                         blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
@@ -474,7 +475,7 @@ fn update_skybox(
 
 #[profiling::function]
 fn render_skybox(
-    cameras: Populated<&RenderTarget>,
+    cameras: Populated<&RenderTarget, With<Camera>>,
     mut frames: Populated<(&mut Frame, &Pipeline)>,
     bind_group: Single<&SkyboxBindGroup>,
 ) {
