@@ -52,11 +52,10 @@ impl Plugin for CameraPlugin {
         builder.add_systems(
             schedule::Render,
             (
-                update_cameras,
-                update_camera_projections.after(update_cameras),
-                update_camera_matrices
-                    .before(RenderSystems::EndFrame)
-                    .after(update_camera_projections),
+                update_cameras.before(update_camera_projections),
+                (create_camera_projections, update_camera_projections)
+                    .before(update_camera_matrices),
+                update_camera_matrices.before(RenderSystems::EndFrame),
             ),
         );
 
@@ -201,20 +200,20 @@ fn update_cameras(
     }
 }
 
-fn update_camera_projections(
-    cameras: Populated<
-        (Entity, &Camera, Option<&mut CameraProjection>),
-        Or<(Changed<Camera>, Without<CameraProjection>)>,
-    >,
+fn create_camera_projections(
+    cameras: Populated<(Entity, &Camera), Without<CameraProjection>>,
     mut commands: Commands,
 ) {
-    for (entity, camera, projection) in cameras {
-        if let Some(mut projection) = projection {
-            *projection = camera.projection();
-        }
-        else {
-            commands.entity(entity).insert(camera.projection());
-        }
+    for (entity, camera) in cameras {
+        commands.entity(entity).insert(camera.projection());
+    }
+}
+
+fn update_camera_projections(
+    cameras: Populated<(&Camera, &mut CameraProjection), Changed<Camera>>,
+) {
+    for (camera, mut projection) in cameras {
+        *projection = camera.projection();
     }
 }
 
