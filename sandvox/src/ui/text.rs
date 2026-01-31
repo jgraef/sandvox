@@ -30,7 +30,7 @@ use crate::{
         schedule,
     },
     render::{
-        frame::DefaultFont,
+        DefaultFont,
         text::{
             Text,
             TextColor,

@@ -187,11 +187,3 @@ impl Default for ClearColor {
         Self(Srgba::new(0.0, 0.0, 0.0, 1.0))
     }
 }
-
-#[derive(Clone, Copy, Debug, Component)]
-#[relationship(relationship_target = RenderSources)]
-pub struct RenderTarget(pub Entity);
-
-#[derive(Clone, Debug, Component)]
-#[relationship_target(relationship = RenderTarget)]
-pub struct RenderSources(Vec<Entity>);

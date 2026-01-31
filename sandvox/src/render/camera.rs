@@ -13,6 +13,10 @@ use bevy_ecs::{
         Populated,
     },
 };
+use bytemuck::{
+    Pod,
+    Zeroable,
+};
 use color_eyre::eyre::Error;
 use nalgebra::{
     Matrix4,
@@ -34,11 +38,8 @@ use crate::{
     },
     render::{
         RenderSystems,
-        frame::{
-            CameraData,
-            FrameUniform,
-        },
-        surface::{
+        frame::FrameUniform,
+        render_target::{
             RenderSources,
             RenderTarget,
         },
@@ -244,6 +245,16 @@ fn update_camera_matrices(
 #[derive(Clone, Copy, Debug, Component)]
 pub struct FrustrumCulled {
     pub aabb: Aabb,
+}
+
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+#[repr(C)]
+pub struct CameraData {
+    pub projection: Matrix4<f32>,
+    pub projection_inverse: Matrix4<f32>,
+    pub view: Matrix4<f32>,
+    pub view_inverse: Matrix4<f32>,
+    pub position: Vector4<f32>,
 }
 
 #[cfg(test)]

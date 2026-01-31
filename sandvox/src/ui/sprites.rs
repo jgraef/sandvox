@@ -40,6 +40,7 @@ use crate::{
         schedule,
     },
     render::{
+        DefaultAtlas,
         RenderSystems,
         atlas::{
             Atlas,
@@ -48,7 +49,6 @@ use crate::{
             PaddingFill,
             PaddingMode,
         },
-        frame::DefaultAtlas,
         staging::Staging,
     },
     ui::{

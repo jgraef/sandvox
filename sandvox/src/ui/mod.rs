@@ -56,7 +56,7 @@ use crate::{
     },
     render::{
         RenderSystems,
-        surface::{
+        render_target::{
             RenderSources,
             RenderTarget,
         },

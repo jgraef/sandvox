@@ -53,7 +53,7 @@ use crate::{
         plugin::WorldBuilder,
         schedule,
     },
-    render::surface::RenderTarget,
+    render::render_target::RenderTarget,
     ui::{
         RedrawRequested,
         Root,

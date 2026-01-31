@@ -3,10 +3,13 @@ pub mod camera;
 pub mod command;
 pub mod depth;
 pub mod fps_counter;
+#[deprecated]
 pub mod frame;
 pub mod light;
 pub mod mesh;
+pub mod pass;
 pub mod phase;
+pub mod render_target;
 pub mod shadow_map;
 pub mod skybox;
 pub mod staging;
@@ -21,6 +24,11 @@ use bevy_ecs::{
         IntoScheduleConfigs,
         SystemSet,
         common_conditions::resource_changed,
+    },
+    system::{
+        Commands,
+        Res,
+        ResMut,
     },
 };
 use color_eyre::eyre::Error;
@@ -38,24 +46,17 @@ use crate::{
         schedule,
     },
     render::{
+        atlas::Atlas,
         command::RenderFunctions,
-        frame::{
-            DefaultAtlas,
-            begin_frames,
-            create_default_resources,
-            create_frame_bind_group_layout,
-            create_frames,
-            end_frames,
-            update_frame_bind_groups,
-            update_frame_uniform,
-        },
         mesh::RenderMeshStatistics,
+        pass::main_pass,
         phase::{
             Opaque,
             OpaquePrepass,
             Wireframe,
         },
         staging::{
+            Staging,
             flush_staging,
             initialize_staging,
         },
@@ -64,9 +65,13 @@ use crate::{
             reconfigure_surfaces,
             update_viewports,
         },
+        text::Font,
     },
     util::serde::default_true,
-    wgpu::WgpuSystems,
+    wgpu::{
+        WgpuContext,
+        WgpuSystems,
+    },
 };
 
 #[derive(Clone, Debug, Default)]
@@ -91,13 +96,13 @@ impl Plugin for RenderPlugin {
                     // initialize rendering
                     (
                         initialize_staging,
-                        create_frame_bind_group_layout,
+                        main_pass::create_layout,
                         create_default_resources.after(initialize_staging),
                     )
                         .after(WgpuSystems::CreateContext)
                         .before(RenderSystems::Setup),
                     // update frame uniform
-                    (update_frame_bind_groups, update_frame_uniform)
+                    (main_pass::update_uniform, main_pass::update_bind_group)
                         .after(RenderSystems::Setup)
                         .before(flush_staging),
                     // flush staging
@@ -110,16 +115,17 @@ impl Plugin for RenderPlugin {
                 (
                     (update_viewports, create_surfaces, reconfigure_surfaces)
                         .before(RenderSystems::BeginFrame),
-                    (create_frames, begin_frames)
+                    (main_pass::create_layout, main_pass::begin_pass)
                         .chain()
                         .in_set(RenderSystems::BeginFrame),
                     (
-                        update_frame_bind_groups.run_if(resource_changed::<DefaultAtlas>),
-                        update_frame_uniform,
+                        main_pass::update_uniform,
+                        main_pass::update_bind_group.run_if(resource_changed::<DefaultAtlas>),
                     )
+                        .chain()
                         .in_set(RenderSystems::EndFrame)
-                        .before(end_frames),
-                    end_frames.in_set(RenderSystems::EndFrame),
+                        .before(main_pass::end_pass),
+                    main_pass::end_pass.in_set(RenderSystems::EndFrame),
                 ),
             )
             .configure_system_sets(
@@ -194,3 +200,36 @@ fn default_font() -> PathBuf {
 fn default_fov() -> f32 {
     60.0
 }
+
+#[profiling::function]
+fn create_default_resources(
+    wgpu: Res<WgpuContext>,
+    config: Res<RenderConfig>,
+    mut commands: Commands,
+    mut staging: ResMut<Staging>,
+) {
+    let sampler = wgpu.device.create_sampler(&Default::default());
+
+    let atlas = Atlas::new(&wgpu.device, Default::default());
+
+    let font = Font::open(&config.default_font, &wgpu.device, &mut *staging).unwrap_or_else(|e| {
+        panic!(
+            "Error while loading font: {e}: {}",
+            config.default_font.display()
+        )
+    });
+
+    commands.insert_resource(DefaultSampler(sampler));
+    commands.insert_resource(DefaultAtlas(atlas));
+    commands.insert_resource(DefaultFont(font));
+}
+
+// todo: make this a resource that contains all the samplers we use
+#[derive(Clone, Debug, Resource)]
+pub struct DefaultSampler(pub wgpu::Sampler);
+
+#[derive(Debug, Resource, derive_more::Deref, derive_more::DerefMut)]
+pub struct DefaultAtlas(pub Atlas);
+
+#[derive(Debug, Resource, derive_more::Deref, derive_more::DerefMut)]
+pub struct DefaultFont(pub Font);

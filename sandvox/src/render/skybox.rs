@@ -60,11 +60,9 @@ use crate::{
             Frame,
             FrameBindGroupLayout,
         },
+        render_target::RenderTarget,
         staging::Staging,
-        surface::{
-            RenderTarget,
-            Surface,
-        },
+        surface::Surface,
     },
     util::{
         format_size,

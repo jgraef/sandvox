@@ -93,6 +93,7 @@ use crate::{
     },
     input::Keys,
     render::{
+        DefaultAtlas,
         RenderConfig,
         RenderSystems,
         atlas::{
@@ -105,21 +106,18 @@ use crate::{
             FpsCounter,
             FpsCounterConfig,
         },
-        frame::DefaultAtlas,
         mesh::{
             RenderMeshStatistics,
             RenderWireframes,
         },
+        render_target::RenderTarget,
         skybox::{
             Planet,
             Skybox,
             SkyboxPlugin,
         },
         staging::Staging,
-        surface::{
-            ClearColor,
-            RenderTarget,
-        },
+        surface::ClearColor,
         text::{
             Text,
             TextColor,

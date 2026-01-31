@@ -37,11 +37,15 @@ use crate::{
         SpanId,
     },
     render::{
+        DefaultAtlas,
+        DefaultFont,
+        DefaultSampler,
         RenderConfig,
         atlas::{
             Atlas,
             AtlasResources,
         },
+        camera::CameraData,
         staging::Staging,
         surface::{
             ClearColor,
@@ -55,11 +59,12 @@ use crate::{
     wgpu::{
         WgpuContext,
         buffer::WriteStaging,
+        srgba_to_wgpu,
     },
 };
 
 #[profiling::function]
-pub(super) fn create_frame_bind_group_layout(wgpu: Res<WgpuContext>, mut commands: Commands) {
+pub fn create_frame_bind_group_layout(wgpu: Res<WgpuContext>, mut commands: Commands) {
     let bind_group_layout =
         wgpu.device
             .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -134,7 +139,7 @@ pub(super) fn create_frame_bind_group_layout(wgpu: Res<WgpuContext>, mut command
 }
 
 #[profiling::function]
-pub(super) fn create_frames(
+pub fn create_frames(
     wgpu: Res<WgpuContext>,
     frame_bind_group_layout: Res<FrameBindGroupLayout>,
     surfaces: Populated<Entity, (With<Surface>, Without<Frame>)>,
@@ -173,7 +178,7 @@ pub(super) fn create_frames(
 }
 
 #[profiling::function]
-pub(super) fn begin_frames(
+pub fn begin_frames(
     wgpu: Res<WgpuContext>,
     surfaces: Populated<(
         &Surface,
@@ -182,7 +187,7 @@ pub(super) fn begin_frames(
         Ref<FrameBindGroup>,
     )>,
 ) {
-    for (surface, clear_color, mut frame, frame_uniform) in surfaces {
+    for (surface, clear_color, mut frame, frame_bind_group) in surfaces {
         assert!(
             frame.active.is_none(),
             "a frame is still active in begin_frames"
@@ -239,7 +244,7 @@ pub(super) fn begin_frames(
             .forget_lifetime();
 
         // bind frame uniform buffer
-        render_pass.set_bind_group(0, Some(&frame_uniform.bind_group), &[]);
+        render_pass.set_bind_group(0, Some(&frame_bind_group.bind_group), &[]);
 
         frame.active = Some(ActiveFrame {
             command_encoder,
@@ -416,16 +421,6 @@ pub struct FrameUniformData {
     pub camera: CameraData,
 }
 
-#[derive(Clone, Copy, Debug, Pod, Zeroable)]
-#[repr(C)]
-pub struct CameraData {
-    pub projection: Matrix4<f32>,
-    pub projection_inverse: Matrix4<f32>,
-    pub view: Matrix4<f32>,
-    pub view_inverse: Matrix4<f32>,
-    pub position: Vector4<f32>,
-}
-
 #[profiling::function]
 pub(super) fn update_frame_uniform(
     frame_uniforms: Populated<&mut FrameUniform>,
@@ -468,47 +463,5 @@ pub(super) fn update_frame_bind_groups(
                 font_resources,
             )
         }
-    }
-}
-
-#[profiling::function]
-pub(super) fn create_default_resources(
-    wgpu: Res<WgpuContext>,
-    config: Res<RenderConfig>,
-    mut commands: Commands,
-    mut staging: ResMut<Staging>,
-) {
-    let sampler = wgpu.device.create_sampler(&Default::default());
-
-    let atlas = Atlas::new(&wgpu.device, Default::default());
-
-    let font = Font::open(&config.default_font, &wgpu.device, &mut *staging).unwrap_or_else(|e| {
-        panic!(
-            "Error while loading font: {e}: {}",
-            config.default_font.display()
-        )
-    });
-
-    commands.insert_resource(DefaultSampler(sampler));
-    commands.insert_resource(DefaultAtlas(atlas));
-    commands.insert_resource(DefaultFont(font));
-}
-
-// todo: make this a resource that contains all the samplers we use
-#[derive(Clone, Debug, Resource)]
-pub struct DefaultSampler(pub wgpu::Sampler);
-
-#[derive(Debug, Resource, derive_more::Deref, derive_more::DerefMut)]
-pub struct DefaultAtlas(pub Atlas);
-
-#[derive(Debug, Resource, derive_more::Deref, derive_more::DerefMut)]
-pub struct DefaultFont(pub Font);
-
-fn srgba_to_wgpu(color: Srgba<f32>) -> wgpu::Color {
-    wgpu::Color {
-        r: color.red as f64,
-        g: color.green as f64,
-        b: color.blue as f64,
-        a: color.alpha as f64,
     }
 }

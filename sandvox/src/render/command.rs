@@ -12,6 +12,7 @@ use bevy_ecs::{
     },
     resource::Resource,
     system::{
+        Query,
         ReadOnlySystemParam,
         SystemParam,
         SystemParamItem,
@@ -21,7 +22,10 @@ use bevy_ecs::{
 };
 use bevy_utils::TypeIdMap;
 
-use crate::ecs::plugin::WorldBuilder;
+use crate::{
+    ecs::plugin::WorldBuilder,
+    render::pass::RenderPass,
+};
 
 pub trait RenderCommand {
     type Param: SystemParam + 'static;
@@ -30,9 +34,9 @@ pub trait RenderCommand {
 
     fn render<'w>(
         param: SystemParamItem<'w, '_, Self::Param>,
-        render_pass: &mut wgpu::RenderPass<'w>,
+        render_pass: &mut RenderPass<'w>,
         view: ROQueryItem<'w, '_, Self::ViewQuery>,
-        item: Option<ROQueryItem<'w, '_, Self::ItemQuery>>,
+        items: Query<'w, '_, Self::ItemQuery>,
     );
 }
 
@@ -55,21 +59,15 @@ where
         self.item.update_archetypes(world);
     }
 
-    fn render<'w>(
-        &mut self,
-        world: &'w World,
-        render_pass: &mut wgpu::RenderPass<'w>,
-        view: Entity,
-        item: Entity,
-    ) {
+    fn render<'w>(&mut self, world: &'w World, render_pass: &mut RenderPass<'w>, view: Entity) {
         let param = self.state.get(world);
 
         let view = self.view.get_manual(world, view).unwrap_or_else(|error| {
             todo!("handle error: {error}");
         });
 
-        let item = self.item.get_manual(world, item).ok();
-        C::render(param, render_pass, view, item);
+        let items = self.item.query_manual(world);
+        C::render(param, render_pass, view, items);
     }
 }
 
@@ -104,13 +102,7 @@ impl AddRenderCommand for WorldBuilder {
 pub trait RenderFunction: Send + Sync + 'static {
     fn prepare(&mut self, world: &World);
 
-    fn render<'w>(
-        &mut self,
-        world: &'w World,
-        render_pass: &mut wgpu::RenderPass<'w>,
-        view: Entity,
-        item: Entity,
-    );
+    fn render<'w>(&mut self, world: &'w World, render_pass: &mut RenderPass<'w>, view: Entity);
 }
 
 #[derive(derive_more::Debug, Resource)]

@@ -48,12 +48,12 @@ use crate::{
             Frame,
             FrameBindGroupLayout,
         },
-        staging::Staging,
-        surface::{
+        render_target::{
             RenderSources,
             RenderTarget,
-            Surface,
         },
+        staging::Staging,
+        surface::Surface,
         text::GlyphId,
     },
     ui::{
