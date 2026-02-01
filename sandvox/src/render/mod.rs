@@ -85,10 +85,6 @@ impl Plugin for RenderPlugin {
             // create resources
             .insert_resource(self.config.clone())
             .init_resource::<RenderMeshStatistics>()
-            // render functions
-            .init_resource::<RenderFunctions<Opaque>>()
-            .init_resource::<RenderFunctions<OpaquePrepass>>()
-            .init_resource::<RenderFunctions<Wireframe>>()
             // startup systems
             .add_systems(
                 schedule::Startup,
@@ -115,7 +111,7 @@ impl Plugin for RenderPlugin {
                 (
                     (update_viewports, create_surfaces, reconfigure_surfaces)
                         .before(RenderSystems::BeginFrame),
-                    (main_pass::create_layout, main_pass::begin_pass)
+                    /*(main_pass::create_layout, main_pass::begin_pass)
                         .chain()
                         .in_set(RenderSystems::BeginFrame),
                     (
@@ -125,7 +121,7 @@ impl Plugin for RenderPlugin {
                         .chain()
                         .in_set(RenderSystems::EndFrame)
                         .before(main_pass::end_pass),
-                    main_pass::end_pass.in_set(RenderSystems::EndFrame),
+                    main_pass::end_pass.in_set(RenderSystems::EndFrame),*/
                 ),
             )
             .configure_system_sets(

@@ -6,133 +6,39 @@ use std::{
 use bevy_ecs::{
     entity::Entity,
     query::{
-        QueryState,
         ROQueryItem,
         ReadOnlyQueryData,
     },
     resource::Resource,
-    schedule::SystemSet,
     system::{
+        DynParamBuilder,
+        DynSystemParam,
+        ParamBuilder,
+        ParamSet,
+        ParamSetBuilder,
         Query,
         ReadOnlySystemParam,
-        ResMut,
+        Res,
+        StaticSystemParam,
         SystemParam,
+        SystemParamBuilder,
         SystemParamItem,
-        SystemState,
     },
-    world::World,
 };
 use bevy_utils::TypeIdMap;
 
 use crate::{
-    ecs::{
-        plugin::WorldBuilder,
-        schedule,
-    },
-    render::{
-        RenderSystems,
-        pass::RenderPass,
-    },
+    ecs::plugin::WorldBuilder,
+    render::pass::RenderPass,
 };
 
-pub mod new {
-    use std::marker::PhantomData;
-
-    use bevy_ecs::{
-        entity::Entity,
-        resource::Resource,
-        system::{
-            DynParamBuilder,
-            DynSystemParam,
-            DynSystemParamState,
-            ParamBuilder,
-            ParamSet,
-            Query,
-            Res,
-            StaticSystemParam,
-            SystemParam,
-            SystemParamBuilder,
-        },
-        world::World,
-    };
-
-    use crate::render::{
-        command::RenderCommand,
-        pass::RenderPass,
-    };
-
-    #[derive(SystemParam)]
-    #[system_param(builder)]
-    pub struct RenderFunctions<'w, 's, P>
-    where
-        P: 'static,
-    {
-        registry: Res<'w, Registry<P>>,
-        param: ParamSet<'w, 's, Vec<DynSystemParam<'static, 'static>>>,
-    }
-
-    impl<'w, 's, F> RenderFunctions<'w, 's, F> {
-        pub fn render(&mut self, mut render_pass: &mut RenderPass<'w>, view: Entity) {
-            let mut functions = self.registry.functions.iter();
-
-            self.param.for_each(|param| {
-                let function = functions.next().unwrap();
-                function.render(&mut render_pass, view, param);
-            });
-        }
-    }
-
-    #[derive(Resource)]
-    struct Registry<P> {
-        functions: Vec<Box<dyn DynRenderFunction>>,
-        _marker: PhantomData<fn() -> P>,
-    }
-
-    trait DynRenderFunction: Send + Sync + 'static {
-        fn build_system_param(&self) -> DynParamBuilder<'static>;
-        fn render<'w>(
-            &self,
-            render_pass: &mut RenderPass<'_>,
-            view: Entity,
-            param: DynSystemParam<'w, '_>,
-        );
-    }
-
-    impl<F> DynRenderFunction for F
-    where
-        F: RenderCommand + Send + Sync + 'static,
-    {
-        fn build_system_param(&self) -> DynParamBuilder<'static> {
-            DynParamBuilder::new::<(F::Param, Query<F::ViewQuery>, Query<F::ItemQuery>)>(
-                ParamBuilder,
-            )
-        }
-
-        fn render<'w>(
-            &self,
-            render_pass: &mut RenderPass<'_>,
-            view: Entity,
-            mut param: DynSystemParam<'w, '_>,
-        ) {
-            let (param, views, items) = param
-                .downcast_mut::<(
-                    StaticSystemParam<F::Param>,
-                    Query<F::ViewQuery>,
-                    Query<F::ItemQuery>,
-                )>()
-                .unwrap();
-            let view = views.get(view).unwrap();
-            <F as RenderCommand>::render(param.into_inner(), render_pass, view, items);
-        }
-    }
-}
-
-pub trait RenderCommand {
+pub trait RenderFunction: Send + Sync + 'static {
     type Param: SystemParam + 'static;
     type ViewQuery: ReadOnlyQueryData;
     type ItemQuery: ReadOnlyQueryData;
 
     fn render<'w, 's>(
+        &self,
         param: SystemParamItem<'w, '_, Self::Param>,
         render_pass: &mut RenderPass<'_>,
         view: ROQueryItem<'w, '_, Self::ViewQuery>,
@@ -140,79 +46,156 @@ pub trait RenderCommand {
     );
 }
 
-struct RenderCommandState<C>
+pub struct RenderFunctions<'w, 's, P>
 where
-    C: RenderCommand,
+    P: 'static,
 {
-    state: SystemState<C::Param>,
-    view: QueryState<C::ViewQuery>,
-    item: QueryState<C::ItemQuery>,
+    registry: Res<'w, Registry<P>>,
+    params: ParamSet<'w, 's, Vec<DynSystemParam<'static, 'static>>>,
 }
 
-impl<C> RenderFunction for RenderCommandState<C>
-where
-    C: RenderCommand + 'static,
-    C::Param: ReadOnlySystemParam,
-{
-    fn prepare(&mut self, world: &World) {
-        self.view.update_archetypes(world);
-        self.item.update_archetypes(world);
-    }
+impl<'w, 's, F> RenderFunctions<'w, 's, F> {
+    pub fn render(&mut self, render_pass: &mut RenderPass<'w>, view: Entity) {
+        let mut functions = self.registry.functions.iter();
 
-    fn render<'w>(&mut self, world: &'w World, render_pass: &mut RenderPass<'w>, view: Entity) {
-        let param = self.state.get(world);
-
-        let view = self.view.get_manual(world, view).unwrap_or_else(|error| {
-            todo!("handle error: {error}");
+        self.params.for_each(move |param| {
+            let function = functions.next().unwrap();
+            function.render(&mut *render_pass, view, param);
         });
-
-        let items = self.item.query_manual(world);
-        C::render(param, render_pass, view, items);
     }
 }
 
-pub trait AddRenderCommand {
-    fn add_render_command<P, C: RenderCommand>(&mut self) -> &mut Self
-    where
-        P: 'static,
-        C: RenderCommand + 'static,
-        C::Param: ReadOnlySystemParam;
+#[doc(hidden)]
+type StructFieldAlias<'w, 's, P> = (
+    Res<'w, Registry<P>>,
+    ParamSet<'w, 's, Vec<DynSystemParam<'static, 'static>>>,
+);
+
+#[doc(hidden)]
+pub struct FetchState<P>
+where
+    P: 'static,
+{
+    registry: <Res<'static, Registry<P>> as SystemParam>::State,
+    params:
+        <ParamSet<'static, 'static, Vec<DynSystemParam<'static, 'static>>> as SystemParam>::State,
 }
 
-impl AddRenderCommand for WorldBuilder {
-    fn add_render_command<P, C>(&mut self) -> &mut Self
-    where
-        P: 'static,
-        C: RenderCommand + 'static,
-        C::Param: ReadOnlySystemParam,
-    {
-        let render_command_state = RenderCommandState::<C> {
-            state: SystemState::new(&mut self.world),
-            view: self.world.query(),
-            item: self.world.query(),
-        };
+unsafe impl<P> SystemParam for RenderFunctions<'_, '_, P> {
+    type State = FetchState<P>;
+    type Item<'w, 's> = RenderFunctions<'w, 's, P>;
 
-        let mut render_commands = self.world.resource_mut::<RenderFunctions<P>>();
-        render_commands.insert(render_command_state);
+    fn init_state(world: &mut bevy_ecs::world::World) -> Self::State {
+        let registry = world.get_resource_or_init::<Registry<P>>();
 
-        self
+        let params_builder = ParamSetBuilder(
+            registry
+                .functions
+                .iter()
+                .map(|function| function.build_system_param())
+                .collect::<Vec<_>>(),
+        );
+
+        FetchState {
+            registry: <Res<Registry<P>> as SystemParam>::init_state(world),
+            params: params_builder.build(world),
+        }
+    }
+
+    fn init_access(
+        state: &Self::State,
+        system_meta: &mut bevy_ecs::system::SystemMeta,
+        component_access_set: &mut bevy_ecs::query::FilteredAccessSet,
+        world: &mut bevy_ecs::world::World,
+    ) {
+        <Res<'static, Registry<P>> as SystemParam>::init_access(
+            &state.registry,
+            system_meta,
+            component_access_set,
+            world,
+        );
+        <ParamSet<'static, 'static, Vec<DynSystemParam<'static, 'static>>> as SystemParam>::init_access(&state.params, system_meta, component_access_set, world);
+    }
+
+    fn apply(
+        state: &mut Self::State,
+        system_meta: &bevy_ecs::system::SystemMeta,
+        world: &mut bevy_ecs::world::World,
+    ) {
+        <Res<'static, Registry<P>> as SystemParam>::apply(&mut state.registry, system_meta, world);
+        <ParamSet<'static, 'static, Vec<DynSystemParam<'static, 'static>>> as SystemParam>::apply(
+            &mut state.params,
+            system_meta,
+            world,
+        );
+    }
+
+    fn queue(
+        state: &mut Self::State,
+        system_meta: &bevy_ecs::system::SystemMeta,
+        mut world: bevy_ecs::world::DeferredWorld,
+    ) {
+        <Res<'static, Registry<P>> as SystemParam>::queue(
+            &mut state.registry,
+            system_meta,
+            world.reborrow(),
+        );
+        <ParamSet<'static, 'static, Vec<DynSystemParam<'static, 'static>>> as SystemParam>::queue(
+            &mut state.params,
+            system_meta,
+            world,
+        );
+    }
+
+    unsafe fn validate_param(
+        state: &mut Self::State,
+        system_meta: &bevy_ecs::system::SystemMeta,
+        world: bevy_ecs::world::unsafe_world_cell::UnsafeWorldCell,
+    ) -> Result<(), bevy_ecs::system::SystemParamValidationError> {
+        unsafe {
+            <Res<'static, Registry<P>> as SystemParam>::validate_param(
+                &mut state.registry,
+                system_meta,
+                world,
+            )?;
+            <ParamSet<'static, 'static, Vec<DynSystemParam<'static, 'static>>> as SystemParam>::validate_param(&mut state.params, system_meta, world)?;
+        }
+        Ok(())
+    }
+
+    unsafe fn get_param<'world, 'state>(
+        state: &'state mut Self::State,
+        system_meta: &bevy_ecs::system::SystemMeta,
+        world: bevy_ecs::world::unsafe_world_cell::UnsafeWorldCell<'world>,
+        change_tick: bevy_ecs::component::Tick,
+    ) -> Self::Item<'world, 'state> {
+        unsafe {
+            // SAFETY:
+            // - We initialized the access for each parameter in `init_access`, so the
+            //   caller ensures we have access to any world data needed by each param.
+            // - The caller ensures this was the world used to initialize our state, and we
+            //   used that world to initialize parameter states
+
+            let registry = <Res<'static, Registry<P>> as SystemParam>::get_param(
+                &mut state.registry,
+                system_meta,
+                world,
+                change_tick,
+            );
+            let params = <ParamSet<'static, 'static, Vec<DynSystemParam<'static, 'static>>> as SystemParam>::get_param(&mut state.params, system_meta, world, change_tick);
+
+            RenderFunctions { registry, params }
+        }
     }
 }
 
-pub trait RenderFunction: Send + Sync + 'static {
-    fn prepare(&mut self, world: &World);
-
-    fn render<'w>(&mut self, world: &'w World, render_pass: &mut RenderPass<'w>, view: Entity);
-}
-
-#[derive(derive_more::Debug, Resource)]
-pub(super) struct RenderFunctions<P> {
-    #[debug(skip)]
-    functions: Vec<Box<dyn RenderFunction>>,
+#[derive(Resource)]
+struct Registry<P> {
+    functions: Vec<Box<dyn DynRenderFunction>>,
     by_type_id: TypeIdMap<RenderFunctionId<P>>,
 }
 
-impl<P> RenderFunctions<P> {
+impl<P> Registry<P> {
     fn insert<F>(&mut self, render_function: F) -> RenderFunctionId<P>
     where
         F: RenderFunction,
@@ -222,23 +205,50 @@ impl<P> RenderFunctions<P> {
             _marker: PhantomData,
         };
 
-        self.functions.push(Box::new(render_function));
+        self.functions
+            .push(Box::new(render_function) as Box<dyn DynRenderFunction>);
         self.by_type_id.insert(TypeId::of::<F>(), id);
 
         id
     }
 
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut dyn RenderFunction> {
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut dyn DynRenderFunction> {
         self.functions.iter_mut().map(|f| &mut **f)
     }
 }
 
-impl<P> Default for RenderFunctions<P> {
+impl<P> Default for Registry<P> {
     fn default() -> Self {
         Self {
             functions: Default::default(),
             by_type_id: Default::default(),
         }
+    }
+}
+
+trait DynRenderFunction: Send + Sync + 'static {
+    fn build_system_param(&self) -> DynParamBuilder<'static>;
+    fn render(&self, render_pass: &mut RenderPass, view: Entity, param: DynSystemParam);
+}
+
+impl<F> DynRenderFunction for F
+where
+    F: RenderFunction,
+{
+    fn build_system_param(&self) -> DynParamBuilder<'static> {
+        DynParamBuilder::new::<(F::Param, Query<F::ViewQuery>, Query<F::ItemQuery>)>(ParamBuilder)
+    }
+
+    fn render(&self, render_pass: &mut RenderPass, view: Entity, param: DynSystemParam) {
+        let (param, views, items) = param
+            .downcast::<(
+                StaticSystemParam<F::Param>,
+                Query<F::ViewQuery>,
+                Query<F::ItemQuery>,
+            )>()
+            .unwrap();
+        let view = views.get_inner(view).unwrap();
+        <F as RenderFunction>::render(self, param.into_inner(), render_pass, view, items);
     }
 }
 
@@ -256,16 +266,24 @@ impl<P> Clone for RenderFunctionId<P> {
 
 impl<P> Copy for RenderFunctionId<P> {}
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, SystemSet)]
-pub struct PrepareRenderFunctions;
+pub trait AddRenderCommand {
+    fn add_render_function<P, F>(&mut self, function: F) -> &mut Self
+    where
+        P: 'static,
+        F: RenderFunction + 'static,
+        F::Param: ReadOnlySystemParam;
+}
 
-pub(super) fn prepare_render_functions<P>(
-    mut render_functions: ResMut<RenderFunctions<P>>,
-    world: &World,
-) where
-    P: 'static,
-{
-    for function in &mut render_functions.functions {
-        function.prepare(world);
+impl AddRenderCommand for WorldBuilder {
+    fn add_render_function<P, F>(&mut self, function: F) -> &mut Self
+    where
+        P: 'static,
+        F: RenderFunction + 'static,
+        F::Param: ReadOnlySystemParam,
+    {
+        let mut registry = self.world.get_resource_or_init::<Registry<P>>();
+        registry.insert(function);
+
+        self
     }
 }

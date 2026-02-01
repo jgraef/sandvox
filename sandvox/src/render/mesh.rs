@@ -62,7 +62,7 @@ use crate::{
         },
         command::{
             AddRenderCommand,
-            RenderCommand,
+            RenderFunction,
         },
         frame::{
             Frame,
@@ -119,9 +119,9 @@ impl Plugin for MeshPlugin {
                         )
                         .after(render_meshes),
                 ),
-            )
-            .add_render_command::<Opaque, RenderMeshes<Opaque>>()
-            .add_render_command::<Wireframe, RenderMeshes<Wireframe>>();
+            );
+        //.add_render_command::<Opaque, RenderMeshes<Opaque>>()
+        //.add_render_command::<Wireframe, RenderMeshes<Wireframe>>();
         Ok(())
     }
 }
@@ -553,6 +553,7 @@ impl RenderMeshesForPhase for Wireframe {
     }
 }
 
+/*
 impl<P> RenderCommand for RenderMeshes<P>
 where
     P: RenderMeshesForPhase,
@@ -604,7 +605,7 @@ where
             render_pass.exit_span(span);
         }
     }
-}
+} */
 
 #[deprecated]
 fn render_meshes_with(
