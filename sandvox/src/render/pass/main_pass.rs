@@ -16,24 +16,29 @@ use bevy_ecs::{
         Res,
         ResMut,
     },
+    world::World,
 };
 use bytemuck::{
     Pod,
     Zeroable,
 };
-use nalgebra::Vector2;
 
 use crate::{
     app::Time,
     render::{
         DefaultAtlas,
         DefaultSampler,
+        RenderFunctions,
         atlas::AtlasResources,
         camera::{
             Camera,
             CameraData,
         },
-        pass::RenderPass,
+        pass::{
+            RenderPass,
+            context::RenderContext,
+        },
+        phase::Opaque,
         render_target::RenderTarget,
         staging::Staging,
         surface::{
@@ -56,7 +61,6 @@ pub struct MainPass {
 
 #[derive(Debug)]
 struct ActiveMainPass {
-    command_encoder: wgpu::CommandEncoder,
     render_pass: RenderPass<'static>,
     /// todo: make it possible to render to normal textures as well
     surface_texture: wgpu::SurfaceTexture,
@@ -222,137 +226,72 @@ pub fn create_main_pass(
 }
 
 #[profiling::function]
-pub fn begin_pass(
-    wgpu: Res<WgpuContext>,
-    cameras: Populated<(NameOrEntity, &RenderTarget, &mut MainPass), With<Camera>>,
+pub fn render_main_pass(
+    mut render_context: RenderContext,
+    cameras: Populated<(NameOrEntity, &RenderTarget, &MainPass), With<Camera>>,
     surfaces: Populated<(&Surface, Option<&ClearColor>)>,
-    mut commands: Commands,
+    world: &World,
+    render_functions_opaque: RenderFunctions<Opaque>,
 ) {
-    for (entity, render_target, mut main_pass) in cameras {
+    for (entity, render_target, main_pass) in cameras {
         assert!(
             main_pass.active.is_none(),
             "A main pass is still active for `{}`",
             entity
         );
 
-        if let Ok((surface, clear_color)) = surfaces.get(render_target.0) {
-            let mut command_encoder =
-                wgpu.device
-                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                        label: Some("main pass"),
-                    });
+        // get target texture (and clear color)
+        // todo: this should work with any kind of target texture
+        let (surface, clear_color) = surfaces.get(render_target.0).unwrap();
+        let surface_texture = surface.surface_texture();
+        let surface_texture_view =
+            surface_texture
+                .texture
+                .create_view(&wgpu::TextureViewDescriptor {
+                    label: Some("main pass render target"),
+                    ..Default::default()
+                });
 
-            let surface_texture = surface.surface_texture();
-            let surface_texture_view =
-                surface_texture
-                    .texture
-                    .create_view(&wgpu::TextureViewDescriptor {
-                        label: Some("main pass render target"),
-                        ..Default::default()
-                    });
-
-            let mut profiler = wgpu
-                .profiler
-                .as_ref()
-                .map(|profiler| profiler.begin_render_pass("frame"));
-
-            let mut render_pass = command_encoder
-                .begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("main pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &surface_texture_view,
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: clear_color.map_or(wgpu::LoadOp::Load, |color| {
-                                wgpu::LoadOp::Clear(srgba_to_wgpu(color.0))
-                            }),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                        view: &surface.depth_texture(),
-                        depth_ops: Some(wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(1.0),
-                            store: wgpu::StoreOp::Discard,
+        let profiler = {
+            // create render pass
+            let mut render_pass = render_context.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("main pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &surface_texture_view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: clear_color.map_or(wgpu::LoadOp::Load, |color| {
+                            wgpu::LoadOp::Clear(srgba_to_wgpu(color.0))
                         }),
-                        stencil_ops: None,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &surface.depth_texture(),
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Discard,
                     }),
-                    timestamp_writes: profiler
-                        .as_mut()
-                        .map(|transaction| transaction.timestamp_writes()),
-                    occlusion_query_set: None,
-                    multiview_mask: None,
-                })
-                .forget_lifetime();
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
 
             // bind frame uniform buffer
             render_pass.set_bind_group(0, Some(&main_pass.bind_group), &[]);
 
-            main_pass.active = Some(ActiveMainPass {
-                command_encoder,
-                render_pass: RenderPass {
-                    render_pass,
-                    profiler,
-                },
-                surface_texture,
-            });
+            // todo: do the rendering!
+
+            render_pass.profiler
+            // actual render pass dropped here
+        };
+
+        if let Some(profiler) = profiler {
+            profiler.finish(render_context.command_encoder());
         }
-        else {
-            panic!("No surface on render target")
-        }
-    }
-}
-
-#[profiling::function]
-pub fn end_pass(
-    wgpu: Res<WgpuContext>,
-    main_passes: Populated<&mut MainPass>,
-    mut command_buffers: Local<Vec<wgpu::CommandBuffer>>,
-    mut present_surfaces: Local<Vec<wgpu::SurfaceTexture>>,
-    mut staging: ResMut<Staging>,
-) {
-    assert!(command_buffers.is_empty());
-    assert!(present_surfaces.is_empty());
-
-    // todo: put this in its own systems.
-    // we can just collect command buffers in a resource (i.e. this one and the ones
-    // from the frames) and submit them to the queue in another system that runs
-    // last. or we could submit stuff immediately i guess.
-    if staging.is_changed() {
-        // flush staging. this also submits the command encoder
-        command_buffers.push(staging.flush(&wgpu).finish());
-    }
-
-    // end all render passes and get the surface textures
-    for mut main_pass in main_passes {
-        if let Some(ActiveMainPass {
-            mut command_encoder,
-            render_pass,
-            surface_texture,
-        }) = main_pass.active.take()
-        {
-            // drop the render pass explicitely since we'll submit the command encoder next
-            drop(render_pass.render_pass);
-
-            if let Some(profiler) = render_pass.profiler {
-                profiler.finish(&mut command_encoder);
-            }
-
-            // finish the frame's renderpass command encoder
-            command_buffers.push(command_encoder.finish());
-
-            // and present after we submit
-            present_surfaces.push(surface_texture);
-        }
-    }
-
-    // submit all command buffers
-    wgpu.queue.submit(command_buffers.drain(..));
-
-    // present surfaces
-    for surface_texture in present_surfaces.drain(..) {
-        surface_texture.present();
     }
 }
 

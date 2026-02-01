@@ -11,9 +11,11 @@ use bevy_ecs::{
         ReadOnlyQueryData,
     },
     resource::Resource,
+    schedule::SystemSet,
     system::{
         Query,
         ReadOnlySystemParam,
+        ResMut,
         SystemParam,
         SystemParamItem,
         SystemState,
@@ -23,8 +25,14 @@ use bevy_ecs::{
 use bevy_utils::TypeIdMap;
 
 use crate::{
-    ecs::plugin::WorldBuilder,
-    render::pass::RenderPass,
+    ecs::{
+        plugin::WorldBuilder,
+        schedule,
+    },
+    render::{
+        RenderSystems,
+        pass::RenderPass,
+    },
 };
 
 pub trait RenderCommand {
@@ -108,7 +116,7 @@ pub trait RenderFunction: Send + Sync + 'static {
 #[derive(derive_more::Debug, Resource)]
 pub(super) struct RenderFunctions<P> {
     #[debug(skip)]
-    draw_functions: Vec<Box<dyn RenderFunction>>,
+    functions: Vec<Box<dyn RenderFunction>>,
     by_type_id: TypeIdMap<RenderFunctionId<P>>,
 }
 
@@ -118,21 +126,25 @@ impl<P> RenderFunctions<P> {
         F: RenderFunction,
     {
         let id = RenderFunctionId {
-            index: self.draw_functions.len(),
+            index: self.functions.len(),
             _marker: PhantomData,
         };
 
-        self.draw_functions.push(Box::new(render_function));
+        self.functions.push(Box::new(render_function));
         self.by_type_id.insert(TypeId::of::<F>(), id);
 
         id
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut dyn RenderFunction> {
+        self.functions.iter_mut().map(|f| &mut **f)
     }
 }
 
 impl<P> Default for RenderFunctions<P> {
     fn default() -> Self {
         Self {
-            draw_functions: Default::default(),
+            functions: Default::default(),
             by_type_id: Default::default(),
         }
     }
@@ -151,3 +163,17 @@ impl<P> Clone for RenderFunctionId<P> {
 }
 
 impl<P> Copy for RenderFunctionId<P> {}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, SystemSet)]
+pub struct PrepareRenderFunctions;
+
+pub(super) fn prepare_render_functions<P>(
+    mut render_functions: ResMut<RenderFunctions<P>>,
+    world: &World,
+) where
+    P: 'static,
+{
+    for function in &mut render_functions.functions {
+        function.prepare(world);
+    }
+}

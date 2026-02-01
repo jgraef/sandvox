@@ -1,4 +1,6 @@
+pub mod context;
 pub mod main_pass;
+pub mod ui_pass;
 
 use crate::profiler::wgpu::{
     RenderPassProfiler,
