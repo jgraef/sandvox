@@ -248,7 +248,14 @@ where
                 Query<F::ItemQuery>,
             )>()
             .unwrap();
-        let view = views.get_inner(view).unwrap();
+
+        let view = views.get_inner(view).unwrap_or_else(|error| {
+            panic!(
+                "Could not get view '{view:?}' for render function `{}`: {error}",
+                type_name::<F>()
+            );
+        });
+
         <F as RenderFunction>::render(self, param.into_inner(), render_pass, view, items);
     }
 }

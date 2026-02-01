@@ -8,7 +8,6 @@ pub mod frame;
 pub mod light;
 pub mod mesh;
 pub mod pass;
-pub mod phase;
 pub mod render_target;
 pub mod shadow_map;
 pub mod skybox;
@@ -55,6 +54,7 @@ use crate::{
                 flush_command_buffers,
             },
             main_pass,
+            ui_pass,
         },
         staging::{
             Staging,
@@ -101,8 +101,19 @@ impl Plugin for RenderPlugin {
                     )
                         .after(WgpuSystems::CreateContext)
                         .before(RenderSystems::Setup),
-                    // update frame uniform
-                    (main_pass::create_layout, main_pass::create_main_pass, main_pass::update_main_pass_uniform, main_pass::update_main_pass).chain()
+                    (
+                        // create main pass
+                        main_pass::create_layout,
+                        main_pass::create_main_pass,
+                        main_pass::update_main_pass_uniform,
+                        main_pass::update_main_pass,
+                        // create ui pass
+                        ui_pass::create_layout,
+                        ui_pass::create_ui_pass,
+                        ui_pass::update_ui_pass_uniform,
+                        ui_pass::update_ui_pass,
+                    )
+                        .chain()
                         .after(RenderSystems::Setup)
                         .before(flush_staging),
                     // flush staging
@@ -115,22 +126,34 @@ impl Plugin for RenderPlugin {
                 (
                     (update_viewports, create_surfaces, reconfigure_surfaces)
                         .before(RenderSystems::BeginFrame),
-                        set_swap_chain_texture.after(create_surfaces).after(reconfigure_surfaces).before(RenderSystems::RenderWorld),
-                        (main_pass::create_layout, main_pass::create_main_pass).chain().in_set(RenderSystems::BeginFrame),
-                        main_pass::render_main_pass.in_set(RenderSystems::RenderWorld),
-                        (
-                        main_pass::update_main_pass_uniform,
-                        main_pass::update_main_pass.run_if(resource_changed::<DefaultAtlas>),
+                    set_swap_chain_texture
+                        .after(create_surfaces)
+                        .after(reconfigure_surfaces)
+                        .before(RenderSystems::RenderWorld),
+                    (
+                        (main_pass::create_layout, main_pass::create_main_pass).chain(),
+                        (ui_pass::create_layout, ui_pass::create_ui_pass).chain(),
                     )
-                        .chain()
-                        .before(flush_command_buffers),
-                        (flush_command_buffers, present_surfaces).chain().after(RenderSystems::RenderWorld)
-                    /*(main_pass::create_layout, main_pass::begin_pass)
-                        .chain()
                         .in_set(RenderSystems::BeginFrame),
-
-                        .before(main_pass::end_pass),
-                    main_pass::end_pass.in_set(RenderSystems::EndFrame),*/
+                    (main_pass::render_main_pass, ui_pass::render_ui_pass)
+                        .chain()
+                        .in_set(RenderSystems::RenderWorld),
+                    (
+                        (
+                            main_pass::update_main_pass_uniform,
+                            main_pass::update_main_pass.run_if(resource_changed::<DefaultAtlas>),
+                        )
+                            .chain(),
+                        (
+                            ui_pass::update_ui_pass_uniform,
+                            ui_pass::update_ui_pass.run_if(resource_changed::<DefaultAtlas>),
+                        )
+                            .chain(),
+                    )
+                        .before(flush_command_buffers),
+                    (flush_command_buffers, present_surfaces)
+                        .chain()
+                        .after(RenderSystems::RenderWorld),
                 ),
             )
             .configure_system_sets(

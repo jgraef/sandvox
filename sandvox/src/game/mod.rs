@@ -388,7 +388,6 @@ fn init_player(
             WindowConfig {
                 title: "SandVox".to_owned(),
             },
-            ClearColor(palette::named::LIGHTSKYBLUE.into_format().with_alpha(1.0)),
         ))
         .id();
 
@@ -396,6 +395,7 @@ fn init_player(
     commands.spawn((
         Name::new("main_camera"),
         RenderTarget(window),
+        ClearColor(palette::named::LIGHTSKYBLUE.into_format().with_alpha(1.0)),
         Camera {
             aspect_ratio: 1.0,
             fovy: render_config.fov.to_radians(),

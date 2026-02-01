@@ -33,8 +33,10 @@ use crate::{
             CameraData,
         },
         mesh::RenderWireframes,
-        pass::context::RenderContext,
-        phase,
+        pass::{
+            context::RenderContext,
+            phase,
+        },
         render_target::RenderTarget,
         staging::Staging,
         surface::{
@@ -80,7 +82,7 @@ pub fn create_layout(wgpu: Res<WgpuContext>, mut commands: Commands) {
             .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("main pass"),
                 entries: &[
-                    // frame uniform. contains viewport size, camera matrix, etc.
+                    // uniform. contains camera matrix, etc.
                     wgpu::BindGroupLayoutEntry {
                         binding: 0,
                         visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
@@ -215,17 +217,17 @@ pub struct MainPassRenderFunctions<'w, 's> {
 #[profiling::function]
 pub fn render_main_pass(
     mut render_context: RenderContext,
-    cameras: Populated<(NameOrEntity, &RenderTarget, &MainPass), With<Camera>>,
-    surfaces: Populated<(&Surface, Option<&ClearColor>)>,
+    cameras: Populated<(NameOrEntity, &RenderTarget, &MainPass, Option<&ClearColor>), With<Camera>>,
+    surfaces: Populated<&Surface>,
     mut render_functions: MainPassRenderFunctions,
     wireframe_enabled: Option<Res<RenderWireframes>>,
 ) {
     let wireframe_enabled = wireframe_enabled.is_some();
 
-    for (camera_entity, render_target, main_pass) in cameras {
+    for (camera_entity, render_target, main_pass, clear_color) in cameras {
         // get target texture (and clear color)
         // todo: this should work with any kind of target texture
-        let (surface, clear_color) = surfaces.get(render_target.0).unwrap();
+        let surface = surfaces.get(render_target.0).unwrap();
         let surface_texture_view = surface.surface_texture();
 
         let profiler = {

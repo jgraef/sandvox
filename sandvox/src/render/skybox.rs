@@ -55,16 +55,17 @@ use crate::{
     render::{
         RenderSystems,
         atlas::AtlasHandle,
-        camera::Camera,
         command::{
             AddRenderFunction,
             RenderFunction,
         },
-        pass::main_pass::{
-            MainPass,
-            MainPassLayout,
+        pass::{
+            main_pass::{
+                MainPass,
+                MainPassLayout,
+            },
+            phase,
         },
-        phase,
         render_target::RenderTarget,
         staging::Staging,
         surface::Surface,

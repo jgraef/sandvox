@@ -9,3 +9,6 @@ pub struct Wireframe;
 
 #[derive(Debug)]
 pub struct Skybox;
+
+#[derive(Debug)]
+pub struct Ui;
