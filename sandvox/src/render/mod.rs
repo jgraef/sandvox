@@ -66,7 +66,6 @@ use crate::{
             present_surfaces,
             reconfigure_surfaces,
             set_swap_chain_texture,
-            update_viewports,
         },
         text::Font,
     },
@@ -97,6 +96,7 @@ impl Plugin for RenderPlugin {
                     (
                         initialize_staging,
                         main_pass::create_layout,
+                        ui_pass::create_layout,
                         create_default_resources.after(initialize_staging),
                     )
                         .after(WgpuSystems::CreateContext)
@@ -124,8 +124,7 @@ impl Plugin for RenderPlugin {
             .add_systems(
                 schedule::Render,
                 (
-                    (update_viewports, create_surfaces, reconfigure_surfaces)
-                        .before(RenderSystems::BeginFrame),
+                    (create_surfaces, reconfigure_surfaces).before(RenderSystems::BeginFrame),
                     set_swap_chain_texture
                         .after(create_surfaces)
                         .after(reconfigure_surfaces)
@@ -135,9 +134,8 @@ impl Plugin for RenderPlugin {
                         (ui_pass::create_layout, ui_pass::create_ui_pass).chain(),
                     )
                         .in_set(RenderSystems::BeginFrame),
-                    (main_pass::render_main_pass, ui_pass::render_ui_pass)
-                        .chain()
-                        .in_set(RenderSystems::RenderWorld),
+                    main_pass::render_main_pass.in_set(RenderSystems::RenderWorld),
+                    ui_pass::render_ui_pass.in_set(RenderSystems::RenderUi),
                     (
                         (
                             main_pass::update_main_pass_uniform,
@@ -153,7 +151,7 @@ impl Plugin for RenderPlugin {
                         .before(flush_command_buffers),
                     (flush_command_buffers, present_surfaces)
                         .chain()
-                        .after(RenderSystems::RenderWorld),
+                        .after(RenderSystems::RenderUi),
                 ),
             )
             .configure_system_sets(

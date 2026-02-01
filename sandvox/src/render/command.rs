@@ -8,6 +8,10 @@ use std::{
 
 use bevy_ecs::{
     entity::Entity,
+    name::{
+        Name,
+        NameOrEntity,
+    },
     query::{
         ROQueryItem,
         ReadOnlyQueryData,
@@ -237,6 +241,7 @@ where
             StaticSystemParam<F::Param>,
             Query<F::ViewQuery>,
             Query<F::ItemQuery>,
+            //Query<NameOrEntity>,
         )>(ParamBuilder)
     }
 
@@ -246,17 +251,25 @@ where
                 StaticSystemParam<F::Param>,
                 Query<F::ViewQuery>,
                 Query<F::ItemQuery>,
+                //Query<NameOrEntity>,
             )>()
             .unwrap();
 
-        let view = views.get_inner(view).unwrap_or_else(|error| {
+        // note: sometimes the view query doesn't match because the rendering function
+        // does need data that's not available yet. we can just skip the whole render
+        // function then.
+
+        /*let view = views.get_inner(view).unwrap_or_else(|error| {
+            let name = names.get(view).unwrap();
             panic!(
-                "Could not get view '{view:?}' for render function `{}`: {error}",
+                "Could not get view '{name}' for render function `{}`: {error}",
                 type_name::<F>()
             );
-        });
+        });*/
 
-        <F as RenderFunction>::render(self, param.into_inner(), render_pass, view, items);
+        if let Ok(view) = views.get_inner(view) {
+            <F as RenderFunction>::render(self, param.into_inner(), render_pass, view, items);
+        }
     }
 }
 

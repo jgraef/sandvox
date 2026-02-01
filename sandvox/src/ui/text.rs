@@ -127,7 +127,7 @@ fn request_redraw(
     mut commands: Commands,
 ) {
     for root in nodes {
-        commands.entity(root.viewport).insert(RedrawRequested);
+        commands.entity(root.root).insert(RedrawRequested);
     }
 }
 
@@ -142,19 +142,12 @@ fn render_texts(
         &RoundedLayout,
         &Root,
     )>,
-    requested_redraw: Populated<(), With<RedrawRequested>>,
-    mut surfaces: Populated<&mut RenderBufferBuilder>,
+    mut views: Populated<&mut RenderBufferBuilder, With<RedrawRequested>>,
 ) {
     let displacement = font.glyph_displacement();
 
     for (entity, text, text_buffer, text_size, text_color, rounded_layout, root) in nodes {
-        // - check if the root of the ui tree is requested to be redrawn
-        // - get the render target
-        // - get the render buffer builder for the render target
-        if let Ok(()) = requested_redraw.get(root.viewport)
-            && let Some(render_target) = root.render_target
-            && let Ok(mut render_buffer_builder) = surfaces.get_mut(render_target)
-        {
+        if let Ok(mut render_buffer_builder) = views.get_mut(root.root) {
             let content_offset = Vector2::new(
                 rounded_layout.content_box_x(),
                 rounded_layout.content_box_y(),

@@ -71,7 +71,7 @@ pub struct UiPassUniform {
 pub struct UiPassUniformData {
     pub viewport_size: Vector2<u32>,
     pub time: f32,
-    _padding: [u32; 3],
+    _padding: u32,
 }
 
 #[profiling::function]
@@ -198,7 +198,7 @@ pub fn update_ui_pass(
 pub fn create_ui_pass(
     wgpu: Res<WgpuContext>,
     ui_pass_layout: Res<UiPassLayout>,
-    views: Populated<Entity, (With<ui::Root>, Without<UiPass>)>,
+    views: Populated<Entity, (With<ui::Viewport>, Without<UiPass>)>,
     default_sampler: Res<DefaultSampler>,
     default_atlas: Res<DefaultAtlas>,
     default_font: Res<DefaultFont>,
@@ -241,7 +241,10 @@ pub struct UiPassRenderFunctions<'w, 's> {
 #[profiling::function]
 pub fn render_ui_pass(
     mut render_context: RenderContext,
-    views: Populated<(NameOrEntity, &RenderTarget, &UiPass, Option<&ClearColor>), With<ui::Root>>,
+    views: Populated<
+        (NameOrEntity, &RenderTarget, &UiPass, Option<&ClearColor>),
+        With<ui::Viewport>,
+    >,
     surfaces: Populated<&Surface>,
     mut render_functions: UiPassRenderFunctions,
 ) {
@@ -266,14 +269,7 @@ pub fn render_ui_pass(
                         store: wgpu::StoreOp::Store,
                     },
                 })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &surface.depth_texture(),
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Discard,
-                    }),
-                    stencil_ops: None,
-                }),
+                depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
                 multiview_mask: None,

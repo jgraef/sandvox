@@ -1,6 +1,5 @@
 use bevy_ecs::{
     component::Component,
-    entity::Entity,
     name::NameOrEntity,
     query::{
         Changed,
@@ -22,7 +21,7 @@ use crate::{
     },
     render::{
         RenderConfig,
-        frame::FrameUniform,
+        pass::ui_pass::UiPassUniform,
     },
     wgpu::WgpuContext,
 };
@@ -38,15 +37,6 @@ pub(super) fn create_surfaces(
 
         let surface = Surface::new(&wgpu, &window_handle, window_size.size, &config);
         commands.entity(entity.entity).insert(surface);
-    }
-}
-
-// todo: this should be handled by UI I think
-pub(super) fn update_viewports(
-    windows: Populated<(&mut FrameUniform, &WindowSize), Changed<WindowSize>>,
-) {
-    for (mut frame_uniform, window_size) in windows {
-        frame_uniform.data.viewport_size = window_size.size;
     }
 }
 

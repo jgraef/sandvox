@@ -366,23 +366,16 @@ fn load_sprites(
 
 fn request_redraw(nodes: Populated<&Root, Changed<Background>>, mut commands: Commands) {
     for root in nodes {
-        commands.entity(root.viewport).insert(RedrawRequested);
+        commands.entity(root.root).insert(RedrawRequested);
     }
 }
 
 fn render_sprites(
     nodes: Populated<(NameOrEntity, &Background, &RoundedLayout, &Root)>,
-    requested_redraw: Populated<(), With<RedrawRequested>>,
-    mut surfaces: Populated<&mut RenderBufferBuilder>,
+    mut views: Populated<&mut RenderBufferBuilder, With<RedrawRequested>>,
 ) {
     for (entity, background, rounded_layout, root) in nodes {
-        // - check if the root of the ui tree is requested to be redrawn
-        // - get the render target
-        // - get the render buffer builder for the render target
-        if let Ok(()) = requested_redraw.get(root.viewport)
-            && let Some(render_target) = root.render_target
-            && let Ok(mut render_buffer_builder) = surfaces.get_mut(render_target)
-        {
+        if let Ok(mut render_buffer_builder) = views.get_mut(root.root) {
             let offset = Point2::new(rounded_layout.location.x, rounded_layout.location.y);
             let size = Vector2::new(rounded_layout.size.width, rounded_layout.size.height);
 

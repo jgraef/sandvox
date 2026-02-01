@@ -109,7 +109,7 @@ impl QuerySetTransaction {
                 state.num_active_query_sets += 1;
                 state.num_allocated_query_sets += 1;
 
-                tracing::debug!(
+                tracing::trace!(
                     ?state.num_active_query_sets,
                     ?state.num_allocated_query_sets,
                     "allocated query set"
@@ -219,7 +219,7 @@ impl QuerySetTransaction {
                 state.num_active_resolve_buffers += 1;
                 state.total_resolve_buffer_memory += 2 * buffer_size;
 
-                tracing::debug!(
+                tracing::trace!(
                     ?buffer_size,
                     ?state.num_allocated_resolve_buffers,
                     ?state.num_active_resolve_buffers,

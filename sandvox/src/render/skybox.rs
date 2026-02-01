@@ -24,7 +24,6 @@ use bevy_ecs::{
         Query,
         Res,
         ResMut,
-        Single,
     },
     world::Ref,
 };

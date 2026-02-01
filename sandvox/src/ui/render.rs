@@ -1,26 +1,23 @@
 use bevy_ecs::{
     component::Component,
-    entity::{
-        Entity,
-        EntityHashSet,
-    },
+    entity::Entity,
     name::NameOrEntity,
     query::{
-        Added,
         Changed,
         Or,
+        ROQueryItem,
         With,
         Without,
     },
-    relationship::RelationshipTarget,
     resource::Resource,
     schedule::IntoScheduleConfigs,
     system::{
         Commands,
-        Local,
         Populated,
+        Query,
         Res,
         ResMut,
+        SystemParamItem,
     },
 };
 use bytemuck::{
@@ -44,14 +41,19 @@ use crate::{
     render::{
         RenderSystems,
         atlas::AtlasHandle,
-        frame::{
-            Frame,
-            FrameBindGroupLayout,
+        command::{
+            AddRenderFunction,
+            RenderFunction,
         },
-        render_target::{
-            RenderSources,
-            RenderTarget,
+        pass::{
+            RenderPass,
+            phase,
+            ui_pass::{
+                UiPass,
+                UiPassLayout,
+            },
         },
+        render_target::RenderTarget,
         staging::Staging,
         surface::Surface,
         text::GlyphId,
@@ -59,7 +61,6 @@ use crate::{
     ui::{
         RedrawRequested,
         UiSystems,
-        Viewport,
     },
     wgpu::{
         WgpuContext,
@@ -69,31 +70,26 @@ use crate::{
 
 #[profiling::function]
 pub(super) fn setup_render_systems(builder: &mut WorldBuilder) {
-    /*builder.add_systems(
-        schedule::Startup,
-        create_pipeline_layout.in_set(RenderSystems::Setup),
-    );
-    .add_systems(
-        schedule::Render,
-        (
-            (create_pipeline, create_render_buffer).in_set(RenderSystems::BeginFrame),
+    builder
+        .add_systems(
+            schedule::Startup,
+            create_layout.in_set(RenderSystems::Setup),
+        )
+        .add_systems(
+            schedule::Render,
             (
-                flush_render_buffers.after(UiSystems::Render),
-                render_ui.after(flush_render_buffers),
-            )
-                .in_set(RenderSystems::RenderUi),
-            clear_render_requests.after(UiSystems::Render),
-            propagate_render_requests
-                .before(UiSystems::Render)
-                .after(UiSystems::Layout),
-        ),
-    );*/
+                create_render_buffer.in_set(RenderSystems::BeginFrame),
+                (create_pipeline, flush_render_buffers).before(RenderSystems::RenderUi),
+                clear_render_requests.after(UiSystems::Render),
+            ),
+        )
+        .add_render_function::<phase::Ui, _>(RenderUi);
 }
 
 #[profiling::function]
-fn create_pipeline_layout(
+fn create_layout(
     wgpu: Res<WgpuContext>,
-    frame_bind_group_layout: Res<FrameBindGroupLayout>,
+    ui_pass_layout: Res<UiPassLayout>,
     mut commands: Commands,
 ) {
     let shader = wgpu
@@ -120,14 +116,11 @@ fn create_pipeline_layout(
         .device
         .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("ui"),
-            bind_group_layouts: &[
-                &frame_bind_group_layout.bind_group_layout,
-                &bind_group_layout,
-            ],
+            bind_group_layouts: &[&ui_pass_layout.bind_group_layout, &bind_group_layout],
             immediate_size: 0,
         });
 
-    commands.insert_resource(PipelineLayout {
+    commands.insert_resource(UiLayout {
         shader,
         bind_group_layout,
         pipeline_layout,
@@ -136,181 +129,132 @@ fn create_pipeline_layout(
 
 fn create_pipeline(
     wgpu: Res<WgpuContext>,
-    debug_pipeline_layout: Res<PipelineLayout>,
-    surfaces: Populated<(Entity, &Surface), Without<Pipeline>>,
+    debug_pipeline_layout: Res<UiLayout>,
+    surfaces: Populated<(NameOrEntity, &Surface)>,
+    views: Populated<
+        (NameOrEntity, &RenderTarget),
+        (
+            // todo: this should really check if there's *any* view that needs to render *anything*
+            // opaque
+            With<UiPass>,
+            Without<UiPipeline>,
+        ),
+    >,
     mut commands: Commands,
 ) {
-    for (entity, surface) in surfaces {
-        let debug_pipeline = wgpu
-            .device
-            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("ui/debug"),
-                layout: Some(&debug_pipeline_layout.pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &debug_pipeline_layout.shader,
-                    entry_point: Some("debug_vertex"),
-                    compilation_options: Default::default(),
-                    buffers: &[],
-                },
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::LineList,
-                    strip_index_format: None,
-                    front_face: wgpu::FrontFace::Ccw,
-                    cull_mode: None,
-                    unclipped_depth: false,
-                    polygon_mode: wgpu::PolygonMode::Fill,
-                    conservative: false,
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: surface.depth_format(),
-                    depth_write_enabled: false,
-                    depth_compare: wgpu::CompareFunction::Always,
-                    stencil: Default::default(),
-                    bias: Default::default(),
-                }),
-                multisample: Default::default(),
-                fragment: Some(wgpu::FragmentState {
-                    module: &debug_pipeline_layout.shader,
-                    entry_point: Some("debug_fragment"),
-                    compilation_options: Default::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: surface.surface_format(),
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                multiview_mask: None,
-                cache: None,
+    for (view_entity, render_target) in views {
+        if let Ok((surface_entity, surface)) = surfaces.get(render_target.0) {
+            tracing::debug!(surface = %surface_entity, view = %view_entity, "creating ui render pipeline for surface");
+            let debug_pipeline =
+                wgpu.device
+                    .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                        label: Some("ui/debug"),
+                        layout: Some(&debug_pipeline_layout.pipeline_layout),
+                        vertex: wgpu::VertexState {
+                            module: &debug_pipeline_layout.shader,
+                            entry_point: Some("debug_vertex"),
+                            compilation_options: Default::default(),
+                            buffers: &[],
+                        },
+                        primitive: wgpu::PrimitiveState {
+                            topology: wgpu::PrimitiveTopology::LineList,
+                            strip_index_format: None,
+                            front_face: wgpu::FrontFace::Ccw,
+                            cull_mode: None,
+                            unclipped_depth: false,
+                            polygon_mode: wgpu::PolygonMode::Fill,
+                            conservative: false,
+                        },
+                        depth_stencil: None,
+                        multisample: Default::default(),
+                        fragment: Some(wgpu::FragmentState {
+                            module: &debug_pipeline_layout.shader,
+                            entry_point: Some("debug_fragment"),
+                            compilation_options: Default::default(),
+                            targets: &[Some(wgpu::ColorTargetState {
+                                format: surface.surface_format(),
+                                blend: None,
+                                write_mask: wgpu::ColorWrites::ALL,
+                            })],
+                        }),
+                        multiview_mask: None,
+                        cache: None,
+                    });
+
+            let quad_pipeline =
+                wgpu.device
+                    .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                        label: Some("ui/quad"),
+                        layout: Some(&debug_pipeline_layout.pipeline_layout),
+                        vertex: wgpu::VertexState {
+                            module: &debug_pipeline_layout.shader,
+                            entry_point: Some("quad_vertex"),
+                            compilation_options: Default::default(),
+                            buffers: &[],
+                        },
+                        primitive: wgpu::PrimitiveState {
+                            topology: wgpu::PrimitiveTopology::TriangleList,
+                            strip_index_format: None,
+                            front_face: wgpu::FrontFace::Ccw,
+                            cull_mode: None,
+                            unclipped_depth: false,
+                            polygon_mode: wgpu::PolygonMode::Fill,
+                            conservative: false,
+                        },
+                        depth_stencil: None,
+                        multisample: Default::default(),
+                        fragment: Some(wgpu::FragmentState {
+                            module: &debug_pipeline_layout.shader,
+                            entry_point: Some("quad_fragment"),
+                            compilation_options: Default::default(),
+                            targets: &[Some(wgpu::ColorTargetState {
+                                format: surface.surface_format(),
+                                blend: None,
+                                write_mask: wgpu::ColorWrites::ALL,
+                            })],
+                        }),
+                        multiview_mask: None,
+                        cache: None,
+                    });
+
+            commands.entity(view_entity.entity).insert(UiPipeline {
+                debug_pipeline,
+                quad_pipeline,
             });
-
-        let quad_pipeline = wgpu
-            .device
-            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("ui/quad"),
-                layout: Some(&debug_pipeline_layout.pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &debug_pipeline_layout.shader,
-                    entry_point: Some("quad_vertex"),
-                    compilation_options: Default::default(),
-                    buffers: &[],
-                },
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    strip_index_format: None,
-                    front_face: wgpu::FrontFace::Ccw,
-                    cull_mode: None,
-                    unclipped_depth: false,
-                    polygon_mode: wgpu::PolygonMode::Fill,
-                    conservative: false,
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: surface.depth_format(),
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::Less,
-                    stencil: Default::default(),
-                    bias: Default::default(),
-                }),
-                multisample: Default::default(),
-                fragment: Some(wgpu::FragmentState {
-                    module: &debug_pipeline_layout.shader,
-                    entry_point: Some("quad_fragment"),
-                    compilation_options: Default::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: surface.surface_format(),
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                multiview_mask: None,
-                cache: None,
-            });
-
-        let clear_depth_pipeline =
-            wgpu.device
-                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some("ui/clear-depth"),
-                    layout: Some(&debug_pipeline_layout.pipeline_layout),
-                    vertex: wgpu::VertexState {
-                        module: &debug_pipeline_layout.shader,
-                        entry_point: Some("clear_depth_vertex"),
-                        compilation_options: Default::default(),
-                        buffers: &[],
-                    },
-                    primitive: wgpu::PrimitiveState {
-                        topology: wgpu::PrimitiveTopology::TriangleList,
-                        strip_index_format: None,
-                        front_face: wgpu::FrontFace::Ccw,
-                        cull_mode: None,
-                        unclipped_depth: false,
-                        polygon_mode: wgpu::PolygonMode::Fill,
-                        conservative: false,
-                    },
-                    depth_stencil: Some(wgpu::DepthStencilState {
-                        format: surface.depth_format(),
-                        depth_write_enabled: true,
-                        depth_compare: wgpu::CompareFunction::Always,
-                        stencil: Default::default(),
-                        bias: Default::default(),
-                    }),
-                    multisample: Default::default(),
-                    fragment: Some(wgpu::FragmentState {
-                        module: &debug_pipeline_layout.shader,
-                        entry_point: Some("clear_depth_fragment"),
-                        compilation_options: Default::default(),
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format: surface.surface_format(),
-                            blend: None,
-                            write_mask: wgpu::ColorWrites::empty(),
-                        })],
-                    }),
-                    multiview_mask: None,
-                    cache: None,
-                });
-
-        commands.entity(entity).insert(Pipeline {
-            debug_pipeline,
-            quad_pipeline,
-            clear_depth_pipeline,
-        });
+        }
     }
 }
 
 #[profiling::function]
 fn create_render_buffer(
     wgpu: Res<WgpuContext>,
-    viewports: Populated<
-        (NameOrEntity, &RenderTarget),
-        Or<((Changed<RenderTarget>, With<Viewport>), Added<Viewport>)>,
-    >,
-    surfaces: Populated<NameOrEntity, Without<RenderBuffer>>,
+    views: Populated<NameOrEntity, (With<UiPass>, Without<RenderBuffer>)>,
     mut commands: Commands,
 ) {
     // todo: remove stale buffers (e.g. from a surface that is not a ui render
     // target anymore)
 
-    for (viewport_entity, render_target) in viewports {
-        if let Ok(surface_entity) = surfaces.get(render_target.0) {
-            tracing::debug!(viewport = %viewport_entity, surface = %surface_entity, "creating render buffer");
+    for view_entity in views {
+        tracing::debug!(viewport = %view_entity, "creating render buffer");
 
-            commands.entity(render_target.0).insert((
-                RenderBuffer {
-                    buffer: TypedArrayBuffer::new(
-                        wgpu.device.clone(),
-                        "ui/render",
-                        wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                    ),
-                    bind_group: None,
-                },
-                RenderBufferBuilder::default(),
-            ));
-        }
+        commands.entity(view_entity.entity).insert((
+            RenderBuffer {
+                buffer: TypedArrayBuffer::new(
+                    wgpu.device.clone(),
+                    "ui/render",
+                    wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                ),
+                bind_group: None,
+            },
+            RenderBufferBuilder::default(),
+        ));
     }
 }
 
 #[profiling::function]
 fn flush_render_buffers(
     wgpu: Res<WgpuContext>,
-    pipeline_layout: Res<PipelineLayout>,
+    pipeline_layout: Res<UiLayout>,
     render_buffers: Populated<
         (&mut RenderBuffer, &mut RenderBufferBuilder),
         Changed<RenderBufferBuilder>,
@@ -362,9 +306,52 @@ fn flush_render_buffers(
     }
 }
 
+#[derive(Debug)]
+struct RenderUi;
+
+impl RenderFunction for RenderUi {
+    type Param = (Option<Res<'static, ShowDebugOutlines>>,);
+    type ViewQuery = (&'static UiPipeline, &'static RenderBuffer);
+    type ItemQuery = ();
+
+    fn render(
+        &self,
+        param: SystemParamItem<Self::Param>,
+        render_pass: &mut RenderPass<'_>,
+        view: ROQueryItem<Self::ViewQuery>,
+        items: Query<Self::ItemQuery>,
+    ) {
+        let show_debug_outlines = param.0.is_some();
+        let (pipeline, render_buffer) = view;
+        let _ = items;
+
+        if let Some(bind_group) = &render_buffer.bind_group {
+            let span = render_pass.enter_span("ui");
+
+            // bind bind group containing the render buffer
+            render_pass.set_bind_group(1, Some(bind_group), &[]);
+
+            // draw render buffer (textured quads)
+            render_pass.set_pipeline(&pipeline.quad_pipeline);
+
+            let num_quads: u32 = render_buffer.buffer.len().try_into().unwrap();
+            render_pass.draw(0..(6 * num_quads), 0..1);
+
+            // draw debug outlines for render buffer
+            if show_debug_outlines {
+                render_pass.set_pipeline(&pipeline.debug_pipeline);
+                render_pass.draw(0..(8 * num_quads), 0..1);
+            }
+
+            render_pass.exit_span(span);
+        }
+    }
+}
+
+/*
 #[profiling::function]
 fn render_ui(
-    surfaces: Populated<(&mut Frame, &Pipeline, &RenderBuffer)>,
+    surfaces: Populated<(&mut Frame, &UiPipeline, &RenderBuffer)>,
     show_debug_outlines: Option<Res<ShowDebugOutlines>>,
 ) {
     for (mut frame, render_pipeline, render_buffer) in surfaces {
@@ -432,7 +419,7 @@ fn propagate_render_requests(
     }
 
     already_requesting.clear();
-}
+}*/
 
 #[profiling::function]
 fn clear_render_requests(
@@ -446,17 +433,16 @@ fn clear_render_requests(
 }
 
 #[derive(Debug, Resource)]
-struct PipelineLayout {
+struct UiLayout {
     shader: wgpu::ShaderModule,
     bind_group_layout: wgpu::BindGroupLayout,
     pipeline_layout: wgpu::PipelineLayout,
 }
 
 #[derive(Debug, Component)]
-struct Pipeline {
+struct UiPipeline {
     debug_pipeline: wgpu::RenderPipeline,
     quad_pipeline: wgpu::RenderPipeline,
-    clear_depth_pipeline: wgpu::RenderPipeline,
 }
 
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]

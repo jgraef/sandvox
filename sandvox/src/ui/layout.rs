@@ -99,7 +99,7 @@ where
 
 fn request_redraw(nodes: Populated<&Root, Changed<RoundedLayout>>, mut commands: Commands) {
     for root in nodes {
-        commands.entity(root.viewport).insert(RedrawRequested);
+        commands.entity(root.root).insert(RedrawRequested);
     }
 }
 
@@ -118,17 +118,14 @@ fn request_redraw(nodes: Populated<&Root, Changed<RoundedLayout>>, mut commands:
 /// ```
 fn layout_trees<L>(
     mut tree: TreeInner<L>,
-    roots: Populated<(Entity, &Viewport, Option<&RenderTarget>), (With<Style>, Without<ChildOf>)>,
+    roots: Populated<(Entity, &Viewport), (With<Style>, Without<ChildOf>)>,
 ) where
     L: LeafMeasure,
 {
-    for (entity, surface, render_target) in roots.iter() {
+    for (entity, surface) in roots.iter() {
         let mut tree = Tree {
             inner: &mut tree,
-            root: Root {
-                viewport: entity,
-                render_target: render_target.map(|render_target| render_target.0),
-            },
+            root: Root { root: entity },
         };
         tree.compute_root_layout(entity, surface.size.cast());
     }

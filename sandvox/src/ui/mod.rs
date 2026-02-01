@@ -56,6 +56,10 @@ use crate::{
     },
     render::{
         RenderSystems,
+        pass::ui_pass::{
+            UiPassUniform,
+            UiPassUniformData,
+        },
         render_target::{
             RenderSources,
             RenderTarget,
@@ -93,10 +97,7 @@ impl Plugin for UiPlugin {
         builder
             .add_systems(
                 schedule::Render,
-                (
-                    create_viewports_from_render_targets,
-                    update_viewport_from_surfaces,
-                )
+                (create_viewports_from_windows, update_viewports_from_windows)
                     .before(UiSystems::Layout),
             )
             .configure_system_sets(
@@ -123,15 +124,17 @@ pub struct Viewport {
     pub size: Vector2<u32>,
 }
 
-fn create_viewports_from_render_targets(
+fn create_viewports_from_windows(
     windows: Populated<(NameOrEntity, &WindowSize)>,
-    roots: Populated<
+    viewports: Populated<
         (NameOrEntity, &RenderTarget),
         (With<Style>, Without<ChildOf>, Without<Viewport>),
     >,
     mut commands: Commands,
 ) {
-    for (viewport_entity, render_target) in roots {
+    // note: the ui pass uniform will be created for anything that has a viewport
+
+    for (viewport_entity, render_target) in viewports {
         if let Ok((window_name, window_size)) = windows.get(render_target.0) {
             tracing::debug!(window = %window_name, viewport = %viewport_entity, size = ?window_size.size, "create ui viewport");
 
@@ -142,14 +145,16 @@ fn create_viewports_from_render_targets(
     }
 }
 
-fn update_viewport_from_surfaces(
+fn update_viewports_from_windows(
     windows: Populated<(&WindowSize, &RenderSources), Changed<WindowSize>>,
-    mut viewports: Populated<&mut Viewport>,
+    mut viewports: Populated<(&mut Viewport, &mut UiPassUniform)>,
 ) {
     for (window_size, render_sources) in windows {
         for entity in render_sources.iter() {
-            if let Ok(mut viewport) = viewports.get_mut(entity) {
+            if let Ok((mut viewport, mut ui_pass_uniform)) = viewports.get_mut(entity) {
                 viewport.size = window_size.size;
+
+                ui_pass_uniform.data.viewport_size = window_size.size;
             }
         }
     }
@@ -158,10 +163,10 @@ fn update_viewport_from_surfaces(
 #[derive(Clone, Copy, Debug, Component)]
 pub struct RedrawRequested;
 
+/// Attached to UI nodes and points to root node
 #[derive(Clone, Copy, Debug, Component, PartialEq, Eq)]
 pub struct Root {
-    pub viewport: Entity,
-    pub render_target: Option<Entity>,
+    pub root: Entity,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
