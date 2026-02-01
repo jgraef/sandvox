@@ -1,5 +1,8 @@
 use std::{
-    any::TypeId,
+    any::{
+        TypeId,
+        type_name,
+    },
     marker::PhantomData,
 };
 
@@ -46,11 +49,15 @@ pub trait RenderFunction: Send + Sync + 'static {
     );
 }
 
+#[derive(derive_more::Debug)]
 pub struct RenderFunctions<'w, 's, P>
 where
     P: 'static,
 {
+    #[debug(skip)]
     registry: Res<'w, Registry<P>>,
+
+    #[debug(skip)]
     params: ParamSet<'w, 's, Vec<DynSystemParam<'static, 'static>>>,
 }
 
@@ -260,7 +267,7 @@ impl<P> Clone for RenderFunctionId<P> {
 
 impl<P> Copy for RenderFunctionId<P> {}
 
-pub trait AddRenderCommand {
+pub trait AddRenderFunction {
     fn add_render_function<P, F>(&mut self, function: F) -> &mut Self
     where
         P: 'static,
@@ -268,13 +275,19 @@ pub trait AddRenderCommand {
         F::Param: ReadOnlySystemParam;
 }
 
-impl AddRenderCommand for WorldBuilder {
+impl AddRenderFunction for WorldBuilder {
     fn add_render_function<P, F>(&mut self, function: F) -> &mut Self
     where
         P: 'static,
         F: RenderFunction + 'static,
         F::Param: ReadOnlySystemParam,
     {
+        tracing::debug!(
+            phase = type_name::<P>(),
+            function = type_name::<F>(),
+            "adding render function"
+        );
+
         let mut registry = self.world.get_resource_or_init::<Registry<P>>();
         registry.insert(function);
 

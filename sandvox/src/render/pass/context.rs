@@ -3,7 +3,6 @@ use bevy_ecs::{
     resource::Resource,
     system::{
         Deferred,
-        Local,
         Res,
         ResMut,
         SystemBuffer,

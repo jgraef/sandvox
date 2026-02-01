@@ -6,3 +6,6 @@ pub struct OpaquePrepass;
 
 #[derive(Debug)]
 pub struct Wireframe;
+
+#[derive(Debug)]
+pub struct Skybox;

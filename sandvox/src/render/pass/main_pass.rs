@@ -13,8 +13,8 @@ use bevy_ecs::{
         Query,
         Res,
         ResMut,
+        SystemParam,
     },
-    world::World,
 };
 use bytemuck::{
     Pod,
@@ -32,11 +32,9 @@ use crate::{
             Camera,
             CameraData,
         },
-        pass::{
-            RenderPass,
-            context::RenderContext,
-        },
-        phase::Opaque,
+        mesh::RenderWireframes,
+        pass::context::RenderContext,
+        phase,
         render_target::RenderTarget,
         staging::Staging,
         surface::{
@@ -207,14 +205,24 @@ pub fn create_main_pass(
     }
 }
 
+#[derive(Debug, SystemParam)]
+pub struct MainPassRenderFunctions<'w, 's> {
+    pub opaque: RenderFunctions<'w, 's, phase::Opaque>,
+    pub wireframe: RenderFunctions<'w, 's, phase::Wireframe>,
+    pub skybox: RenderFunctions<'w, 's, phase::Skybox>,
+}
+
 #[profiling::function]
 pub fn render_main_pass(
     mut render_context: RenderContext,
     cameras: Populated<(NameOrEntity, &RenderTarget, &MainPass), With<Camera>>,
     surfaces: Populated<(&Surface, Option<&ClearColor>)>,
-    mut render_functions_opaque: RenderFunctions<Opaque>,
+    mut render_functions: MainPassRenderFunctions,
+    wireframe_enabled: Option<Res<RenderWireframes>>,
 ) {
-    for (entity, render_target, main_pass) in cameras {
+    let wireframe_enabled = wireframe_enabled.is_some();
+
+    for (camera_entity, render_target, main_pass) in cameras {
         // get target texture (and clear color)
         // todo: this should work with any kind of target texture
         let (surface, clear_color) = surfaces.get(render_target.0).unwrap();
@@ -252,7 +260,19 @@ pub fn render_main_pass(
             render_pass.set_bind_group(0, Some(&main_pass.bind_group), &[]);
 
             // render!
-            render_functions_opaque.render(&mut render_pass, entity.entity);
+            render_functions
+                .opaque
+                .render(&mut render_pass, camera_entity.entity);
+
+            if wireframe_enabled {
+                render_functions
+                    .wireframe
+                    .render(&mut render_pass, camera_entity.entity);
+            }
+
+            render_functions
+                .skybox
+                .render(&mut render_pass, camera_entity.entity);
 
             render_pass.profiler
             // actual render pass dropped here
@@ -264,6 +284,7 @@ pub fn render_main_pass(
     }
 }
 
+#[profiling::function]
 fn create_bind_group(
     device: &wgpu::Device,
     main_pass_layout: &MainPassLayout,

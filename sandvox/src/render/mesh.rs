@@ -18,11 +18,7 @@ use bevy_ecs::{
     resource::Resource,
     schedule::{
         IntoScheduleConfigs,
-        SystemCondition,
-        common_conditions::{
-            any_match_filter,
-            resource_exists,
-        },
+        common_conditions::any_match_filter,
     },
     system::{
         Commands,
@@ -59,17 +55,12 @@ use crate::{
     render::{
         RenderSystems,
         camera::{
-            Camera,
             CameraProjection,
             FrustrumCulled,
         },
         command::{
-            AddRenderCommand,
+            AddRenderFunction,
             RenderFunction,
-        },
-        frame::{
-            Frame,
-            FrameBindGroupLayout,
         },
         pass::{
             RenderPass,
@@ -78,10 +69,7 @@ use crate::{
                 MainPassLayout,
             },
         },
-        phase::{
-            Opaque,
-            Wireframe,
-        },
+        phase,
         render_target::RenderTarget,
         staging::Staging,
         surface::Surface,
@@ -129,8 +117,8 @@ impl Plugin for MeshPlugin {
                         .after(render_meshes),*/
                 ),
             )
-            .add_render_function::<Opaque, _>(RenderMeshes::<Opaque>::default())
-            .add_render_function::<Wireframe, _>(RenderMeshes::<Wireframe>::default());
+            .add_render_function::<phase::Opaque, _>(RenderMeshes::<phase::Opaque>::default())
+            .add_render_function::<phase::Wireframe, _>(RenderMeshes::<phase::Wireframe>::default());
         Ok(())
     }
 }
@@ -544,7 +532,7 @@ trait RenderMeshesForPhase: Send + Sync + 'static {
     fn num_vertices(num_indices: usize) -> u32;
 }
 
-impl RenderMeshesForPhase for Opaque {
+impl RenderMeshesForPhase for phase::Opaque {
     #[inline]
     fn scope_label() -> &'static str {
         "mesh/opaque"
@@ -561,7 +549,7 @@ impl RenderMeshesForPhase for Opaque {
     }
 }
 
-impl RenderMeshesForPhase for Wireframe {
+impl RenderMeshesForPhase for phase::Wireframe {
     #[inline]
     fn scope_label() -> &'static str {
         "mesh/wireframe"
@@ -596,6 +584,7 @@ where
         Option<&'static FrustrumCulled>,
     );
 
+    #[profiling::function]
     fn render(
         &self,
         param: SystemParamItem<Self::Param>,
@@ -636,6 +625,7 @@ where
     }
 }
 
+/*
 #[deprecated]
 fn render_meshes_with(
     cameras: Populated<(&CameraProjection, &GlobalTransform, &RenderTarget), With<Camera>>,
@@ -731,7 +721,7 @@ fn render_wireframes(
         "mesh-wireframe",
     );
 }
-
+ */
 #[derive(Clone, Copy, Debug, Default, Resource)]
 pub struct RenderMeshStatistics {
     pub num_rendered: usize,
