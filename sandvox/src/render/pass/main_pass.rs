@@ -284,6 +284,9 @@ pub fn render_main_pass(
             render_pass.set_bind_group(0, Some(&main_pass.bind_group), &[]);
 
             // todo: do the rendering!
+            //for render_function in render_functions_opaque.iter_mut() {
+            //    //
+            //}
 
             render_pass.profiler
             // actual render pass dropped here

@@ -35,14 +35,106 @@ use crate::{
     },
 };
 
+pub mod new {
+    use std::marker::PhantomData;
+
+    use bevy_ecs::{
+        entity::Entity,
+        resource::Resource,
+        system::{
+            DynParamBuilder,
+            DynSystemParam,
+            DynSystemParamState,
+            ParamBuilder,
+            ParamSet,
+            Query,
+            Res,
+            StaticSystemParam,
+            SystemParam,
+            SystemParamBuilder,
+        },
+        world::World,
+    };
+
+    use crate::render::{
+        command::RenderCommand,
+        pass::RenderPass,
+    };
+
+    #[derive(SystemParam)]
+    #[system_param(builder)]
+    pub struct RenderFunctions<'w, 's, P>
+    where
+        P: 'static,
+    {
+        registry: Res<'w, Registry<P>>,
+        param: ParamSet<'w, 's, Vec<DynSystemParam<'static, 'static>>>,
+    }
+
+    impl<'w, 's, F> RenderFunctions<'w, 's, F> {
+        pub fn render(&mut self, mut render_pass: &mut RenderPass<'w>, view: Entity) {
+            let mut functions = self.registry.functions.iter();
+
+            self.param.for_each(|param| {
+                let function = functions.next().unwrap();
+                function.render(&mut render_pass, view, param);
+            });
+        }
+    }
+
+    #[derive(Resource)]
+    struct Registry<P> {
+        functions: Vec<Box<dyn DynRenderFunction>>,
+        _marker: PhantomData<fn() -> P>,
+    }
+
+    trait DynRenderFunction: Send + Sync + 'static {
+        fn build_system_param(&self) -> DynParamBuilder<'static>;
+        fn render<'w>(
+            &self,
+            render_pass: &mut RenderPass<'_>,
+            view: Entity,
+            param: DynSystemParam<'w, '_>,
+        );
+    }
+
+    impl<F> DynRenderFunction for F
+    where
+        F: RenderCommand + Send + Sync + 'static,
+    {
+        fn build_system_param(&self) -> DynParamBuilder<'static> {
+            DynParamBuilder::new::<(F::Param, Query<F::ViewQuery>, Query<F::ItemQuery>)>(
+                ParamBuilder,
+            )
+        }
+
+        fn render<'w>(
+            &self,
+            render_pass: &mut RenderPass<'_>,
+            view: Entity,
+            mut param: DynSystemParam<'w, '_>,
+        ) {
+            let (param, views, items) = param
+                .downcast_mut::<(
+                    StaticSystemParam<F::Param>,
+                    Query<F::ViewQuery>,
+                    Query<F::ItemQuery>,
+                )>()
+                .unwrap();
+            let view = views.get(view).unwrap();
+            <F as RenderCommand>::render(param.into_inner(), render_pass, view, items);
+        }
+    }
+}
+
 pub trait RenderCommand {
     type Param: SystemParam + 'static;
     type ViewQuery: ReadOnlyQueryData;
     type ItemQuery: ReadOnlyQueryData;
 
-    fn render<'w>(
+    fn render<'w, 's>(
         param: SystemParamItem<'w, '_, Self::Param>,
-        render_pass: &mut RenderPass<'w>,
+        render_pass: &mut RenderPass<'_>,
         view: ROQueryItem<'w, '_, Self::ViewQuery>,
         items: Query<'w, '_, Self::ItemQuery>,
     );
