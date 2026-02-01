@@ -1,22 +1,9 @@
 const PI: f32 = 3.141592653589793;
 
-struct Vertex {
-    position: vec4f,
-    normal: vec4f,
-    uv: vec2f,
-    texture_id: u32,
-    // padding: 4 bytes
-}
-
-struct Instance {
-    model_matrix: mat4x4f,
-}
-
 struct FrameUniform {
-    viewport_size: vec2u,
-    time: f32,
-    // padding: 4 bytes
     camera: Camera,
+    time: f32,
+    // padding: 12 bytes
 }
 
 struct Camera {
@@ -49,7 +36,19 @@ struct AtlasEntry {
 var<storage, read> atlas_data: array<AtlasEntry>;
 
 
-// todo: merge this into the render pass bind group
+
+struct Vertex {
+    position: vec4f,
+    normal: vec4f,
+    uv: vec2f,
+    texture_id: u32,
+    // padding: 4 bytes
+}
+
+struct Instance {
+    model_matrix: mat4x4f,
+}
+
 @group(1)
 @binding(0)
 var<storage, read> instance_buffer: array<Instance>;

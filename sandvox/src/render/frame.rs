@@ -200,13 +200,6 @@ pub fn begin_frames(
                 });
 
         let surface_texture = surface.surface_texture();
-        let surface_texture_view =
-            surface_texture
-                .texture
-                .create_view(&wgpu::TextureViewDescriptor {
-                    label: Some("surface"),
-                    ..Default::default()
-                });
 
         let mut render_pass_profiler = wgpu
             .profiler
@@ -217,7 +210,7 @@ pub fn begin_frames(
             .begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("frame"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &surface_texture_view,
+                    view: &surface_texture,
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
@@ -249,7 +242,6 @@ pub fn begin_frames(
         frame.active = Some(ActiveFrame {
             command_encoder,
             render_pass,
-            surface_texture,
             profiler: render_pass_profiler,
         });
     }
@@ -260,11 +252,9 @@ pub fn end_frames(
     wgpu: Res<WgpuContext>,
     frames: Query<&mut Frame>,
     mut command_buffers: Local<Vec<wgpu::CommandBuffer>>,
-    mut present_surfaces: Local<Vec<wgpu::SurfaceTexture>>,
     mut staging: ResMut<Staging>,
 ) {
     assert!(command_buffers.is_empty());
-    assert!(present_surfaces.is_empty());
 
     // todo: put this in its own systems.
     // we can just collect command buffers in a resource (i.e. this one and the ones
@@ -280,7 +270,6 @@ pub fn end_frames(
         if let Some(ActiveFrame {
             mut command_encoder,
             render_pass,
-            surface_texture,
             profiler: render_pass_profiler,
         }) = frame.active.take()
         {
@@ -293,18 +282,11 @@ pub fn end_frames(
 
             // finish the frame's renderpass command encoder
             command_buffers.push(command_encoder.finish());
-            // and present after we submit
-            present_surfaces.push(surface_texture);
         }
     }
 
     // submit all command buffers
     wgpu.queue.submit(command_buffers.drain(..));
-
-    // present surfaces
-    for surface_texture in present_surfaces.drain(..) {
-        surface_texture.present();
-    }
 }
 
 #[derive(Debug, Component)]
@@ -323,7 +305,6 @@ impl Frame {
 pub struct ActiveFrame {
     command_encoder: wgpu::CommandEncoder,
     pub render_pass: wgpu::RenderPass<'static>,
-    surface_texture: wgpu::SurfaceTexture,
     pub profiler: Option<RenderPassProfiler>,
 }
 

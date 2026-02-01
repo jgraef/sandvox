@@ -49,11 +49,12 @@ use crate::{
         atlas::Atlas,
         command::RenderFunctions,
         mesh::RenderMeshStatistics,
-        pass::main_pass,
-        phase::{
-            Opaque,
-            OpaquePrepass,
-            Wireframe,
+        pass::{
+            context::{
+                PendingCommandBuffers,
+                flush_command_buffers,
+            },
+            main_pass,
         },
         staging::{
             Staging,
@@ -62,7 +63,9 @@ use crate::{
         },
         surface::{
             create_surfaces,
+            present_surfaces,
             reconfigure_surfaces,
+            set_swap_chain_texture,
             update_viewports,
         },
         text::Font,
@@ -85,6 +88,7 @@ impl Plugin for RenderPlugin {
             // create resources
             .insert_resource(self.config.clone())
             .init_resource::<RenderMeshStatistics>()
+            .init_resource::<PendingCommandBuffers>()
             // startup systems
             .add_systems(
                 schedule::Startup,
@@ -98,7 +102,7 @@ impl Plugin for RenderPlugin {
                         .after(WgpuSystems::CreateContext)
                         .before(RenderSystems::Setup),
                     // update frame uniform
-                    (main_pass::update_uniform, main_pass::update_bind_group)
+                    (main_pass::create_layout, main_pass::create_main_pass, main_pass::update_main_pass_uniform, main_pass::update_main_pass).chain()
                         .after(RenderSystems::Setup)
                         .before(flush_staging),
                     // flush staging
@@ -111,15 +115,20 @@ impl Plugin for RenderPlugin {
                 (
                     (update_viewports, create_surfaces, reconfigure_surfaces)
                         .before(RenderSystems::BeginFrame),
+                        set_swap_chain_texture.after(create_surfaces).after(reconfigure_surfaces).before(RenderSystems::RenderWorld),
+                        (main_pass::create_layout, main_pass::create_main_pass).chain().in_set(RenderSystems::BeginFrame),
+                        main_pass::render_main_pass.in_set(RenderSystems::RenderWorld),
+                        (
+                        main_pass::update_main_pass_uniform,
+                        main_pass::update_main_pass.run_if(resource_changed::<DefaultAtlas>),
+                    )
+                        .chain()
+                        .before(flush_command_buffers),
+                        (flush_command_buffers, present_surfaces).chain().after(RenderSystems::RenderWorld)
                     /*(main_pass::create_layout, main_pass::begin_pass)
                         .chain()
                         .in_set(RenderSystems::BeginFrame),
-                    (
-                        main_pass::update_uniform,
-                        main_pass::update_bind_group.run_if(resource_changed::<DefaultAtlas>),
-                    )
-                        .chain()
-                        .in_set(RenderSystems::EndFrame)
+
                         .before(main_pass::end_pass),
                     main_pass::end_pass.in_set(RenderSystems::EndFrame),*/
                 ),

@@ -105,8 +105,8 @@ impl SystemBuffer for State {
     }
 }
 
-#[derive(Debug, Resource)]
-struct PendingCommandBuffers {
+#[derive(Debug, Default, Resource)]
+pub struct PendingCommandBuffers {
     command_buffers: Vec<wgpu::CommandBuffer>,
 }
 

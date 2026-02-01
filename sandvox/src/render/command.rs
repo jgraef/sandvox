@@ -37,12 +37,12 @@ pub trait RenderFunction: Send + Sync + 'static {
     type ViewQuery: ReadOnlyQueryData;
     type ItemQuery: ReadOnlyQueryData;
 
-    fn render<'w, 's>(
+    fn render(
         &self,
-        param: SystemParamItem<'w, '_, Self::Param>,
+        param: SystemParamItem<Self::Param>,
         render_pass: &mut RenderPass<'_>,
-        view: ROQueryItem<'w, '_, Self::ViewQuery>,
-        items: Query<'w, '_, Self::ItemQuery>,
+        view: ROQueryItem<Self::ViewQuery>,
+        items: Query<Self::ItemQuery>,
     );
 }
 
@@ -55,7 +55,7 @@ where
 }
 
 impl<'w, 's, F> RenderFunctions<'w, 's, F> {
-    pub fn render(&mut self, render_pass: &mut RenderPass<'w>, view: Entity) {
+    pub fn render(&mut self, render_pass: &mut RenderPass, view: Entity) {
         let mut functions = self.registry.functions.iter();
 
         self.params.for_each(move |param| {
@@ -64,12 +64,6 @@ impl<'w, 's, F> RenderFunctions<'w, 's, F> {
         });
     }
 }
-
-#[doc(hidden)]
-type StructFieldAlias<'w, 's, P> = (
-    Res<'w, Registry<P>>,
-    ParamSet<'w, 's, Vec<DynSystemParam<'static, 'static>>>,
-);
 
 #[doc(hidden)]
 pub struct FetchState<P>
@@ -211,10 +205,6 @@ impl<P> Registry<P> {
 
         id
     }
-
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut dyn DynRenderFunction> {
-        self.functions.iter_mut().map(|f| &mut **f)
-    }
 }
 
 impl<P> Default for Registry<P> {
@@ -236,7 +226,11 @@ where
     F: RenderFunction,
 {
     fn build_system_param(&self) -> DynParamBuilder<'static> {
-        DynParamBuilder::new::<(F::Param, Query<F::ViewQuery>, Query<F::ItemQuery>)>(ParamBuilder)
+        DynParamBuilder::new::<(
+            StaticSystemParam<F::Param>,
+            Query<F::ViewQuery>,
+            Query<F::ItemQuery>,
+        )>(ParamBuilder)
     }
 
     fn render(&self, render_pass: &mut RenderPass, view: Entity, param: DynSystemParam) {

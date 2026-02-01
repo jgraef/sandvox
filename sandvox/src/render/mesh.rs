@@ -11,6 +11,7 @@ use bevy_ecs::{
         Added,
         Changed,
         Or,
+        ROQueryItem,
         With,
         Without,
     },
@@ -27,8 +28,10 @@ use bevy_ecs::{
         Commands,
         Local,
         Populated,
+        Query,
         Res,
         ResMut,
+        SystemParamItem,
     },
 };
 use bytemuck::{
@@ -68,7 +71,13 @@ use crate::{
             Frame,
             FrameBindGroupLayout,
         },
-        pass::RenderPass,
+        pass::{
+            RenderPass,
+            main_pass::{
+                MainPass,
+                MainPassLayout,
+            },
+        },
         phase::{
             Opaque,
             Wireframe,
@@ -108,7 +117,7 @@ impl Plugin for MeshPlugin {
                                 Or<(Changed<GlobalTransform>, Added<Mesh>)>,
                             )>,
                         ),
-                    render_meshes
+                    /* render_meshes
                         .in_set(RenderSystems::RenderWorld)
                         .run_if(resource_exists::<InstanceBuffer>),
                     render_wireframes
@@ -117,11 +126,11 @@ impl Plugin for MeshPlugin {
                             resource_exists::<InstanceBuffer>
                                 .and(resource_exists::<RenderWireframes>),
                         )
-                        .after(render_meshes),
+                        .after(render_meshes),*/
                 ),
-            );
-        //.add_render_command::<Opaque, RenderMeshes<Opaque>>()
-        //.add_render_command::<Wireframe, RenderMeshes<Wireframe>>();
+            )
+            .add_render_function::<Opaque, _>(RenderMeshes::<Opaque>::default())
+            .add_render_function::<Wireframe, _>(RenderMeshes::<Wireframe>::default());
         Ok(())
     }
 }
@@ -272,7 +281,7 @@ struct MeshPipeline {
 #[profiling::function]
 fn create_mesh_pipeline_layout(
     wgpu: Res<WgpuContext>,
-    frame_bind_group_layout: Res<FrameBindGroupLayout>,
+    main_pass_layout: Res<MainPassLayout>,
     mut commands: Commands,
 ) {
     let instance_bind_group_layout =
@@ -324,7 +333,7 @@ fn create_mesh_pipeline_layout(
         .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("mesh"),
             bind_group_layouts: &[
-                &frame_bind_group_layout.bind_group_layout,
+                &main_pass_layout.bind_group_layout,
                 &instance_bind_group_layout,
                 &mesh_bind_group_layout,
             ],
@@ -347,99 +356,110 @@ fn create_mesh_pipeline_layout(
 fn create_mesh_pipeline(
     wgpu: Res<WgpuContext>,
     pipeline_layout: Res<MeshPipelineLayout>,
-    surfaces: Populated<(Entity, NameOrEntity, &Surface), Without<MeshPipeline>>,
+    surfaces: Populated<(NameOrEntity, &Surface)>,
+    cameras: Populated<
+        (NameOrEntity, &RenderTarget),
+        (
+            // todo: this should really check if there's *any* view that needs to render *anything*
+            // opaque
+            With<MainPass>,
+            Without<MeshPipeline>,
+        ),
+    >,
     mut commands: Commands,
 ) {
-    for (entity, name, surface) in surfaces {
-        tracing::trace!(surface = %name, "creating mesh render pipeline for surface");
+    for (camera_entity, render_target) in cameras {
+        if let Ok((surface_entity, surface)) = surfaces.get(render_target.0) {
+            tracing::debug!(surface = %surface_entity, camera = %camera_entity, "creating mesh render pipeline for surface");
 
-        let opaque = wgpu
-            .device
-            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("mesh/opaque"),
-                layout: Some(&pipeline_layout.layout),
-                vertex: wgpu::VertexState {
-                    module: &pipeline_layout.shader,
-                    entry_point: Some("mesh_shaded_vertex"),
-                    compilation_options: Default::default(),
-                    buffers: &[],
-                },
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    strip_index_format: None,
-                    front_face: wgpu::FrontFace::Ccw,
-                    cull_mode: Some(wgpu::Face::Back),
-                    unclipped_depth: false,
-                    polygon_mode: wgpu::PolygonMode::Fill,
-                    conservative: false,
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: surface.depth_format(),
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::Less,
-                    stencil: Default::default(),
-                    bias: Default::default(),
-                }),
-                multisample: Default::default(),
-                fragment: Some(wgpu::FragmentState {
-                    module: &pipeline_layout.shader,
-                    entry_point: Some("mesh_shaded_fragment"),
-                    compilation_options: Default::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: surface.surface_format(),
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                multiview_mask: None,
-                cache: None,
-            });
+            let opaque = wgpu
+                .device
+                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("mesh/opaque"),
+                    layout: Some(&pipeline_layout.layout),
+                    vertex: wgpu::VertexState {
+                        module: &pipeline_layout.shader,
+                        entry_point: Some("mesh_shaded_vertex"),
+                        compilation_options: Default::default(),
+                        buffers: &[],
+                    },
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        strip_index_format: None,
+                        front_face: wgpu::FrontFace::Ccw,
+                        cull_mode: Some(wgpu::Face::Back),
+                        unclipped_depth: false,
+                        polygon_mode: wgpu::PolygonMode::Fill,
+                        conservative: false,
+                    },
+                    depth_stencil: Some(wgpu::DepthStencilState {
+                        format: surface.depth_format(),
+                        depth_write_enabled: true,
+                        depth_compare: wgpu::CompareFunction::Less,
+                        stencil: Default::default(),
+                        bias: Default::default(),
+                    }),
+                    multisample: Default::default(),
+                    fragment: Some(wgpu::FragmentState {
+                        module: &pipeline_layout.shader,
+                        entry_point: Some("mesh_shaded_fragment"),
+                        compilation_options: Default::default(),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: surface.surface_format(),
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                    }),
+                    multiview_mask: None,
+                    cache: None,
+                });
 
-        let wireframe = wgpu
-            .device
-            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("mesh/opaque"),
-                layout: Some(&pipeline_layout.layout),
-                vertex: wgpu::VertexState {
-                    module: &pipeline_layout.shader,
-                    entry_point: Some("mesh_wireframe_vertex"),
-                    compilation_options: Default::default(),
-                    buffers: &[],
-                },
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::LineList,
-                    strip_index_format: None,
-                    front_face: wgpu::FrontFace::Ccw,
-                    cull_mode: None,
-                    unclipped_depth: false,
-                    polygon_mode: wgpu::PolygonMode::Fill,
-                    conservative: false,
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: surface.depth_format(),
-                    depth_write_enabled: false,
-                    depth_compare: wgpu::CompareFunction::LessEqual,
-                    stencil: Default::default(),
-                    bias: Default::default(),
-                }),
-                multisample: Default::default(),
-                fragment: Some(wgpu::FragmentState {
-                    module: &pipeline_layout.shader,
-                    entry_point: Some("mesh_wireframe_fragment"),
-                    compilation_options: Default::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: surface.surface_format(),
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                multiview_mask: None,
-                cache: None,
-            });
+            let wireframe = wgpu
+                .device
+                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("mesh/opaque"),
+                    layout: Some(&pipeline_layout.layout),
+                    vertex: wgpu::VertexState {
+                        module: &pipeline_layout.shader,
+                        entry_point: Some("mesh_wireframe_vertex"),
+                        compilation_options: Default::default(),
+                        buffers: &[],
+                    },
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::LineList,
+                        strip_index_format: None,
+                        front_face: wgpu::FrontFace::Ccw,
+                        cull_mode: None,
+                        unclipped_depth: false,
+                        polygon_mode: wgpu::PolygonMode::Fill,
+                        conservative: false,
+                    },
+                    depth_stencil: Some(wgpu::DepthStencilState {
+                        format: surface.depth_format(),
+                        depth_write_enabled: false,
+                        depth_compare: wgpu::CompareFunction::LessEqual,
+                        stencil: Default::default(),
+                        bias: Default::default(),
+                    }),
+                    multisample: Default::default(),
+                    fragment: Some(wgpu::FragmentState {
+                        module: &pipeline_layout.shader,
+                        entry_point: Some("mesh_wireframe_fragment"),
+                        compilation_options: Default::default(),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: surface.surface_format(),
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                    }),
+                    multiview_mask: None,
+                    cache: None,
+                });
 
-        commands
-            .entity(entity)
-            .insert(MeshPipeline { opaque, wireframe });
+            commands
+                .entity(camera_entity.entity)
+                .insert(MeshPipeline { opaque, wireframe });
+        }
     }
 }
 
@@ -510,8 +530,15 @@ fn update_instance_buffer(
 struct RenderMeshes<P> {
     _marker: PhantomData<fn() -> P>,
 }
+impl<P> Default for RenderMeshes<P> {
+    fn default() -> Self {
+        Self {
+            _marker: Default::default(),
+        }
+    }
+}
 
-trait RenderMeshesForPhase {
+trait RenderMeshesForPhase: Send + Sync + 'static {
     fn scope_label() -> &'static str;
     fn get_pipeline(pipeline: &MeshPipeline) -> &wgpu::RenderPipeline;
     fn num_vertices(num_indices: usize) -> u32;
@@ -553,8 +580,7 @@ impl RenderMeshesForPhase for Wireframe {
     }
 }
 
-/*
-impl<P> RenderCommand for RenderMeshes<P>
+impl<P> RenderFunction for RenderMeshes<P>
 where
     P: RenderMeshesForPhase,
 {
@@ -570,11 +596,12 @@ where
         Option<&'static FrustrumCulled>,
     );
 
-    fn render<'w>(
-        param: bevy_ecs::system::SystemParamItem<'w, '_, Self::Param>,
-        render_pass: &mut RenderPass<'w>,
-        view: bevy_ecs::query::ROQueryItem<'w, '_, Self::ViewQuery>,
-        items: bevy_ecs::system::Query<'w, '_, Self::ItemQuery>,
+    fn render(
+        &self,
+        param: SystemParamItem<Self::Param>,
+        render_pass: &mut RenderPass<'_>,
+        view: ROQueryItem<Self::ViewQuery>,
+        items: Query<Self::ItemQuery>,
     ) {
         let instance_buffer = param;
 
@@ -592,8 +619,10 @@ where
             };
 
             for (mesh, instance_id, cull_aabb) in &items {
-                let cull = cull_aabb
-                    .is_some_and(|cull_aabb| !camera_frustrum.intersect_aabb(&cull_aabb.aabb));
+                //let cull = cull_aabb
+                //    .is_some_and(|cull_aabb|
+                // !camera_frustrum.intersect_aabb(&cull_aabb.aabb));
+                let cull = false;
 
                 if !cull {
                     render_pass.set_bind_group(2, &mesh.bind_group, &[]);
@@ -605,7 +634,7 @@ where
             render_pass.exit_span(span);
         }
     }
-} */
+}
 
 #[deprecated]
 fn render_meshes_with(

@@ -59,12 +59,25 @@ pub(super) fn reconfigure_surfaces(
     }
 }
 
+pub(super) fn set_swap_chain_texture(windows: Populated<&mut Surface>) {
+    for mut surface in windows {
+        surface.ensure_swap_chain_texture();
+    }
+}
+
+pub(super) fn present_surfaces(windows: Populated<&mut Surface>) {
+    for mut surface in windows {
+        surface.present();
+    }
+}
+
 #[derive(Debug, Component)]
 pub struct Surface {
     surface: wgpu::Surface<'static>,
     config: wgpu::SurfaceConfiguration,
     depth_texture: wgpu::TextureView,
     depth_format: wgpu::TextureFormat,
+    swap_chain_texture: Option<SwapChainTexture>,
 }
 
 impl Surface {
@@ -117,6 +130,7 @@ impl Surface {
             config,
             depth_texture,
             depth_format: depth_stencil_format,
+            swap_chain_texture: None,
         }
     }
 
@@ -136,8 +150,9 @@ impl Surface {
         }
     }
 
-    pub fn surface_texture(&self) -> wgpu::SurfaceTexture {
-        self.surface.get_current_texture().unwrap()
+    pub fn surface_texture(&self) -> &wgpu::TextureView {
+        let swap_chain_texture = self.swap_chain_texture.as_ref().unwrap();
+        &swap_chain_texture.texture_view
     }
 
     pub fn depth_texture(&self) -> &wgpu::TextureView {
@@ -150,6 +165,40 @@ impl Surface {
 
     pub fn depth_format(&self) -> wgpu::TextureFormat {
         self.depth_format
+    }
+
+    pub fn ensure_swap_chain_texture(&mut self) {
+        if self.swap_chain_texture.is_none() {
+            self.swap_chain_texture = Some(SwapChainTexture::new(&self.surface));
+        }
+    }
+
+    pub fn present(&mut self) {
+        if let Some(swap_chain_texture) = self.swap_chain_texture.take() {
+            swap_chain_texture.surface_texture.present();
+        }
+    }
+}
+
+#[derive(Debug)]
+struct SwapChainTexture {
+    surface_texture: wgpu::SurfaceTexture,
+    texture_view: wgpu::TextureView,
+}
+
+impl SwapChainTexture {
+    fn new(surface: &wgpu::Surface) -> Self {
+        let surface_texture = surface.get_current_texture().unwrap();
+        let texture_view = surface_texture
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor {
+                label: Some("surface"),
+                ..Default::default()
+            });
+        Self {
+            surface_texture,
+            texture_view,
+        }
     }
 }
 

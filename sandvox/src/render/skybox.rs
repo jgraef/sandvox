@@ -82,33 +82,33 @@ pub struct SkyboxPlugin;
 
 impl Plugin for SkyboxPlugin {
     fn setup(&self, builder: &mut WorldBuilder) -> Result<(), Error> {
-        builder
-            .add_systems(
-                schedule::Startup,
-                (
-                    create_pipeline_layout,
-                    load_skybox.after(create_pipeline_layout),
-                )
-                    .in_set(RenderSystems::Setup),
+        /*builder
+        .add_systems(
+            schedule::Startup,
+            (
+                create_pipeline_layout,
+                load_skybox.after(create_pipeline_layout),
             )
-            .add_systems(
-                schedule::Render,
+                .in_set(RenderSystems::Setup),
+        )
+        .add_systems(
+            schedule::Render,
+            (
                 (
-                    (
-                        create_pipeline,
-                        load_skybox,
-                        update_skybox.run_if(
-                            any_match_filter::<(Changed<GlobalTransform>, With<SkyboxBindGroup>)>
-                                .or(any_match_filter::<(
-                                    Or<(Changed<GlobalTransform>, Changed<Planet>)>,
-                                    With<Planet>,
-                                )>),
-                        ),
-                    )
-                        .in_set(RenderSystems::BeginFrame),
-                    render_skybox.in_set(RenderSystems::RenderWorld),
-                ),
-            );
+                    create_pipeline,
+                    load_skybox,
+                    update_skybox.run_if(
+                        any_match_filter::<(Changed<GlobalTransform>, With<SkyboxBindGroup>)>
+                            .or(any_match_filter::<(
+                                Or<(Changed<GlobalTransform>, Changed<Planet>)>,
+                                With<Planet>,
+                            )>),
+                    ),
+                )
+                    .in_set(RenderSystems::BeginFrame),
+                render_skybox.in_set(RenderSystems::RenderWorld),
+            ),
+        );*/
 
         Ok(())
     }

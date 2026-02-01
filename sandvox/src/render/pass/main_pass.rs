@@ -1,5 +1,4 @@
 use bevy_ecs::{
-    change_detection::DetectChanges,
     component::Component,
     entity::Entity,
     name::NameOrEntity,
@@ -10,7 +9,6 @@ use bevy_ecs::{
     resource::Resource,
     system::{
         Commands,
-        Local,
         Populated,
         Query,
         Res,
@@ -55,15 +53,7 @@ use crate::{
 
 #[derive(Debug, Component)]
 pub struct MainPass {
-    active: Option<ActiveMainPass>,
     bind_group: wgpu::BindGroup,
-}
-
-#[derive(Debug)]
-struct ActiveMainPass {
-    render_pass: RenderPass<'static>,
-    /// todo: make it possible to render to normal textures as well
-    surface_texture: wgpu::SurfaceTexture,
 }
 
 #[derive(Debug, Resource)]
@@ -139,24 +129,22 @@ pub fn create_layout(wgpu: Res<WgpuContext>, mut commands: Commands) {
 }
 
 #[profiling::function]
-pub fn update_uniform(
-    frame_uniforms: Populated<&mut MainPassUniform>,
+pub fn update_main_pass_uniform(
+    uniforms: Populated<&mut MainPassUniform>,
     mut staging: ResMut<Staging>,
     time: Res<Time>,
 ) {
-    for mut frame_uniform in frame_uniforms {
-        frame_uniform.data.time = time.tick_start_seconds();
+    for mut uniform in uniforms {
+        uniform.data.time = time.tick_start_seconds();
 
         // update frame uniform buffer
-        staging.write_buffer_from_slice(
-            frame_uniform.buffer.slice(..),
-            bytemuck::bytes_of(&frame_uniform.data),
-        );
+        staging
+            .write_buffer_from_slice(uniform.buffer.slice(..), bytemuck::bytes_of(&uniform.data));
     }
 }
 
 #[profiling::function]
-pub fn update_bind_group(
+pub fn update_main_pass(
     wgpu: Res<WgpuContext>,
     main_passes: Query<(&mut MainPass, &MainPassUniform)>,
     mut atlas: ResMut<DefaultAtlas>,
@@ -215,13 +203,7 @@ pub fn create_main_pass(
         );
 
         let mut entity = commands.entity(entity);
-        entity.insert((
-            MainPass {
-                active: None,
-                bind_group,
-            },
-            main_pass_uniform,
-        ));
+        entity.insert((MainPass { bind_group }, main_pass_uniform));
     }
 }
 
@@ -230,27 +212,13 @@ pub fn render_main_pass(
     mut render_context: RenderContext,
     cameras: Populated<(NameOrEntity, &RenderTarget, &MainPass), With<Camera>>,
     surfaces: Populated<(&Surface, Option<&ClearColor>)>,
-    world: &World,
-    render_functions_opaque: RenderFunctions<Opaque>,
+    mut render_functions_opaque: RenderFunctions<Opaque>,
 ) {
     for (entity, render_target, main_pass) in cameras {
-        assert!(
-            main_pass.active.is_none(),
-            "A main pass is still active for `{}`",
-            entity
-        );
-
         // get target texture (and clear color)
         // todo: this should work with any kind of target texture
         let (surface, clear_color) = surfaces.get(render_target.0).unwrap();
-        let surface_texture = surface.surface_texture();
-        let surface_texture_view =
-            surface_texture
-                .texture
-                .create_view(&wgpu::TextureViewDescriptor {
-                    label: Some("main pass render target"),
-                    ..Default::default()
-                });
+        let surface_texture_view = surface.surface_texture();
 
         let profiler = {
             // create render pass
@@ -283,10 +251,8 @@ pub fn render_main_pass(
             // bind frame uniform buffer
             render_pass.set_bind_group(0, Some(&main_pass.bind_group), &[]);
 
-            // todo: do the rendering!
-            //for render_function in render_functions_opaque.iter_mut() {
-            //    //
-            //}
+            // render!
+            render_functions_opaque.render(&mut render_pass, entity.entity);
 
             render_pass.profiler
             // actual render pass dropped here

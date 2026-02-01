@@ -69,26 +69,25 @@ use crate::{
 
 #[profiling::function]
 pub(super) fn setup_render_systems(builder: &mut WorldBuilder) {
-    builder
-        .add_systems(
-            schedule::Startup,
-            create_pipeline_layout.in_set(RenderSystems::Setup),
-        )
-        .add_systems(
-            schedule::Render,
+    /*builder.add_systems(
+        schedule::Startup,
+        create_pipeline_layout.in_set(RenderSystems::Setup),
+    );
+    .add_systems(
+        schedule::Render,
+        (
+            (create_pipeline, create_render_buffer).in_set(RenderSystems::BeginFrame),
             (
-                (create_pipeline, create_render_buffer).in_set(RenderSystems::BeginFrame),
-                (
-                    flush_render_buffers.after(UiSystems::Render),
-                    render_ui.after(flush_render_buffers),
-                )
-                    .in_set(RenderSystems::RenderUi),
-                clear_render_requests.after(UiSystems::Render),
-                propagate_render_requests
-                    .before(UiSystems::Render)
-                    .after(UiSystems::Layout),
-            ),
-        );
+                flush_render_buffers.after(UiSystems::Render),
+                render_ui.after(flush_render_buffers),
+            )
+                .in_set(RenderSystems::RenderUi),
+            clear_render_requests.after(UiSystems::Render),
+            propagate_render_requests
+                .before(UiSystems::Render)
+                .after(UiSystems::Layout),
+        ),
+    );*/
 }
 
 #[profiling::function]
