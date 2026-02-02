@@ -1,0 +1,23 @@
+[package]
+name = "sandvox-rcon-client"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+clap = { version = "4.5.56", features = ["derive"] }
+color-eyre = "0.6.5"
+dotenvy = "0.15.7"
+futures-lite = { version = "2.6.1" }
+futures-util = { version = "0.3.31", features = ["sink"] }
+sandvox-rcon = { version = "0.1.0", path = "../sandvox-rcon" }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+tokio = { version = "1.49.0", features = [
+    "rt-multi-thread",
+    "net",
+    "sync",
+    "macros",
+] }
+tokio-util = { version = "0.7.18", features = ["codec"] }
+tracing = "0.1.44"
+tracing-subscriber = "0.3.22"

@@ -4,6 +4,8 @@ pub mod oneshot;
 pub mod serde;
 pub mod sparse_vec;
 pub mod stats_alloc;
+#[cfg(feature = "tokio")]
+pub mod tokio;
 
 use std::ops::{
     Add,

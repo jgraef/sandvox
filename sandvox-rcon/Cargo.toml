@@ -1,0 +1,9 @@
+[package]
+name = "sandvox-rcon"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+clap = { version = "4.5.56", features = ["derive"] }
+derive_more = { version = "2.1.1", features = ["from_str"] }
+serde = { version = "1.0.228", features = ["derive"] }

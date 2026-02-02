@@ -8,6 +8,7 @@ use clap::{
     Subcommand,
 };
 use color_eyre::eyre::Error;
+use sandvox_rcon_client::RconClient;
 
 #[derive(Clone, Debug, Parser)]
 struct Args {
@@ -32,9 +33,17 @@ enum Command {
 
         layers: Vec<PathBuf>,
     },
+    Rcon {
+        #[clap(short, long, default_value = "localhost:25576")]
+        address: String,
+
+        #[clap(subcommand)]
+        command: sandvox_rcon_client::Command,
+    },
 }
 
-fn main() -> Result<(), Error> {
+#[tokio::main]
+async fn main() -> Result<(), Error> {
     let _ = dotenvy::dotenv();
     color_eyre::install()?;
     tracing_subscriber::fmt::init();
@@ -52,6 +61,10 @@ fn main() -> Result<(), Error> {
             layers,
         } => {
             skybox::make_skybox(layers, size, output)?;
+        }
+        Command::Rcon { address, command } => {
+            let mut client = RconClient::connect(&address).await?;
+            client.send(&command).await?;
         }
     }
 

@@ -14,6 +14,8 @@ use serde::{
     Serialize,
 };
 
+#[cfg(feature = "rcon")]
+use crate::rcon::RconConfig;
 use crate::{
     game::GameConfig,
     profiler::ProfilerConfig,
@@ -35,16 +37,21 @@ pub struct Config {
     pub game: GameConfig,
 
     pub profiler: Option<ProfilerConfig>,
+
+    #[cfg(feature = "rcon")]
+    pub rcon: Option<RconConfig>,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
             graphics: Default::default(),
-            sound: Default::default(),
+            sound: None,
             num_threads: None,
             game: Default::default(),
-            profiler: Default::default(),
+            profiler: None,
+            #[cfg(feature = "rcon")]
+            rcon: None,
         }
     }
 }

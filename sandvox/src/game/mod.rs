@@ -648,7 +648,7 @@ fn handle_keys(
 }
 
 #[derive(Clone, Copy, Debug, Default, Component)]
-struct Player;
+pub struct Player;
 
 fn update_sky(
     mut params: ParamSet<(

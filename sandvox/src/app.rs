@@ -146,6 +146,22 @@ impl App {
             world_builder.insert_resource(profiler);
         }
 
+        #[cfg(feature = "tokio")]
+        {
+            use crate::util::tokio::TokioRuntime;
+
+            world_builder.insert_resource(TokioRuntime::new()?);
+        }
+
+        #[cfg(feature = "rcon")]
+        {
+            use crate::rcon::RconPlugin;
+
+            if let Some(config) = config.rcon {
+                world_builder.add_plugin(RconPlugin { config })?;
+            }
+        }
+
         world_builder
             .add_plugin(BackgroundTaskPlugin {
                 num_threads: args.num_threads.or(config.num_threads),

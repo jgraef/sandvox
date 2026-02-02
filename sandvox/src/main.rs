@@ -9,6 +9,8 @@ pub mod ecs;
 pub mod game;
 pub mod input;
 pub mod profiler;
+#[cfg(feature = "rcon")]
+pub mod rcon;
 pub mod render;
 pub mod sound;
 pub mod ui;
