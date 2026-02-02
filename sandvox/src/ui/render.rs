@@ -53,6 +53,7 @@ use crate::{
             ui_pass::{
                 UiPass,
                 UiPassLayout,
+                UiPassSystems,
             },
         },
         render_target::RenderTarget,
@@ -75,13 +76,15 @@ pub(super) fn setup_render_systems(builder: &mut WorldBuilder) {
     builder
         .add_systems(
             schedule::Startup,
-            create_layout.in_set(RenderSystems::Setup),
+            create_layout
+                .in_set(RenderSystems::Setup)
+                .after(UiPassSystems::Prepare),
         )
         .add_systems(
             schedule::Render,
             (
-                create_render_buffer.in_set(RenderSystems::BeginFrame),
-                (create_pipeline, flush_render_buffers).before(RenderSystems::RenderUi),
+                create_render_buffer.before(UiSystems::Render),
+                (create_pipeline, flush_render_buffers).after(UiSystems::Render),
                 clear_render_requests.after(UiSystems::Render),
             ),
         )

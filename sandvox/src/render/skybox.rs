@@ -62,6 +62,7 @@ use crate::{
             main_pass::{
                 MainPass,
                 MainPassLayout,
+                MainPassSystems,
             },
             phase,
         },
@@ -91,7 +92,9 @@ impl Plugin for SkyboxPlugin {
             .add_systems(
                 schedule::Startup,
                 (
-                    create_pipeline_layout,
+                    create_pipeline_layout
+                        .in_set(RenderSystems::Setup)
+                        .after(MainPassSystems::Prepare),
                     load_skybox.after(create_pipeline_layout),
                 )
                     .in_set(RenderSystems::Setup),

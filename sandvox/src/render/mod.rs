@@ -18,7 +18,6 @@ use bevy_ecs::{
     schedule::{
         IntoScheduleConfigs,
         SystemSet,
-        common_conditions::resource_changed,
     },
     system::{
         Commands,
@@ -43,14 +42,16 @@ use crate::{
     render::{
         atlas::Atlas,
         command::RenderFunctions,
-        mesh::RenderMeshStatistics,
         pass::{
             context::{
                 PendingCommandBuffers,
                 flush_command_buffers,
             },
-            main_pass,
-            ui_pass,
+            main_pass::{
+                MainPassPlugin,
+                MainPassSystems,
+            },
+            ui_pass::UiPassSystems,
         },
         staging::{
             Staging,
@@ -68,6 +69,7 @@ use crate::{
     util::serde::default_true,
     wgpu::{
         WgpuContext,
+        WgpuPlugin,
         WgpuSystems,
     },
 };
@@ -80,9 +82,10 @@ pub struct RenderPlugin {
 impl Plugin for RenderPlugin {
     fn setup(&self, builder: &mut WorldBuilder) -> Result<(), Error> {
         builder
+            .require_plugin::<WgpuPlugin>()
+            .add_plugin(MainPassPlugin)?
             // create resources
             .insert_resource(self.config.clone())
-            .init_resource::<RenderMeshStatistics>()
             .init_resource::<PendingCommandBuffers>()
             // startup systems
             .add_systems(
@@ -91,27 +94,10 @@ impl Plugin for RenderPlugin {
                     // initialize rendering
                     (
                         initialize_staging,
-                        main_pass::create_layout,
-                        ui_pass::create_layout,
                         create_default_resources.after(initialize_staging),
                     )
                         .after(WgpuSystems::CreateContext)
                         .before(RenderSystems::Setup),
-                    (
-                        // create main pass
-                        main_pass::create_layout,
-                        main_pass::create_main_pass,
-                        main_pass::update_main_pass_uniform,
-                        main_pass::update_main_pass,
-                        // create ui pass
-                        ui_pass::create_layout,
-                        ui_pass::create_ui_pass,
-                        ui_pass::update_ui_pass_uniform,
-                        ui_pass::update_ui_pass,
-                    )
-                        .chain()
-                        .after(RenderSystems::Setup)
-                        .before(flush_staging),
                     // flush staging
                     flush_staging.after(RenderSystems::Setup),
                 ),
@@ -124,30 +110,10 @@ impl Plugin for RenderPlugin {
                     set_swap_chain_texture
                         .after(create_surfaces)
                         .after(reconfigure_surfaces)
-                        .before(RenderSystems::RenderWorld),
-                    (
-                        (main_pass::create_layout, main_pass::create_main_pass).chain(),
-                        (ui_pass::create_layout, ui_pass::create_ui_pass).chain(),
-                    )
-                        .in_set(RenderSystems::BeginFrame),
-                    main_pass::render_main_pass.in_set(RenderSystems::RenderWorld),
-                    ui_pass::render_ui_pass.in_set(RenderSystems::RenderUi),
-                    (
-                        (
-                            main_pass::update_main_pass_uniform,
-                            main_pass::update_main_pass.run_if(resource_changed::<DefaultAtlas>),
-                        )
-                            .chain(),
-                        (
-                            ui_pass::update_ui_pass_uniform,
-                            ui_pass::update_ui_pass.run_if(resource_changed::<DefaultAtlas>),
-                        )
-                            .chain(),
-                    )
-                        .before(flush_command_buffers),
+                        .before(RenderSystems::Render),
                     (flush_command_buffers, present_surfaces)
                         .chain()
-                        .after(RenderSystems::RenderUi),
+                        .after(RenderSystems::EndFrame),
                 ),
             )
             .configure_system_sets(
@@ -156,17 +122,7 @@ impl Plugin for RenderPlugin {
             )
             .configure_system_sets(
                 schedule::Render,
-                RenderSystems::RenderWorld
-                    .after(RenderSystems::BeginFrame)
-                    .before(RenderSystems::EndFrame)
-                    .before(RenderSystems::RenderUi),
-            )
-            .configure_system_sets(
-                schedule::Render,
-                RenderSystems::RenderUi
-                    .after(RenderSystems::BeginFrame)
-                    .before(RenderSystems::EndFrame)
-                    .after(RenderSystems::RenderWorld),
+                MainPassSystems::Render.before(UiPassSystems::Render),
             )
             .configure_system_sets(
                 schedule::Render,
@@ -181,8 +137,7 @@ impl Plugin for RenderPlugin {
 pub enum RenderSystems {
     Setup,
     BeginFrame,
-    RenderWorld,
-    RenderUi,
+    Render,
     EndFrame,
 }
 

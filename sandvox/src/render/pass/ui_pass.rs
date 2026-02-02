@@ -7,6 +7,11 @@ use bevy_ecs::{
         Without,
     },
     resource::Resource,
+    schedule::{
+        IntoScheduleConfigs,
+        SystemSet,
+        common_conditions::resource_changed,
+    },
     system::{
         Commands,
         Populated,
@@ -20,15 +25,25 @@ use bytemuck::{
     Pod,
     Zeroable,
 };
+use color_eyre::eyre::Error;
 use nalgebra::Vector2;
 
 use crate::{
     app::Time,
+    ecs::{
+        plugin::{
+            Plugin,
+            WorldBuilder,
+        },
+        schedule,
+    },
     render::{
         DefaultAtlas,
         DefaultFont,
         DefaultSampler,
         RenderFunctions,
+        RenderPlugin,
+        RenderSystems,
         atlas::AtlasResources,
         pass::{
             context::RenderContext,
@@ -49,6 +64,61 @@ use crate::{
         srgba_to_wgpu,
     },
 };
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct UiPassPlugin;
+
+impl Plugin for UiPassPlugin {
+    fn setup(&self, builder: &mut WorldBuilder) -> Result<(), Error> {
+        builder
+            .require_plugin::<RenderPlugin>()
+            .add_systems(
+                schedule::Startup,
+                (
+                    (create_layout, create_ui_pass).chain(),
+                    update_ui_pass_uniform,
+                )
+                    .in_set(UiPassSystems::Prepare),
+            )
+            .add_systems(
+                schedule::Render,
+                (
+                    (create_layout, create_ui_pass)
+                        .chain()
+                        .in_set(UiPassSystems::Prepare),
+                    render_ui_pass.in_set(UiPassSystems::Render),
+                    (
+                        update_ui_pass_uniform,
+                        update_ui_pass.run_if(resource_changed::<DefaultAtlas>),
+                    )
+                        .in_set(RenderSystems::EndFrame),
+                ),
+            )
+            .configure_system_sets(
+                schedule::Startup,
+                UiPassSystems::Prepare.in_set(RenderSystems::Setup),
+            )
+            .configure_system_sets(
+                schedule::Render,
+                UiPassSystems::Prepare.in_set(RenderSystems::BeginFrame),
+            )
+            .configure_system_sets(
+                schedule::Render,
+                UiPassSystems::Render
+                    .in_set(RenderSystems::Render)
+                    .after(UiPassSystems::Prepare)
+                    .before(RenderSystems::EndFrame),
+            );
+
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, SystemSet, PartialEq, Eq, Hash)]
+pub enum UiPassSystems {
+    Prepare,
+    Render,
+}
 
 #[derive(Debug, Component)]
 pub struct UiPass {

@@ -44,7 +44,10 @@ use crate::{
         },
         schedule,
     },
-    render::RenderSystems,
+    render::pass::ui_pass::{
+        UiPassPlugin,
+        UiPassSystems,
+    },
     ui::{
         layout::{
             LayoutConfig,
@@ -77,13 +80,14 @@ impl Plugin for UiPlugin {
         setup_sprite_systems(builder);
 
         builder
+            .add_plugin(UiPassPlugin)?
             .configure_system_sets(
                 schedule::Render,
                 UiSystems::Layout.before(UiSystems::Render),
             )
             .configure_system_sets(
                 schedule::Render,
-                UiSystems::Render.in_set(RenderSystems::RenderUi),
+                UiSystems::Render.in_set(UiPassSystems::Prepare),
             );
 
         Ok(())

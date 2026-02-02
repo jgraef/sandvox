@@ -64,6 +64,8 @@ use crate::{
             main_pass::{
                 MainPass,
                 MainPassLayout,
+                MainPassPlugin,
+                MainPassSystems,
             },
             phase,
         },
@@ -83,10 +85,12 @@ pub struct MeshPlugin;
 impl Plugin for MeshPlugin {
     fn setup(&self, builder: &mut WorldBuilder) -> Result<(), Error> {
         builder
+        .require_plugin::<MainPassPlugin>()
+        .init_resource::<RenderMeshStatistics>()
             .add_systems(
                 schedule::Startup,
                 (
-                    create_mesh_pipeline_layout.in_set(RenderSystems::Setup),
+                    create_mesh_pipeline_layout.in_set(RenderSystems::Setup).after(MainPassSystems::Prepare),
                     create_instance_buffer.in_set(RenderSystems::Setup),
                 ),
             )
@@ -102,16 +106,6 @@ impl Plugin for MeshPlugin {
                                 Or<(Changed<GlobalTransform>, Added<Mesh>)>,
                             )>,
                         ),
-                    /* render_meshes
-                        .in_set(RenderSystems::RenderWorld)
-                        .run_if(resource_exists::<InstanceBuffer>),
-                    render_wireframes
-                        .in_set(RenderSystems::RenderWorld)
-                        .run_if(
-                            resource_exists::<InstanceBuffer>
-                                .and(resource_exists::<RenderWireframes>),
-                        )
-                        .after(render_meshes),*/
                 ),
             )
             .add_render_function::<phase::Opaque, _>(RenderMeshes::<phase::Opaque>::default())

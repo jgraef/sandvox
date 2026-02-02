@@ -7,6 +7,11 @@ use bevy_ecs::{
         Without,
     },
     resource::Resource,
+    schedule::{
+        IntoScheduleConfigs,
+        SystemSet,
+        common_conditions::resource_changed,
+    },
     system::{
         Commands,
         Populated,
@@ -20,13 +25,23 @@ use bytemuck::{
     Pod,
     Zeroable,
 };
+use color_eyre::eyre::Error;
 
 use crate::{
     app::Time,
+    ecs::{
+        plugin::{
+            Plugin,
+            WorldBuilder,
+        },
+        schedule,
+    },
     render::{
         DefaultAtlas,
         DefaultSampler,
         RenderFunctions,
+        RenderPlugin,
+        RenderSystems,
         atlas::AtlasResources,
         camera::{
             Camera,
@@ -50,6 +65,61 @@ use crate::{
         srgba_to_wgpu,
     },
 };
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct MainPassPlugin;
+
+impl Plugin for MainPassPlugin {
+    fn setup(&self, builder: &mut WorldBuilder) -> Result<(), Error> {
+        builder
+            .require_plugin::<RenderPlugin>()
+            .add_systems(
+                schedule::Startup,
+                (
+                    (create_layout, create_main_pass).chain(),
+                    update_main_pass_uniform,
+                )
+                    .in_set(MainPassSystems::Prepare),
+            )
+            .add_systems(
+                schedule::Render,
+                (
+                    (create_layout, create_main_pass)
+                        .chain()
+                        .in_set(MainPassSystems::Prepare),
+                    render_main_pass.in_set(MainPassSystems::Render),
+                    (
+                        update_main_pass_uniform,
+                        update_main_pass.run_if(resource_changed::<DefaultAtlas>),
+                    )
+                        .in_set(RenderSystems::EndFrame),
+                ),
+            )
+            .configure_system_sets(
+                schedule::Startup,
+                MainPassSystems::Prepare.in_set(RenderSystems::Setup),
+            )
+            .configure_system_sets(
+                schedule::Render,
+                MainPassSystems::Prepare.in_set(RenderSystems::BeginFrame),
+            )
+            .configure_system_sets(
+                schedule::Render,
+                MainPassSystems::Render
+                    .in_set(RenderSystems::Render)
+                    .after(MainPassSystems::Prepare)
+                    .before(RenderSystems::EndFrame),
+            );
+
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, SystemSet, PartialEq, Eq, Hash)]
+pub enum MainPassSystems {
+    Prepare,
+    Render,
+}
 
 #[derive(Debug, Component)]
 pub struct MainPass {

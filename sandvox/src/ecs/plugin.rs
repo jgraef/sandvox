@@ -82,6 +82,20 @@ impl Default for WorldBuilder {
 }
 
 impl WorldBuilder {
+    #[track_caller]
+    pub fn require_plugin<P>(&mut self) -> &mut Self
+    where
+        P: Plugin,
+    {
+        if !self.registered_plugins.contains(&TypeId::of::<P>()) {
+            panic!(
+                "Required plugin `{}` is not yet registered",
+                type_name::<P>()
+            );
+        }
+        self
+    }
+
     pub fn write_schedule_graphs_to_dot(&self, path: impl AsRef<Path>) -> Result<(), Error> {
         tracing::debug!(path = %path.as_ref().display(), "writing schedule graphs to file");
 

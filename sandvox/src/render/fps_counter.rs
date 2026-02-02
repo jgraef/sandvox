@@ -21,7 +21,10 @@ use crate::{
         },
         schedule,
     },
-    render::RenderSystems,
+    render::{
+        RenderPlugin,
+        RenderSystems,
+    },
 };
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -32,6 +35,7 @@ pub struct FpsCounterPlugin {
 impl Plugin for FpsCounterPlugin {
     fn setup(&self, builder: &mut WorldBuilder) -> Result<(), Error> {
         builder
+            .require_plugin::<RenderPlugin>()
             .insert_resource(FpsCounter::default())
             .insert_resource(FpsCounterState::default())
             .insert_resource(self.config)

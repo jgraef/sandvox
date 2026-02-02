@@ -340,7 +340,6 @@ mod bdf {
         const LUMA_BG: Luma<u8> = Luma([0]);
 
         let font = bdf_parser::Font::parse(&bdf_data)?;
-        tracing::debug!(metadata = ?font.metadata);
 
         // count glyphs with codepoints
         let num_glyphs = font

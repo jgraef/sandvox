@@ -229,6 +229,8 @@ impl WgpuContextBuilder {
         let profiler =
             profiler.map(|profiler| WgpuProfiler::new(&device, info.timestamp_period, profiler));
 
+        tracing::info!(adapter = info.adapter.name, backend = ?info.adapter.backend, "Created wgpu context");
+
         Ok(WgpuContext {
             instance: self.instance,
             adapter: self.adapter,
