@@ -20,7 +20,6 @@ use bevy_ecs::{
         ParamSet,
         ParamSetBuilder,
         Query,
-        ReadOnlySystemParam,
         Res,
         StaticSystemParam,
         SystemParam,
@@ -115,6 +114,7 @@ unsafe impl<P> SystemParam for RenderFunctions<'_, '_, P> {
             component_access_set,
             world,
         );
+
         <ParamSet<'static, 'static, Vec<DynSystemParam<'static, 'static>>> as SystemParam>::init_access(&state.params, system_meta, component_access_set, world);
     }
 
@@ -287,8 +287,7 @@ pub trait AddRenderFunction {
     fn add_render_function<P, F>(&mut self, function: F) -> &mut Self
     where
         P: 'static,
-        F: RenderFunction + 'static,
-        F::Param: ReadOnlySystemParam;
+        F: RenderFunction + 'static;
 }
 
 impl AddRenderFunction for WorldBuilder {
@@ -296,7 +295,6 @@ impl AddRenderFunction for WorldBuilder {
     where
         P: 'static,
         F: RenderFunction + 'static,
-        F::Param: ReadOnlySystemParam,
     {
         tracing::debug!(
             phase = type_name::<P>(),

@@ -14,6 +14,7 @@ use bevy_ecs::{
     },
     system::{
         Commands,
+        ParamSet,
         Populated,
         Query,
         Res,
@@ -146,7 +147,7 @@ pub struct MainPassUniformData {
 }
 
 #[profiling::function]
-pub fn create_layout(wgpu: Res<WgpuContext>, mut commands: Commands) {
+fn create_layout(wgpu: Res<WgpuContext>, mut commands: Commands) {
     let bind_group_layout =
         wgpu.device
             .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -199,7 +200,7 @@ pub fn create_layout(wgpu: Res<WgpuContext>, mut commands: Commands) {
 }
 
 #[profiling::function]
-pub fn update_main_pass_uniform(
+fn update_main_pass_uniform(
     uniforms: Populated<&mut MainPassUniform>,
     mut staging: ResMut<Staging>,
     time: Res<Time>,
@@ -214,7 +215,7 @@ pub fn update_main_pass_uniform(
 }
 
 #[profiling::function]
-pub fn update_main_pass(
+fn update_main_pass(
     wgpu: Res<WgpuContext>,
     main_passes: Query<(&mut MainPass, &MainPassUniform)>,
     mut atlas: ResMut<DefaultAtlas>,
@@ -241,7 +242,7 @@ pub fn update_main_pass(
 }
 
 #[profiling::function]
-pub fn create_main_pass(
+fn create_main_pass(
     wgpu: Res<WgpuContext>,
     main_pass_layout: Res<MainPassLayout>,
     cameras: Populated<Entity, (With<Camera>, Without<MainPass>)>,
@@ -277,15 +278,36 @@ pub fn create_main_pass(
     }
 }
 
-#[derive(Debug, SystemParam)]
-pub struct MainPassRenderFunctions<'w, 's> {
-    pub opaque: RenderFunctions<'w, 's, phase::Opaque>,
-    pub wireframe: RenderFunctions<'w, 's, phase::Wireframe>,
-    pub skybox: RenderFunctions<'w, 's, phase::Skybox>,
+#[derive(derive_more::Debug, SystemParam)]
+struct MainPassRenderFunctions<'w, 's> {
+    #[debug(skip)]
+    set: ParamSet<
+        'w,
+        's,
+        (
+            RenderFunctions<'w, 's, phase::Opaque>,
+            RenderFunctions<'w, 's, phase::Wireframe>,
+            RenderFunctions<'w, 's, phase::Skybox>,
+        ),
+    >,
+}
+
+impl<'w, 's> MainPassRenderFunctions<'w, 's> {
+    fn opaque(&mut self) -> RenderFunctions<'_, '_, phase::Opaque> {
+        self.set.p0()
+    }
+
+    fn wireframe(&mut self) -> RenderFunctions<'_, '_, phase::Wireframe> {
+        self.set.p1()
+    }
+
+    fn skybox(&mut self) -> RenderFunctions<'_, '_, phase::Skybox> {
+        self.set.p2()
+    }
 }
 
 #[profiling::function]
-pub fn render_main_pass(
+fn render_main_pass(
     mut render_context: RenderContext,
     cameras: Populated<(NameOrEntity, &RenderTarget, &MainPass, Option<&ClearColor>), With<Camera>>,
     surfaces: Populated<&Surface>,
@@ -333,17 +355,17 @@ pub fn render_main_pass(
 
             // render!
             render_functions
-                .opaque
+                .opaque()
                 .render(&mut render_pass, camera_entity.entity);
 
             if wireframe_enabled {
                 render_functions
-                    .wireframe
+                    .wireframe()
                     .render(&mut render_pass, camera_entity.entity);
             }
 
             render_functions
-                .skybox
+                .skybox()
                 .render(&mut render_pass, camera_entity.entity);
 
             render_pass.profiler

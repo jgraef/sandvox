@@ -18,7 +18,6 @@ use bevy_ecs::{
         Query,
         Res,
         ResMut,
-        SystemParam,
     },
 };
 use bytemuck::{
@@ -145,7 +144,7 @@ pub struct UiPassUniformData {
 }
 
 #[profiling::function]
-pub fn create_layout(wgpu: Res<WgpuContext>, mut commands: Commands) {
+fn create_layout(wgpu: Res<WgpuContext>, mut commands: Commands) {
     let bind_group_layout =
         wgpu.device
             .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -220,7 +219,7 @@ pub fn create_layout(wgpu: Res<WgpuContext>, mut commands: Commands) {
 }
 
 #[profiling::function]
-pub fn update_ui_pass_uniform(
+fn update_ui_pass_uniform(
     uniforms: Populated<&mut UiPassUniform>,
     mut staging: ResMut<Staging>,
     time: Res<Time>,
@@ -235,7 +234,7 @@ pub fn update_ui_pass_uniform(
 }
 
 #[profiling::function]
-pub fn create_ui_pass(
+fn create_ui_pass(
     wgpu: Res<WgpuContext>,
     ui_pass_layout: Res<UiPassLayout>,
     views: Populated<Entity, (With<ui::View>, Without<UiPass>)>,
@@ -274,7 +273,7 @@ pub fn create_ui_pass(
 }
 
 #[profiling::function]
-pub fn update_ui_pass(
+fn update_ui_pass(
     wgpu: Res<WgpuContext>,
     ui_passes: Query<(&mut UiPass, &UiPassUniform)>,
     mut default_atlas: ResMut<DefaultAtlas>,
@@ -303,17 +302,12 @@ pub fn update_ui_pass(
     }
 }
 
-#[derive(Debug, SystemParam)]
-pub struct UiPassRenderFunctions<'w, 's> {
-    pub opaque: RenderFunctions<'w, 's, phase::Ui>,
-}
-
 #[profiling::function]
-pub fn render_ui_pass(
+fn render_ui_pass(
     mut render_context: RenderContext,
     views: Populated<(NameOrEntity, &RenderTarget, &UiPass, Option<&ClearColor>), With<ui::View>>,
     surfaces: Populated<&Surface>,
-    mut render_functions: UiPassRenderFunctions,
+    mut render_functions: RenderFunctions<phase::Ui>,
 ) {
     for (camera_entity, render_target, ui_pass, clear_color) in views {
         // get target texture (and clear color)
@@ -346,9 +340,7 @@ pub fn render_ui_pass(
             render_pass.set_bind_group(0, Some(&ui_pass.bind_group), &[]);
 
             // render!
-            render_functions
-                .opaque
-                .render(&mut render_pass, camera_entity.entity);
+            render_functions.render(&mut render_pass, camera_entity.entity);
 
             render_pass.profiler
             // actual render pass dropped here

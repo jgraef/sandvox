@@ -1,4 +1,7 @@
-use std::marker::PhantomData;
+use std::{
+    marker::PhantomData,
+    ops::Range,
+};
 
 use bevy_ecs::{
     component::Component,
@@ -98,6 +101,7 @@ impl Plugin for MeshPlugin {
                 schedule::Render,
                 (
                     create_mesh_pipeline.in_set(RenderSystems::BeginFrame),
+                    reset_statistics.in_set(RenderSystems::EndFrame),
                     update_instance_buffer
                         .in_set(RenderSystems::BeginFrame)
                         .run_if(
@@ -106,6 +110,7 @@ impl Plugin for MeshPlugin {
                                 Or<(Changed<GlobalTransform>, Added<Mesh>)>,
                             )>,
                         ),
+
                 ),
             )
             .add_render_function::<phase::Opaque, _>(RenderMeshes::<phase::Opaque>::default())
@@ -520,7 +525,8 @@ impl<P> Default for RenderMeshes<P> {
 trait RenderMeshesForPhase: Send + Sync + 'static {
     fn scope_label() -> &'static str;
     fn get_pipeline(pipeline: &MeshPipeline) -> &wgpu::RenderPipeline;
-    fn num_vertices(num_indices: usize) -> u32;
+    fn vertices(num_indices: usize) -> Range<u32>;
+    fn stats_count(stats: &mut RenderMeshStatistics, culled: bool, num_vertices: usize);
 }
 
 impl RenderMeshesForPhase for phase::Opaque {
@@ -535,8 +541,19 @@ impl RenderMeshesForPhase for phase::Opaque {
     }
 
     #[inline]
-    fn num_vertices(num_indices: usize) -> u32 {
-        u32::try_from(num_indices).unwrap()
+    fn vertices(num_indices: usize) -> Range<u32> {
+        0..u32::try_from(num_indices).unwrap()
+    }
+
+    #[inline]
+    fn stats_count(stats: &mut RenderMeshStatistics, culled: bool, num_vertices: usize) {
+        if culled {
+            stats.num_culled += 1;
+        }
+        else {
+            stats.num_rendered += 1;
+            stats.num_vertices += num_vertices;
+        }
     }
 }
 
@@ -552,10 +569,15 @@ impl RenderMeshesForPhase for phase::Wireframe {
     }
 
     #[inline]
-    fn num_vertices(num_indices: usize) -> u32 {
+    fn vertices(num_indices: usize) -> Range<u32> {
         // n vertices are n/3 triangles, which require n lines to connect, which require
         // 2*n vertices
-        u32::try_from(2 * num_indices).unwrap()
+        0..u32::try_from(2 * num_indices).unwrap()
+    }
+
+    #[inline]
+    fn stats_count(stats: &mut RenderMeshStatistics, culled: bool, num_vertices: usize) {
+        let _ = (stats, culled, num_vertices);
     }
 }
 
@@ -563,7 +585,10 @@ impl<P> RenderFunction for RenderMeshes<P>
 where
     P: RenderMeshesForPhase,
 {
-    type Param = Res<'static, InstanceBuffer>;
+    type Param = (
+        Res<'static, InstanceBuffer>,
+        ResMut<'static, RenderMeshStatistics>,
+    );
     type ViewQuery = (
         &'static CameraProjection,
         &'static GlobalTransform,
@@ -583,7 +608,7 @@ where
         view: ROQueryItem<Self::ViewQuery>,
         items: Query<Self::ItemQuery>,
     ) {
-        let instance_buffer = param;
+        let (instance_buffer, mut stats) = param;
 
         if let Some(instance_bind_group) = &instance_buffer.bind_group {
             let (camera_projection, camera_transform, pipeline) = view;
@@ -602,16 +627,27 @@ where
                 let cull = cull_aabb
                     .is_some_and(|cull_aabb| !camera_frustrum.intersect_aabb(&cull_aabb.aabb));
 
-                if !cull {
+                if cull {
+                    P::stats_count(&mut stats, true, mesh.num_indices);
+                }
+                else {
                     render_pass.set_bind_group(2, &mesh.bind_group, &[]);
-                    let num_vertices = P::num_vertices(mesh.num_indices);
-                    render_pass.draw(0..num_vertices, instance_id.0..(instance_id.0 + 1));
+                    render_pass.draw(
+                        P::vertices(mesh.num_indices),
+                        instance_id.0..(instance_id.0 + 1),
+                    );
+
+                    P::stats_count(&mut stats, false, mesh.num_indices);
                 }
             }
 
             render_pass.exit_span(span);
         }
     }
+}
+
+fn reset_statistics(mut stats: ResMut<RenderMeshStatistics>) {
+    *stats = RenderMeshStatistics::default();
 }
 
 #[derive(Clone, Copy, Debug, Default, Resource)]
