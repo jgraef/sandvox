@@ -15,9 +15,28 @@ pub const fn encode3(x: [u16; 3]) -> u64 {
         | (x[2] as u64).deposit_bits(MASKS3[2])
 }
 
+#[inline]
+pub const fn decode2(x: u32) -> [u16; 2] {
+    [
+        x.extract_bits(MASKS2[0]) as u16,
+        x.extract_bits(MASKS2[1]) as u16,
+    ]
+}
+
+#[inline]
+pub const fn decode3(x: u64) -> [u16; 3] {
+    [
+        x.extract_bits(MASKS3[0]) as u16,
+        x.extract_bits(MASKS3[1]) as u16,
+        x.extract_bits(MASKS3[2]) as u16,
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
+        decode2,
+        decode3,
         encode2,
         encode3,
     };
@@ -45,5 +64,15 @@ mod tests {
 
         dbg!(morton_encoding::morton_encode(x));
         assert_eq!(encode3(x), 190471269);
+    }
+
+    #[test]
+    fn test_decode2() {
+        assert_eq!(decode2(96970), [123, 456]);
+    }
+
+    #[test]
+    fn test_decode3() {
+        assert_eq!(decode3(190471269), [123, 456, 789]);
     }
 }
