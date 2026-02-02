@@ -9,6 +9,7 @@ use bevy_ecs::{
     query::{
         Changed,
         Or,
+        ROQueryItem,
         With,
         Without,
     },
@@ -24,6 +25,7 @@ use bevy_ecs::{
         Query,
         Res,
         ResMut,
+        SystemParamItem,
     },
     world::Ref,
 };
@@ -59,6 +61,7 @@ use crate::{
             RenderFunction,
         },
         pass::{
+            RenderPass,
             main_pass::{
                 MainPass,
                 MainPassLayout,
@@ -500,9 +503,9 @@ impl RenderFunction for RenderSkybox {
     #[profiling::function]
     fn render(
         &self,
-        param: bevy_ecs::system::SystemParamItem<Self::Param>,
-        render_pass: &mut super::pass::RenderPass<'_>,
-        view: bevy_ecs::query::ROQueryItem<Self::ViewQuery>,
+        param: SystemParamItem<Self::Param>,
+        render_pass: &mut RenderPass<'_>,
+        view: ROQueryItem<Self::ViewQuery>,
         items: Query<Self::ItemQuery>,
     ) {
         let _ = param;

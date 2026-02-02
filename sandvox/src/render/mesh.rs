@@ -1,4 +1,7 @@
-use std::marker::PhantomData;
+use std::{
+    marker::PhantomData,
+    ops::Range,
+};
 
 use bevy_ecs::{
     component::Component,
@@ -106,6 +109,7 @@ impl Plugin for MeshPlugin {
                                 Or<(Changed<GlobalTransform>, Added<Mesh>)>,
                             )>,
                         ),
+
                 ),
             )
             .add_render_function::<phase::Opaque, _>(RenderMeshes::<phase::Opaque>::default())
@@ -520,7 +524,17 @@ impl<P> Default for RenderMeshes<P> {
 trait RenderMeshesForPhase: Send + Sync + 'static {
     fn scope_label() -> &'static str;
     fn get_pipeline(pipeline: &MeshPipeline) -> &wgpu::RenderPipeline;
-    fn num_vertices(num_indices: usize) -> u32;
+    fn vertices(num_indices: usize) -> Range<u32>;
+
+    #[inline]
+    fn count_stats(stats: &mut RenderMeshStatistics, culled: bool, num_vertices: usize) {
+        let _ = (stats, culled, num_vertices);
+    }
+
+    #[inline]
+    fn reset_stats(stats: &mut RenderMeshStatistics) {
+        let _ = stats;
+    }
 }
 
 impl RenderMeshesForPhase for phase::Opaque {
@@ -535,8 +549,24 @@ impl RenderMeshesForPhase for phase::Opaque {
     }
 
     #[inline]
-    fn num_vertices(num_indices: usize) -> u32 {
-        u32::try_from(num_indices).unwrap()
+    fn vertices(num_indices: usize) -> Range<u32> {
+        0..u32::try_from(num_indices).unwrap()
+    }
+
+    #[inline]
+    fn count_stats(stats: &mut RenderMeshStatistics, culled: bool, num_vertices: usize) {
+        if culled {
+            stats.num_culled += 1;
+        }
+        else {
+            stats.num_rendered += 1;
+            stats.num_vertices += num_vertices;
+        }
+    }
+
+    #[inline]
+    fn reset_stats(stats: &mut RenderMeshStatistics) {
+        *stats = Default::default();
     }
 }
 
@@ -552,10 +582,10 @@ impl RenderMeshesForPhase for phase::Wireframe {
     }
 
     #[inline]
-    fn num_vertices(num_indices: usize) -> u32 {
+    fn vertices(num_indices: usize) -> Range<u32> {
         // n vertices are n/3 triangles, which require n lines to connect, which require
         // 2*n vertices
-        u32::try_from(2 * num_indices).unwrap()
+        0..u32::try_from(2 * num_indices).unwrap()
     }
 }
 
@@ -563,7 +593,10 @@ impl<P> RenderFunction for RenderMeshes<P>
 where
     P: RenderMeshesForPhase,
 {
-    type Param = Res<'static, InstanceBuffer>;
+    type Param = (
+        Res<'static, InstanceBuffer>,
+        ResMut<'static, RenderMeshStatistics>,
+    );
     type ViewQuery = (
         &'static CameraProjection,
         &'static GlobalTransform,
@@ -576,6 +609,12 @@ where
     );
 
     #[profiling::function]
+    fn prepare(&self, param: SystemParamItem<Self::Param>) {
+        let (_instance_buffer, mut stats) = param;
+        P::reset_stats(&mut stats);
+    }
+
+    #[profiling::function]
     fn render(
         &self,
         param: SystemParamItem<Self::Param>,
@@ -583,7 +622,7 @@ where
         view: ROQueryItem<Self::ViewQuery>,
         items: Query<Self::ItemQuery>,
     ) {
-        let instance_buffer = param;
+        let (instance_buffer, mut stats) = param;
 
         if let Some(instance_bind_group) = &instance_buffer.bind_group {
             let (camera_projection, camera_transform, pipeline) = view;
@@ -602,10 +641,17 @@ where
                 let cull = cull_aabb
                     .is_some_and(|cull_aabb| !camera_frustrum.intersect_aabb(&cull_aabb.aabb));
 
-                if !cull {
+                if cull {
+                    P::count_stats(&mut stats, true, mesh.num_indices);
+                }
+                else {
                     render_pass.set_bind_group(2, &mesh.bind_group, &[]);
-                    let num_vertices = P::num_vertices(mesh.num_indices);
-                    render_pass.draw(0..num_vertices, instance_id.0..(instance_id.0 + 1));
+                    render_pass.draw(
+                        P::vertices(mesh.num_indices),
+                        instance_id.0..(instance_id.0 + 1),
+                    );
+
+                    P::count_stats(&mut stats, false, mesh.num_indices);
                 }
             }
 

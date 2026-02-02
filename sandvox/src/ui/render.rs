@@ -325,6 +325,11 @@ impl RenderFunction for RenderUi {
     type ItemQuery = ();
 
     #[profiling::function]
+    fn prepare(&self, _param: SystemParamItem<Self::Param>) {
+        // todo: flush render buffer here
+    }
+
+    #[profiling::function]
     fn render(
         &self,
         param: SystemParamItem<Self::Param>,

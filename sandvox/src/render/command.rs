@@ -20,7 +20,6 @@ use bevy_ecs::{
         ParamSet,
         ParamSetBuilder,
         Query,
-        ReadOnlySystemParam,
         Res,
         StaticSystemParam,
         SystemParam,
@@ -39,6 +38,10 @@ pub trait RenderFunction: Send + Sync + 'static {
     type Param: SystemParam + 'static;
     type ViewQuery: ReadOnlyQueryData;
     type ItemQuery: ReadOnlyQueryData;
+
+    fn prepare(&self, param: SystemParamItem<Self::Param>) {
+        let _ = param;
+    }
 
     fn render(
         &self,
@@ -62,6 +65,15 @@ where
 }
 
 impl<'w, 's, F> RenderFunctions<'w, 's, F> {
+    pub fn prepare(&mut self) {
+        let mut functions = self.registry.functions.iter();
+
+        self.params.for_each(move |param| {
+            let function = functions.next().unwrap();
+            function.prepare(param);
+        });
+    }
+
     pub fn render(&mut self, render_pass: &mut RenderPass, view: Entity) {
         let mut functions = self.registry.functions.iter();
 
@@ -115,6 +127,7 @@ unsafe impl<P> SystemParam for RenderFunctions<'_, '_, P> {
             component_access_set,
             world,
         );
+
         <ParamSet<'static, 'static, Vec<DynSystemParam<'static, 'static>>> as SystemParam>::init_access(&state.params, system_meta, component_access_set, world);
     }
 
@@ -225,6 +238,7 @@ impl<P> Default for Registry<P> {
 
 trait DynRenderFunction: Send + Sync + 'static {
     fn build_system_param(&self) -> DynParamBuilder<'static>;
+    fn prepare(&self, param: DynSystemParam);
     fn render(&self, render_pass: &mut RenderPass, view: Entity, param: DynSystemParam);
 }
 
@@ -239,6 +253,19 @@ where
             Query<F::ItemQuery>,
             //Query<NameOrEntity>,
         )>(ParamBuilder)
+    }
+
+    fn prepare(&self, param: DynSystemParam) {
+        let (param, _views, _items) = param
+            .downcast::<(
+                StaticSystemParam<F::Param>,
+                Query<F::ViewQuery>,
+                Query<F::ItemQuery>,
+                //Query<NameOrEntity>,
+            )>()
+            .unwrap();
+
+        <F as RenderFunction>::prepare(self, param.into_inner());
     }
 
     fn render(&self, render_pass: &mut RenderPass, view: Entity, param: DynSystemParam) {
@@ -287,8 +314,7 @@ pub trait AddRenderFunction {
     fn add_render_function<P, F>(&mut self, function: F) -> &mut Self
     where
         P: 'static,
-        F: RenderFunction + 'static,
-        F::Param: ReadOnlySystemParam;
+        F: RenderFunction + 'static;
 }
 
 impl AddRenderFunction for WorldBuilder {
@@ -296,7 +322,6 @@ impl AddRenderFunction for WorldBuilder {
     where
         P: 'static,
         F: RenderFunction + 'static,
-        F::Param: ReadOnlySystemParam,
     {
         tracing::debug!(
             phase = type_name::<P>(),
