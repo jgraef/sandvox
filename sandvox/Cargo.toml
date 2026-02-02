@@ -43,7 +43,7 @@ humansize = "2.1.3"
 image = "0.25.9"
 indexmap = { version = "2.13.0", features = ["serde"] }
 itertools = "0.14.0"
-morton-encoding = "2.0.1"
+morton = { version = "0.1.0", path = "../morton" }
 nalgebra = { version = "0.34.1", features = ["bytemuck", "serde-serialize"] }
 noise = "0.9.0"
 num-traits = "0.2.19"

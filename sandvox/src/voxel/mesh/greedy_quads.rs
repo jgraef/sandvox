@@ -1,7 +1,3 @@
-use morton_encoding::{
-    morton_decode,
-    morton_encode,
-};
 use nalgebra::{
     Point2,
     Point3,
@@ -325,7 +321,7 @@ impl<const CHUNK_SIZE: usize> OpacityMasks<CHUNK_SIZE> {
     {
         // fill XY opacity matrix
         for i in 0..(CHUNK_SIZE * CHUNK_SIZE) {
-            let [x, y] = morton_decode::<u16, 2>(i.try_into().unwrap());
+            let [x, y] = morton::decode2(i.try_into().unwrap());
             let mut mask_i = 0;
             for z in 0..CHUNK_SIZE as u16 {
                 if chunk[Point3::new(x, y, z)].is_opaque(data) {
@@ -360,19 +356,19 @@ impl<const CHUNK_SIZE: usize> OpacityMasks<CHUNK_SIZE> {
 
     #[inline]
     fn opacity_xy(&self, xy: Point2<u16>) -> u64 {
-        let i: usize = morton_encode(xy.into()).try_into().unwrap();
+        let i: usize = morton::encode2(xy.into()).try_into().unwrap();
         self.xy[i]
     }
 
     #[inline]
     fn opacity_zy(&self, zy: Point2<u16>) -> u64 {
-        let i: usize = morton_encode(zy.into()).try_into().unwrap();
+        let i: usize = morton::encode2(zy.into()).try_into().unwrap();
         self.zy[i]
     }
 
     #[inline]
     fn opacity_xz(&self, xz: Point2<u16>) -> u64 {
-        let i: usize = morton_encode(xz.into()).try_into().unwrap();
+        let i: usize = morton::encode2(xz.into()).try_into().unwrap();
         self.xz[i]
     }
 }
@@ -390,8 +386,6 @@ fn back_face_mask(opacity_mask: u64) -> u64 {
 mod tranpose {
     // stuff to transpose bit matrices
 
-    use morton_encoding::morton_encode;
-
     use crate::voxel::mesh::greedy_quads::bitmask;
 
     pub trait View {
@@ -406,7 +400,7 @@ mod tranpose {
     impl View for RowView {
         #[inline]
         fn index(&self, index: usize) -> usize {
-            usize::try_from(morton_encode([u16::try_from(index).unwrap(), self.y])).unwrap()
+            usize::try_from(morton::encode2([u16::try_from(index).unwrap(), self.y])).unwrap()
         }
     }
 
@@ -418,7 +412,7 @@ mod tranpose {
     impl View for ColumnView {
         #[inline]
         fn index(&self, index: usize) -> usize {
-            usize::try_from(morton_encode([self.x, u16::try_from(index).unwrap()])).unwrap()
+            usize::try_from(morton::encode2([self.x, u16::try_from(index).unwrap()])).unwrap()
         }
     }
 
