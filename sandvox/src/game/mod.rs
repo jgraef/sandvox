@@ -12,9 +12,11 @@ use std::{
 
 use bevy_ecs::{
     component::Component,
+    entity::Entity,
     name::Name,
     query::{
         Changed,
+        Has,
         With,
     },
     resource::Resource,
@@ -110,9 +112,10 @@ use crate::{
             FpsCounter,
             FpsCounterConfig,
         },
-        mesh::{
-            RenderMeshStatistics,
-            RenderWireframes,
+        mesh::RenderMeshStatistics,
+        pass::main_pass::{
+            DepthPrepass,
+            Wireframe,
         },
         render_target::RenderTarget,
         skybox::{
@@ -397,7 +400,7 @@ fn init_player(
         .id();
 
     // spawn camera
-    commands.spawn((
+    let mut camera = commands.spawn((
         Name::new("main_camera"),
         RenderTarget(window),
         ClearColor(palette::named::LIGHTSKYBLUE.into_format().with_alpha(1.0)),
@@ -420,6 +423,10 @@ fn init_player(
         },
         Player,
     ));
+
+    if render_config.depth_prepass {
+        camera.insert(DepthPrepass);
+    }
 
     {
         // create UI
@@ -612,17 +619,20 @@ fn update_debug_overlay(
 
 fn handle_keys(
     keys: Populated<&Keys, Changed<Keys>>,
-    render_wireframes: Option<Res<RenderWireframes>>,
+    player_camera: Single<(Entity, Has<Wireframe>), With<Player>>,
     show_ui_layout: Option<Res<ShowDebugOutlines>>,
     mut commands: Commands,
 ) {
     for keys in keys {
         if keys.just_pressed.contains(&KeyCode::F6) {
-            if render_wireframes.is_none() {
-                commands.insert_resource(RenderWireframes);
+            let (player_entity, wireframe_enabled) = *player_camera;
+            let mut player = commands.entity(player_entity);
+
+            if wireframe_enabled {
+                player.insert(Wireframe);
             }
             else {
-                commands.remove_resource::<RenderWireframes>();
+                player.remove::<Wireframe>();
             }
         }
 

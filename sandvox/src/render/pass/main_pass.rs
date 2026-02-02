@@ -3,6 +3,7 @@ use bevy_ecs::{
     entity::Entity,
     name::NameOrEntity,
     query::{
+        Has,
         With,
         Without,
     },
@@ -48,7 +49,6 @@ use crate::{
             Camera,
             CameraData,
         },
-        mesh::RenderWireframes,
         pass::{
             context::RenderContext,
             phase,
@@ -122,6 +122,17 @@ pub enum MainPassSystems {
 pub struct MainPass {
     bind_group: wgpu::BindGroup,
 }
+
+/// Attach to camera to enable depth prepass
+///
+/// This must be attached when the camera is created as e.g. the mesh pipeline
+/// only initializes the depth prepass pipeline then.
+#[derive(Debug, Component)]
+pub struct DepthPrepass;
+
+/// Attach to camera to render wireframes
+#[derive(Debug, Component)]
+pub struct Wireframe;
 
 #[derive(Debug, Resource)]
 pub struct MainPassLayout {
@@ -282,6 +293,7 @@ struct MainPassRenderFunctions<'w, 's> {
         's,
         (
             RenderFunctions<'w, 's, phase::Opaque>,
+            RenderFunctions<'w, 's, phase::DepthPrepass>,
             RenderFunctions<'w, 's, phase::Wireframe>,
             RenderFunctions<'w, 's, phase::Skybox>,
         ),
@@ -293,34 +305,70 @@ impl<'w, 's> MainPassRenderFunctions<'w, 's> {
         self.set.p0()
     }
 
-    fn wireframe(&mut self) -> RenderFunctions<'_, '_, phase::Wireframe> {
+    fn depth_prepass(&mut self) -> RenderFunctions<'_, '_, phase::DepthPrepass> {
         self.set.p1()
     }
 
-    fn skybox(&mut self) -> RenderFunctions<'_, '_, phase::Skybox> {
+    fn wireframe(&mut self) -> RenderFunctions<'_, '_, phase::Wireframe> {
         self.set.p2()
+    }
+
+    fn skybox(&mut self) -> RenderFunctions<'_, '_, phase::Skybox> {
+        self.set.p3()
     }
 }
 
 #[profiling::function]
 fn render_main_pass(
     mut render_context: RenderContext,
-    cameras: Populated<(NameOrEntity, &RenderTarget, &MainPass), With<Camera>>,
+    cameras: Populated<
+        (
+            NameOrEntity,
+            &RenderTarget,
+            &MainPass,
+            Has<Wireframe>,
+            Has<DepthPrepass>,
+        ),
+        With<Camera>,
+    >,
     surfaces: Populated<&Surface>,
     mut render_functions: MainPassRenderFunctions,
-    wireframe_enabled: Option<Res<RenderWireframes>>,
+    any_wireframe: Query<(), (With<MainPass>, With<Wireframe>)>,
+    any_depth_prepass: Query<(), (With<MainPass>, With<Wireframe>)>,
 ) {
-    let wireframe_enabled = wireframe_enabled.is_some();
+    let any_wireframe = any_wireframe.is_empty();
+    let any_depth_prepass = any_depth_prepass.is_empty();
 
     // prepare
     render_functions.opaque().prepare();
-    render_functions.wireframe().prepare();
+    if any_depth_prepass {
+        render_functions.depth_prepass().prepare();
+    }
+    if any_wireframe {
+        render_functions.wireframe().prepare();
+    }
+
     render_functions.skybox().prepare();
 
-    for (camera_entity, render_target, main_pass) in cameras {
+    for (camera_entity, render_target, main_pass, wireframe, depth_prepass) in cameras {
         // get target texture (and clear color)
         // todo: this should work with any kind of target texture
         let surface = surfaces.get(render_target.0).unwrap();
+
+        if depth_prepass {
+            assert!(any_depth_prepass);
+
+            run_z_prepass_on_surface(
+                &mut render_context,
+                &mut render_functions,
+                surface,
+                main_pass,
+                camera_entity.entity,
+            );
+        }
+
+        // !any_wireframe => !wireframe
+        assert!(any_wireframe || !wireframe);
 
         run_main_pass_on_surface(
             &mut render_context,
@@ -328,9 +376,49 @@ fn render_main_pass(
             surface,
             main_pass,
             camera_entity.entity,
-            wireframe_enabled,
+            wireframe,
+            depth_prepass,
         );
     }
+}
+
+#[profiling::function]
+fn run_z_prepass_on_surface(
+    render_context: &mut RenderContext,
+    render_functions: &mut MainPassRenderFunctions,
+    surface: &Surface,
+    main_pass: &MainPass,
+    camera_entity: Entity,
+) {
+    let depth_texture_view = surface.depth_texture();
+
+    // create render pass
+    let mut render_pass = render_context.begin_render_pass(
+        &wgpu::RenderPassDescriptor {
+            label: Some("z-prepass"),
+            color_attachments: &[],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: depth_texture_view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        },
+        "z-prepass",
+    );
+
+    // bind frame uniform buffer
+    render_pass.set_bind_group(0, Some(&main_pass.bind_group), &[]);
+
+    // render!
+    render_functions
+        .depth_prepass()
+        .render(&mut render_pass, camera_entity);
 }
 
 #[profiling::function]
@@ -340,7 +428,8 @@ fn run_main_pass_on_surface(
     surface: &Surface,
     main_pass: &MainPass,
     camera_entity: Entity,
-    wireframe_enabled: bool,
+    wireframe: bool,
+    depth_prepass: bool,
 ) {
     let surface_texture_view = surface.surface_texture();
     let depth_texture_view = surface.depth_texture();
@@ -360,9 +449,17 @@ fn run_main_pass_on_surface(
             })],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                 view: depth_texture_view,
-                depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(1.0),
-                    store: wgpu::StoreOp::Discard,
+                depth_ops: Some(if depth_prepass {
+                    wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Discard,
+                    }
+                }
+                else {
+                    wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Discard,
+                    }
                 }),
                 stencil_ops: None,
             }),
@@ -381,7 +478,7 @@ fn run_main_pass_on_surface(
         .opaque()
         .render(&mut render_pass, camera_entity);
 
-    if wireframe_enabled {
+    if wireframe {
         render_functions
             .wireframe()
             .render(&mut render_pass, camera_entity);

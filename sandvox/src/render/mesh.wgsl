@@ -87,6 +87,7 @@ fn mesh_shaded_vertex(
 
 struct ShadedOutput {
     @builtin(position)
+    @invariant
     position: vec4f,
 
     @location(0)
@@ -129,6 +130,7 @@ fn mesh_shaded_fragment(input: ShadedOutput) -> @location(0) vec4f {
 
 struct WireframeOutput {
     @builtin(position)
+    @invariant
     position: vec4f,
 }
 
@@ -175,6 +177,35 @@ fn mesh_wireframe_fragment(input: WireframeOutput) -> @location(0) vec4f {
     const plum: vec4f = vec4f(0.86, 0.62, 0.86, 1);
     return plum;
 }
+
+
+
+
+@vertex
+fn mesh_depth_prepass_vertex(
+    @builtin(vertex_index) vertex_index: u32,
+    @builtin(instance_index) instance_index: u32,
+) -> DepthPrepassOutput {
+    let resolved_vertex_index = index_buffer[vertex_index];
+    let vertex = vertex_buffer[resolved_vertex_index];
+    let instance = instance_buffer[instance_index];
+
+    let world_position = instance.model_matrix * vertex.position;
+    let position = main_pass_uniform.camera.projection * main_pass_uniform.camera.view * world_position;
+
+    return DepthPrepassOutput(
+        position,
+    );
+}
+
+struct DepthPrepassOutput {
+    @builtin(position)
+    @invariant
+    position: vec4f,
+}
+
+
+
 
 
 fn atlas_map_uv(texture_id: u32, uv: vec2f) -> vec2f {

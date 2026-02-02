@@ -2,7 +2,7 @@
 pub struct Opaque;
 
 #[derive(Debug)]
-pub struct OpaquePrepass;
+pub struct DepthPrepass;
 
 #[derive(Debug)]
 pub struct Wireframe;

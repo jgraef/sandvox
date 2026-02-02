@@ -10,6 +10,7 @@ use bevy_ecs::{
     query::{
         Added,
         Changed,
+        Has,
         Or,
         ROQueryItem,
         With,
@@ -65,6 +66,7 @@ use crate::{
         pass::{
             context::RenderPass,
             main_pass::{
+                DepthPrepass,
                 MainPass,
                 MainPassLayout,
                 MainPassPlugin,
@@ -113,13 +115,11 @@ impl Plugin for MeshPlugin {
                 ),
             )
             .add_render_function::<phase::Opaque, _>(RenderMeshes::<phase::Opaque>::default())
+            .add_render_function::<phase::DepthPrepass, _>(RenderMeshes::<phase::DepthPrepass>::default())
             .add_render_function::<phase::Wireframe, _>(RenderMeshes::<phase::Wireframe>::default());
         Ok(())
     }
 }
-
-#[derive(Clone, Copy, Debug, Default, Resource)]
-pub struct RenderWireframes;
 
 #[derive(Clone, Debug, Default)]
 pub struct MeshBuilder {
@@ -259,6 +259,7 @@ pub struct MeshPipelineLayout {
 struct MeshPipeline {
     opaque: wgpu::RenderPipeline,
     wireframe: wgpu::RenderPipeline,
+    depth_prepass: Option<wgpu::RenderPipeline>,
 }
 
 #[profiling::function]
@@ -341,7 +342,7 @@ fn create_mesh_pipeline(
     pipeline_layout: Res<MeshPipelineLayout>,
     surfaces: Populated<(NameOrEntity, &Surface)>,
     cameras: Populated<
-        (NameOrEntity, &RenderTarget),
+        (NameOrEntity, &RenderTarget, Has<DepthPrepass>),
         (
             // todo: this should really check if there's *any* view that needs to render *anything*
             // opaque
@@ -351,7 +352,7 @@ fn create_mesh_pipeline(
     >,
     mut commands: Commands,
 ) {
-    for (camera_entity, render_target) in cameras {
+    for (camera_entity, render_target, enable_depth_prepass) in cameras {
         if let Ok((surface_entity, surface)) = surfaces.get(render_target.0) {
             tracing::debug!(surface = %surface_entity, camera = %camera_entity, "creating mesh render pipeline for surface");
 
@@ -377,8 +378,13 @@ fn create_mesh_pipeline(
                     },
                     depth_stencil: Some(wgpu::DepthStencilState {
                         format: surface.depth_format(),
-                        depth_write_enabled: true,
-                        depth_compare: wgpu::CompareFunction::Less,
+                        depth_write_enabled: !enable_depth_prepass,
+                        depth_compare: if enable_depth_prepass {
+                            wgpu::CompareFunction::Equal
+                        }
+                        else {
+                            wgpu::CompareFunction::Less
+                        },
                         stencil: Default::default(),
                         bias: Default::default(),
                     }),
@@ -439,9 +445,45 @@ fn create_mesh_pipeline(
                     cache: None,
                 });
 
-            commands
-                .entity(camera_entity.entity)
-                .insert(MeshPipeline { opaque, wireframe });
+            let depth_prepass = enable_depth_prepass.then(|| {
+                wgpu.device
+                    .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                        label: Some("mesh/depth-prepass"),
+                        layout: Some(&pipeline_layout.layout),
+                        vertex: wgpu::VertexState {
+                            module: &pipeline_layout.shader,
+                            entry_point: Some("mesh_depth_prepass_vertex"),
+                            compilation_options: Default::default(),
+                            buffers: &[],
+                        },
+                        primitive: wgpu::PrimitiveState {
+                            topology: wgpu::PrimitiveTopology::TriangleList,
+                            strip_index_format: None,
+                            front_face: wgpu::FrontFace::Ccw,
+                            cull_mode: Some(wgpu::Face::Back),
+                            unclipped_depth: false,
+                            polygon_mode: wgpu::PolygonMode::Fill,
+                            conservative: false,
+                        },
+                        depth_stencil: Some(wgpu::DepthStencilState {
+                            format: surface.depth_format(),
+                            depth_write_enabled: true,
+                            depth_compare: wgpu::CompareFunction::Less,
+                            stencil: Default::default(),
+                            bias: Default::default(),
+                        }),
+                        multisample: Default::default(),
+                        fragment: None,
+                        multiview_mask: None,
+                        cache: None,
+                    })
+            });
+
+            commands.entity(camera_entity.entity).insert(MeshPipeline {
+                opaque,
+                wireframe,
+                depth_prepass,
+            });
         }
     }
 }
@@ -586,6 +628,26 @@ impl RenderMeshesForPhase for phase::Wireframe {
         // n vertices are n/3 triangles, which require n lines to connect, which require
         // 2*n vertices
         0..u32::try_from(2 * num_indices).unwrap()
+    }
+}
+
+impl RenderMeshesForPhase for phase::DepthPrepass {
+    #[inline]
+    fn scope_label() -> &'static str {
+        "mesh/z-prepass"
+    }
+
+    #[inline]
+    fn get_pipeline(pipeline: &MeshPipeline) -> &wgpu::RenderPipeline {
+        pipeline
+            .depth_prepass
+            .as_ref()
+            .expect("no depth-prepass pipeline")
+    }
+
+    #[inline]
+    fn vertices(num_indices: usize) -> Range<u32> {
+        0..u32::try_from(num_indices).unwrap()
     }
 }
 

@@ -158,6 +158,9 @@ pub struct RenderConfig {
     /// moved it here, because we then have convenient access to it.
     #[serde(default = "default_fov")]
     pub fov: f32,
+
+    #[serde(default)]
+    pub depth_prepass: bool,
 }
 
 impl Default for RenderConfig {
@@ -166,6 +169,7 @@ impl Default for RenderConfig {
             vsync: true,
             default_font: default_font(),
             fov: default_fov(),
+            depth_prepass: false,
         }
     }
 }
