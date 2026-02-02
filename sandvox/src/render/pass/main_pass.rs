@@ -343,61 +343,53 @@ fn run_main_pass_on_surface(
     wireframe_enabled: bool,
 ) {
     let surface_texture_view = surface.surface_texture();
+    let depth_texture_view = surface.depth_texture();
 
-    let profiler = {
-        // create render pass
-        let mut render_pass = render_context.begin_render_pass(
-            &wgpu::RenderPassDescriptor {
-                label: Some("main pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &surface_texture_view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &surface.depth_texture(),
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Discard,
-                    }),
-                    stencil_ops: None,
+    // create render pass
+    let mut render_pass = render_context.begin_render_pass(
+        &wgpu::RenderPassDescriptor {
+            label: Some("main pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &surface_texture_view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: depth_texture_view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Discard,
                 }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            },
-            "main_pass",
-        );
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        },
+        "main_pass",
+    );
 
-        // bind frame uniform buffer
-        render_pass.set_bind_group(0, Some(&main_pass.bind_group), &[]);
+    // bind frame uniform buffer
+    render_pass.set_bind_group(0, Some(&main_pass.bind_group), &[]);
 
-        // render!
+    // render!
+    render_functions
+        .opaque()
+        .render(&mut render_pass, camera_entity);
+
+    if wireframe_enabled {
         render_functions
-            .opaque()
+            .wireframe()
             .render(&mut render_pass, camera_entity);
-
-        if wireframe_enabled {
-            render_functions
-                .wireframe()
-                .render(&mut render_pass, camera_entity);
-        }
-
-        render_functions
-            .skybox()
-            .render(&mut render_pass, camera_entity);
-
-        render_pass.profiler
-        // actual render pass dropped here
-    };
-
-    if let Some(profiler) = profiler {
-        profiler.finish(render_context.command_encoder());
     }
+
+    render_functions
+        .skybox()
+        .render(&mut render_pass, camera_entity);
 }
 
 #[profiling::function]

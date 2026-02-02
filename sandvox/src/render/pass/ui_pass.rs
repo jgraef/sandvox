@@ -317,43 +317,34 @@ fn render_ui_pass(
         let surface = surfaces.get(render_target.0).unwrap();
         let surface_texture_view = surface.surface_texture();
 
-        let profiler = {
-            // create render pass
-            let mut render_pass = render_context.begin_render_pass(
-                &wgpu::RenderPassDescriptor {
-                    label: Some("ui pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &surface_texture_view,
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: clear_color.map_or(wgpu::LoadOp::Load, |color| {
-                                wgpu::LoadOp::Clear(srgba_to_wgpu(color.0))
-                            }),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                    multiview_mask: None,
-                },
-                "ui pass",
-            );
+        // create render pass
+        let mut render_pass = render_context.begin_render_pass(
+            &wgpu::RenderPassDescriptor {
+                label: Some("ui pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &surface_texture_view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: clear_color.map_or(wgpu::LoadOp::Load, |color| {
+                            wgpu::LoadOp::Clear(srgba_to_wgpu(color.0))
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            },
+            "ui pass",
+        );
 
-            // bind frame uniform buffer
-            render_pass.set_bind_group(0, Some(&ui_pass.bind_group), &[]);
+        // bind frame uniform buffer
+        render_pass.set_bind_group(0, Some(&ui_pass.bind_group), &[]);
 
-            // render!
-            render_functions.render(&mut render_pass, camera_entity.entity);
-
-            render_pass.profiler
-            // actual render pass dropped here
-        };
-
-        if let Some(profiler) = profiler {
-            profiler.finish(render_context.command_encoder());
-        }
+        // render!
+        render_functions.render(&mut render_pass, camera_entity.entity);
     }
 }
 

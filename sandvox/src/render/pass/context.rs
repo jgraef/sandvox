@@ -1,3 +1,8 @@
+use std::ops::{
+    Deref,
+    DerefMut,
+};
+
 use bevy_ecs::{
     change_detection::DetectChanges,
     resource::Resource,
@@ -13,10 +18,11 @@ use bevy_ecs::{
 };
 
 use crate::{
-    render::{
-        pass::RenderPass,
-        staging::Staging,
+    profiler::wgpu::{
+        RenderPassProfiler,
+        SpanId,
     },
+    render::staging::Staging,
     wgpu::WgpuContext,
 };
 
@@ -43,7 +49,8 @@ impl<'w, 's> RenderContext<'w, 's> {
         descriptor: &wgpu::RenderPassDescriptor,
         label: &'static str,
     ) -> RenderPass<'a> {
-        if descriptor.timestamp_writes.is_none()
+        // this is a bit awkward to do
+        let (render_pass, profiler, command_encoder) = if descriptor.timestamp_writes.is_none()
             && let Some(profiler) = &self.wgpu.profiler
         {
             let mut profiler = profiler.begin_render_pass(label);
@@ -53,20 +60,26 @@ impl<'w, 's> RenderContext<'w, 's> {
                 ..descriptor.clone()
             };
 
-            let render_pass = self.command_encoder().begin_render_pass(&descriptor);
+            let command_encoder = self.command_encoder();
+            let render_pass = command_encoder
+                .begin_render_pass(&descriptor)
+                .forget_lifetime();
 
-            RenderPass {
-                render_pass,
-                profiler: Some(profiler),
-            }
+            (render_pass, Some(profiler), command_encoder)
         }
         else {
-            let render_pass = self.command_encoder().begin_render_pass(&descriptor);
+            let command_encoder = self.command_encoder();
+            let render_pass = command_encoder
+                .begin_render_pass(&descriptor)
+                .forget_lifetime();
 
-            RenderPass {
-                render_pass,
-                profiler: None,
-            }
+            (render_pass, None, command_encoder)
+        };
+
+        RenderPass {
+            render_pass: Some(render_pass),
+            command_encoder,
+            profiler,
         }
     }
 }
@@ -129,3 +142,63 @@ pub fn flush_command_buffers(
     // and submit everything
     wgpu.queue.submit(command_buffers);
 }
+
+#[derive(Debug)]
+pub struct RenderPass<'a> {
+    // note: we need to make this a 'static lifetime, so we can pass the command encoder alongside,
+    // so that we can finish the profiler
+    render_pass: Option<wgpu::RenderPass<'static>>,
+    command_encoder: &'a mut wgpu::CommandEncoder,
+    profiler: Option<RenderPassProfiler>,
+}
+
+impl<'a> RenderPass<'a> {
+    #[track_caller]
+    #[inline]
+    pub fn enter_span(&mut self, label: &'static str) -> Span {
+        if let Some(profiler) = &mut self.profiler {
+            Span(Some(
+                profiler.enter_span(label, self.render_pass.as_mut().unwrap()),
+            ))
+        }
+        else {
+            Span(None)
+        }
+    }
+
+    #[track_caller]
+    #[inline]
+    pub fn exit_span(&mut self, span: Span) {
+        if let (Some(profiler), Some(span_id)) = (&mut self.profiler, span.0) {
+            profiler.exit_span(span_id, self.render_pass.as_mut().unwrap());
+        }
+    }
+}
+
+impl<'a> Deref for RenderPass<'a> {
+    type Target = wgpu::RenderPass<'static>;
+
+    fn deref(&self) -> &Self::Target {
+        self.render_pass.as_ref().unwrap()
+    }
+}
+
+impl<'a> DerefMut for RenderPass<'a> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.render_pass.as_mut().unwrap()
+    }
+}
+
+impl<'a> Drop for RenderPass<'a> {
+    fn drop(&mut self) {
+        // we must make sure that the render pass is dropped first
+        let _ = self.render_pass.take();
+
+        if let Some(profiler) = self.profiler.take() {
+            profiler.finish(self.command_encoder);
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Span(Option<SpanId>);

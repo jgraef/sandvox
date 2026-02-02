@@ -31,7 +31,7 @@ use bevy_utils::TypeIdMap;
 
 use crate::{
     ecs::plugin::WorldBuilder,
-    render::pass::RenderPass,
+    render::pass::context::RenderPass,
 };
 
 pub trait RenderFunction: Send + Sync + 'static {

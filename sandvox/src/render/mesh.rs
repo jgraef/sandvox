@@ -63,7 +63,7 @@ use crate::{
             RenderFunction,
         },
         pass::{
-            RenderPass,
+            context::RenderPass,
             main_pass::{
                 MainPass,
                 MainPassLayout,

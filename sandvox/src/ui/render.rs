@@ -48,7 +48,7 @@ use crate::{
             RenderFunction,
         },
         pass::{
-            RenderPass,
+            context::RenderPass,
             phase,
             ui_pass::{
                 UiPass,
