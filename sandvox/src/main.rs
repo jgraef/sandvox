@@ -1,4 +1,4 @@
-// use by crate::util::stats_alloc
+// used by crate::util::stats_alloc
 #![feature(allocator_api)]
 
 pub mod app;

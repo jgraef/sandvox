@@ -1,6 +1,12 @@
 [workspace]
 resolver = "2"
-members = ["sandvox", "sandvox-rcon", "sandvox-rcon-client", "sandvox-xtask"]
+members = [
+    "morton",
+    "sandvox",
+    "sandvox-rcon",
+    "sandvox-rcon-client",
+    "sandvox-xtask",
+]
 
 #[profile.dev.package.sandvox]
 #opt-level = 1
@@ -9,6 +15,12 @@ members = ["sandvox", "sandvox-rcon", "sandvox-rcon-client", "sandvox-xtask"]
 opt-level = 3
 debug-assertions = false
 overflow-checks = false
+
+[profile.dev.package."morton"]
+opt-level = 3
+debug-assertions = false
+overflow-checks = false
+
 
 [patch.crates-io]
 rodio = { git = "https://github.com/jgraef/rodio.git", branch = "switch/main" }
