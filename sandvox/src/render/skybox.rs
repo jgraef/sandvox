@@ -513,19 +513,20 @@ impl RenderFunction for RenderSkybox {
         if let Ok(bind_group) = items.single() {
             let pipeline = view;
 
-            let span = render_pass.enter_span("skybox");
-
-            render_pass.set_bind_group(1, Some(&bind_group.bind_group), &[]);
-
-            render_pass.set_pipeline(&pipeline.skybox_pipeline);
-            render_pass.draw(0..3, 0..1);
-
-            if bind_group.num_planets > 0 {
-                render_pass.set_pipeline(&pipeline.planet_pipeline);
-                render_pass.draw(0..(bind_group.num_planets * 6), 0..1);
+            {
+                let span = render_pass.enter_span("skybox/stars");
+                render_pass.set_bind_group(1, Some(&bind_group.bind_group), &[]);
+                render_pass.set_pipeline(&pipeline.skybox_pipeline);
+                render_pass.draw(0..3, 0..1);
+                render_pass.exit_span(span);
             }
 
-            render_pass.exit_span(span);
+            if bind_group.num_planets > 0 {
+                let span = render_pass.enter_span("skybox/planets");
+                render_pass.set_pipeline(&pipeline.planet_pipeline);
+                render_pass.draw(0..(bind_group.num_planets * 6), 0..1);
+                render_pass.exit_span(span);
+            }
         }
     }
 }

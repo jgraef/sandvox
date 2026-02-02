@@ -20,9 +20,12 @@ impl<'a> RenderPass<'a> {
     #[track_caller]
     #[inline]
     pub fn enter_span(&mut self, label: &'static str) -> Span {
-        self.profiler.as_mut().map_or(Span(None), |profiler| {
+        if let Some(profiler) = &mut self.profiler {
             Span(Some(profiler.enter_span(label, &mut self.render_pass)))
-        })
+        }
+        else {
+            Span(None)
+        }
     }
 
     #[track_caller]

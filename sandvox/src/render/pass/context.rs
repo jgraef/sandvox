@@ -37,14 +37,16 @@ impl<'w, 's> RenderContext<'w, 's> {
         self.state.command_encoder(&self.wgpu.device)
     }
 
+    #[track_caller]
     pub fn begin_render_pass<'a>(
         &'a mut self,
         descriptor: &wgpu::RenderPassDescriptor,
+        label: &'static str,
     ) -> RenderPass<'a> {
         if descriptor.timestamp_writes.is_none()
             && let Some(profiler) = &self.wgpu.profiler
         {
-            let mut profiler = profiler.begin_render_pass("todo");
+            let mut profiler = profiler.begin_render_pass(label);
             let descriptor = wgpu::RenderPassDescriptor {
                 timestamp_writes: Some(profiler.timestamp_writes()),
                 // we think the clone here is fine

@@ -55,15 +55,11 @@ use crate::{
         },
         render_target::RenderTarget,
         staging::Staging,
-        surface::{
-            ClearColor,
-            Surface,
-        },
+        surface::Surface,
     },
     wgpu::{
         WgpuContext,
         buffer::WriteStaging,
-        srgba_to_wgpu,
     },
 };
 
@@ -309,7 +305,7 @@ impl<'w, 's> MainPassRenderFunctions<'w, 's> {
 #[profiling::function]
 fn render_main_pass(
     mut render_context: RenderContext,
-    cameras: Populated<(NameOrEntity, &RenderTarget, &MainPass, Option<&ClearColor>), With<Camera>>,
+    cameras: Populated<(NameOrEntity, &RenderTarget, &MainPass), With<Camera>>,
     surfaces: Populated<&Surface>,
     mut render_functions: MainPassRenderFunctions,
     wireframe_enabled: Option<Res<RenderWireframes>>,
@@ -321,24 +317,44 @@ fn render_main_pass(
     render_functions.wireframe().prepare();
     render_functions.skybox().prepare();
 
-    for (camera_entity, render_target, main_pass, clear_color) in cameras {
+    for (camera_entity, render_target, main_pass) in cameras {
         // get target texture (and clear color)
         // todo: this should work with any kind of target texture
         let surface = surfaces.get(render_target.0).unwrap();
-        let surface_texture_view = surface.surface_texture();
 
-        let profiler = {
-            // create render pass
-            let mut render_pass = render_context.begin_render_pass(&wgpu::RenderPassDescriptor {
+        run_main_pass_on_surface(
+            &mut render_context,
+            &mut render_functions,
+            surface,
+            main_pass,
+            camera_entity.entity,
+            wireframe_enabled,
+        );
+    }
+}
+
+#[profiling::function]
+fn run_main_pass_on_surface(
+    render_context: &mut RenderContext,
+    render_functions: &mut MainPassRenderFunctions,
+    surface: &Surface,
+    main_pass: &MainPass,
+    camera_entity: Entity,
+    wireframe_enabled: bool,
+) {
+    let surface_texture_view = surface.surface_texture();
+
+    let profiler = {
+        // create render pass
+        let mut render_pass = render_context.begin_render_pass(
+            &wgpu::RenderPassDescriptor {
                 label: Some("main pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &surface_texture_view,
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: clear_color.map_or(wgpu::LoadOp::Load, |color| {
-                            wgpu::LoadOp::Clear(srgba_to_wgpu(color.0))
-                        }),
+                        load: wgpu::LoadOp::Load,
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -353,33 +369,34 @@ fn render_main_pass(
                 timestamp_writes: None,
                 occlusion_query_set: None,
                 multiview_mask: None,
-            });
+            },
+            "main_pass",
+        );
 
-            // bind frame uniform buffer
-            render_pass.set_bind_group(0, Some(&main_pass.bind_group), &[]);
+        // bind frame uniform buffer
+        render_pass.set_bind_group(0, Some(&main_pass.bind_group), &[]);
 
-            // render!
+        // render!
+        render_functions
+            .opaque()
+            .render(&mut render_pass, camera_entity);
+
+        if wireframe_enabled {
             render_functions
-                .opaque()
-                .render(&mut render_pass, camera_entity.entity);
-
-            if wireframe_enabled {
-                render_functions
-                    .wireframe()
-                    .render(&mut render_pass, camera_entity.entity);
-            }
-
-            render_functions
-                .skybox()
-                .render(&mut render_pass, camera_entity.entity);
-
-            render_pass.profiler
-            // actual render pass dropped here
-        };
-
-        if let Some(profiler) = profiler {
-            profiler.finish(render_context.command_encoder());
+                .wireframe()
+                .render(&mut render_pass, camera_entity);
         }
+
+        render_functions
+            .skybox()
+            .render(&mut render_pass, camera_entity);
+
+        render_pass.profiler
+        // actual render pass dropped here
+    };
+
+    if let Some(profiler) = profiler {
+        profiler.finish(render_context.command_encoder());
     }
 }
 
