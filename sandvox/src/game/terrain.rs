@@ -170,7 +170,7 @@ impl ChunkGenerator<TerrainVoxel, CHUNK_SIZE> for TerrainGenerator {
 
         let cells = (0..(CHUNK_SIZE * CHUNK_SIZE))
             .map(|i| {
-                let chunk_offset = Vector2::from(morton::decode2(i as u32));
+                let chunk_offset = Vector2::from(morton::decode::<[u16; 2]>(i as u32));
                 let point = chunk_position.xz().cast::<f32>() * CHUNK_SIZE as f32
                     + chunk_offset.cast::<f32>();
 
@@ -192,7 +192,7 @@ impl ChunkGenerator<TerrainVoxel, CHUNK_SIZE> for TerrainGenerator {
 
         if any_blocks {
             chunk = Some(Chunk::from_fn(move |point| {
-                let cell = &cells[morton::encode2(point.xz().into()) as usize];
+                let cell = &cells[morton::encode::<[u16; 2]>(point.xz().into()) as usize];
                 let y = chunk_position.y as i64 * CHUNK_SIZE as i64 + point.y as i64;
 
                 let block_type = if y > cell.surface_height {

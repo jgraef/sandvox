@@ -321,7 +321,7 @@ impl<const CHUNK_SIZE: usize> OpacityMasks<CHUNK_SIZE> {
     {
         // fill XY opacity matrix
         for i in 0..(CHUNK_SIZE * CHUNK_SIZE) {
-            let [x, y] = morton::decode2(i.try_into().unwrap());
+            let [x, y] = morton::decode::<[u16; 2]>(i.try_into().unwrap());
             let mut mask_i = 0;
             for z in 0..CHUNK_SIZE as u16 {
                 if chunk[Point3::new(x, y, z)].is_opaque(data) {
@@ -356,19 +356,19 @@ impl<const CHUNK_SIZE: usize> OpacityMasks<CHUNK_SIZE> {
 
     #[inline]
     fn opacity_xy(&self, xy: Point2<u16>) -> u64 {
-        let i: usize = morton::encode2(xy.into()).try_into().unwrap();
+        let i: usize = morton::encode::<[u16; 2]>(xy.into()).try_into().unwrap();
         self.xy[i]
     }
 
     #[inline]
     fn opacity_zy(&self, zy: Point2<u16>) -> u64 {
-        let i: usize = morton::encode2(zy.into()).try_into().unwrap();
+        let i: usize = morton::encode::<[u16; 2]>(zy.into()).try_into().unwrap();
         self.zy[i]
     }
 
     #[inline]
     fn opacity_xz(&self, xz: Point2<u16>) -> u64 {
-        let i: usize = morton::encode2(xz.into()).try_into().unwrap();
+        let i: usize = morton::encode::<[u16; 2]>(xz.into()).try_into().unwrap();
         self.xz[i]
     }
 }
@@ -400,7 +400,11 @@ mod tranpose {
     impl View for RowView {
         #[inline]
         fn index(&self, index: usize) -> usize {
-            usize::try_from(morton::encode2([u16::try_from(index).unwrap(), self.y])).unwrap()
+            usize::try_from(morton::encode::<[u16; 2]>([
+                u16::try_from(index).unwrap(),
+                self.y,
+            ]))
+            .unwrap()
         }
     }
 
@@ -412,7 +416,11 @@ mod tranpose {
     impl View for ColumnView {
         #[inline]
         fn index(&self, index: usize) -> usize {
-            usize::try_from(morton::encode2([self.x, u16::try_from(index).unwrap()])).unwrap()
+            usize::try_from(morton::encode::<[u16; 2]>([
+                self.x,
+                u16::try_from(index).unwrap(),
+            ]))
+            .unwrap()
         }
     }
 

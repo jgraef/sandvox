@@ -32,7 +32,7 @@ impl<V, const CHUNK_SIZE: usize> Chunk<V, CHUNK_SIZE> {
         // [1]: https://doc.rust-lang.org/std/sync/struct.Arc.html#impl-FromIterator%3CT%3E-for-Arc%3C%5BT%5D%3E
         let voxels = (0..num_voxels)
             .map(|i| {
-                let point = Point3::from(morton::decode3(i.try_into().unwrap()));
+                let point = Point3::from(morton::decode::<[u16; 3]>(i.try_into().unwrap()));
                 f(point)
             })
             .collect::<Arc<[V]>>();
@@ -42,7 +42,7 @@ impl<V, const CHUNK_SIZE: usize> Chunk<V, CHUNK_SIZE> {
 
     pub fn iter(&self) -> impl Iterator<Item = (Point3<u16>, &V)> {
         self.voxels.iter().enumerate().map(|(i, voxel)| {
-            let point = Point3::from(morton::decode3(i.try_into().unwrap()));
+            let point = Point3::from(morton::decode::<[u16; 3]>(i.try_into().unwrap()));
             (point, voxel)
         })
     }
@@ -58,7 +58,7 @@ impl<V, const CHUNK_SIZE: usize> Index<Point3<u16>> for Chunk<V, CHUNK_SIZE> {
 
     #[inline]
     fn index(&self, index: Point3<u16>) -> &V {
-        &self.voxels[morton::encode3(index.into()) as usize]
+        &self.voxels[morton::encode::<[u16; 3]>(index.into()) as usize]
     }
 }
 
