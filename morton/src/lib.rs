@@ -1,5 +1,12 @@
 #![feature(uint_gather_scatter_bits)]
 
+pub mod bitops;
+
+use bitops::{
+    BitDeposit,
+    BitExtract,
+};
+
 macro_rules! make_base_mask {
     ($encoded:ty, $decoded:ty, $n:expr) => {
         const {
@@ -24,7 +31,7 @@ pub trait Morton {
 }
 
 macro_rules! impl_morton {
-    ($encoded:ty, $decoded:ty, [$($i:literal),*], $n:literal) => {
+    ($encoded:tt, $decoded:ty, [$($i:literal),*], $n:literal) => {
         const _: () = {
             const MASKS: [$encoded; $n] = [
                 $(make_base_mask!($encoded, $decoded, $n) << ($n - $i - 1)),*
@@ -36,7 +43,7 @@ macro_rules! impl_morton {
                 #[inline]
                 fn morton_encode(self) -> $encoded {
                     $(
-                        (self[$i] as $encoded).deposit_bits(MASKS[$i])
+                        <$encoded as BitDeposit>::deposit(self[$i] as $encoded, MASKS[$i])
                     )|*
                 }
 
@@ -44,8 +51,8 @@ macro_rules! impl_morton {
                 fn morton_decode(code: $encoded) -> [$decoded; $n] {
                     [
                         $(
-                            code.extract_bits(MASKS[$i]) as $decoded,
-                        )*
+                            <$encoded as BitExtract>::extract(code, MASKS[$i]) as $decoded
+                        ),*
                     ]
                 }
             }

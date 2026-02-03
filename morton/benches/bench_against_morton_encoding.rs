@@ -11,7 +11,7 @@ fn bench_intrinsics_against_morton_encoding(c: &mut Criterion) {
     {
         let data: [u16; 2] = [64402, 690];
 
-        let mut group = c.benchmark_group("encode_u16_2");
+        let mut group = c.benchmark_group("encode::<[u16; 2]>");
 
         group.bench_function("intrinsics", |b| b.iter(|| black_box(data).morton_encode()));
 
@@ -25,7 +25,7 @@ fn bench_intrinsics_against_morton_encoding(c: &mut Criterion) {
     {
         let data: [u16; 3] = [64402, 690, 14508];
 
-        let mut group = c.benchmark_group("encode_u16_3");
+        let mut group = c.benchmark_group("encode::<[u16; 3]>");
 
         group.bench_function("intrinsics", |b| b.iter(|| black_box(data).morton_encode()));
 
