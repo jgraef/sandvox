@@ -110,7 +110,7 @@ fn request_redraw(nodes: Populated<&Root, Changed<FinalLayout>>, mut views: Popu
 ///
 /// This might help too:
 ///
-/// ```no_run
+/// ```ignore
 /// .run_if(any_match_filter::<Or<(Changed<Style>, Changed<LeafMeasure>)>>)
 /// ```
 #[profiling::function]

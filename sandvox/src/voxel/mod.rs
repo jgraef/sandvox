@@ -6,23 +6,12 @@ pub mod mesh;
 
 use std::fmt::Debug;
 
-use bevy_ecs::system::SystemParam;
+pub trait Voxel: Clone + Debug + Send + Sync + 'static {}
 
-use crate::render::atlas::AtlasHandle;
-
-pub trait Voxel: Clone + Debug + Send + Sync + 'static {
-    type FetchData: SystemParam;
-    type Data: for<'a, 'w, 's> From<&'a <Self::FetchData as SystemParam>::Item<'w, 's>>
-        + Clone
-        + Send
-        + Sync
-        + 'static;
-
-    fn texture<'a>(&'a self, face: BlockFace, data: &'a Self::Data) -> Option<&'a AtlasHandle>;
-
-    fn is_opaque(&self, data: &Self::Data) -> bool;
-
-    fn can_merge(&self, other: &Self, data: &Self::Data) -> bool;
+pub trait VoxelData<V>: Clone + Send + Sync + 'static {
+    fn texture(&self, voxel: &V, face: BlockFace) -> Option<u32>;
+    fn is_opaque(&self, voxel: &V) -> bool;
+    fn can_merge(&self, first: &V, second: &V) -> bool;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -2,6 +2,7 @@
 
 use std::{
     collections::HashMap,
+    fmt::Debug,
     ops::Index,
     path::{
         Path,
@@ -38,22 +39,25 @@ impl BlockType {
 }
 
 #[derive(Clone, Debug, Resource)]
-pub struct BlockTypes {
-    inner: Arc<Inner>,
+pub struct BlockTypes<Tex = AtlasHandle> {
+    inner: Arc<Inner<Tex>>,
 }
 
 #[derive(Clone, Debug)]
-struct Inner {
-    blocks: Vec<BlockTypeData>,
+struct Inner<Tex> {
+    blocks: Vec<BlockTypeData<Tex>>,
     by_name: HashMap<String, BlockType>,
 }
 
-impl BlockTypes {
+impl<Tex> BlockTypes<Tex> {
     #[profiling::function]
     pub fn load(
         path: impl AsRef<Path>,
-        mut insert_image: impl FnMut(&RgbaImage) -> Result<AtlasHandle, Error>,
-    ) -> Result<Self, Error> {
+        mut insert_image: impl FnMut(&RgbaImage) -> Result<Tex, Error>,
+    ) -> Result<Self, Error>
+    where
+        Tex: Debug + Clone,
+    {
         let toml_directory = path.as_ref().parent().unwrap();
         let toml = std::fs::read(&path)?;
         let block_defs: config::BlockDefs = toml::from_slice(&toml)?;
@@ -61,7 +65,7 @@ impl BlockTypes {
         let mut blocks = Vec::with_capacity(block_defs.block_defs.len());
         let mut by_name = HashMap::with_capacity(block_defs.block_defs.len());
 
-        let mut texture_cache: HashMap<PathBuf, AtlasHandle> = HashMap::new();
+        let mut texture_cache: HashMap<PathBuf, Tex> = HashMap::new();
 
         for (i, (name, mut block_def)) in block_defs.block_defs.into_iter().enumerate() {
             if block_def.texture.is_none() && block_def.is_opaque {
@@ -120,8 +124,8 @@ impl BlockTypes {
     }
 }
 
-impl Index<BlockType> for BlockTypes {
-    type Output = BlockTypeData;
+impl<Tex> Index<BlockType> for BlockTypes<Tex> {
+    type Output = BlockTypeData<Tex>;
 
     #[inline]
     fn index(&self, index: BlockType) -> &Self::Output {
@@ -137,15 +141,15 @@ impl<'a, 'w> From<&'a Res<'w, BlockTypes>> for BlockTypes {
 }
 
 #[derive(Clone, Debug)]
-pub struct BlockTypeData {
+pub struct BlockTypeData<Tex> {
     pub name: String,
-    pub textures: Option<[AtlasHandle; 6]>,
+    pub textures: Option<[Tex; 6]>,
     pub is_opaque: bool,
 }
 
-impl BlockTypeData {
+impl<Tex> BlockTypeData<Tex> {
     #[inline]
-    pub fn face_texture(&self, face: BlockFace) -> Option<&AtlasHandle> {
+    pub fn face_texture(&self, face: BlockFace) -> Option<&Tex> {
         self.textures
             .as_ref()
             .map(|faces| &faces[usize::from(face as u8)])

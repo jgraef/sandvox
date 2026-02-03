@@ -6,7 +6,6 @@ use std::{
 use bevy_ecs::{
     component::Component,
     entity::Entity,
-    query::With,
     resource::Resource,
     schedule::{
         IntoScheduleConfigs,
@@ -41,7 +40,10 @@ use crate::{
     },
     voxel::{
         Voxel,
-        chunk::Chunk,
+        chunk::{
+            Chunk,
+            ChunkShape,
+        },
         chunk_map::{
             ChunkPosition,
             ChunkStatistics,
@@ -50,41 +52,42 @@ use crate::{
 };
 
 #[derive(Clone, Debug)]
-pub struct ChunkGeneratorPlugin<V, G, const CHUNK_SIZE: usize> {
+pub struct ChunkGeneratorPlugin<V, S, G> {
     task_config: BackgroundTaskConfig,
-    _phantom: PhantomData<(V, G)>,
+    _marker: PhantomData<fn() -> (V, S, G)>,
 }
 
-impl<V, G, const CHUNK_SIZE: usize> ChunkGeneratorPlugin<V, G, CHUNK_SIZE> {
+impl<V, S, G> ChunkGeneratorPlugin<V, S, G> {
+    #[inline]
     pub fn new(task_config: BackgroundTaskConfig) -> Self {
         Self {
             task_config,
-            _phantom: PhantomData,
+            _marker: PhantomData,
         }
     }
 }
 
-impl<V, G, const CHUNK_SIZE: usize> Default for ChunkGeneratorPlugin<V, G, CHUNK_SIZE> {
+impl<V, S, G> Default for ChunkGeneratorPlugin<V, S, G> {
+    #[inline]
     fn default() -> Self {
         Self::new(Default::default())
     }
 }
 
-impl<V, G, const CHUNK_SIZE: usize> Plugin for ChunkGeneratorPlugin<V, G, CHUNK_SIZE>
+impl<V, S, G> Plugin for ChunkGeneratorPlugin<V, S, G>
 where
     V: Voxel,
-    G: ChunkGenerator<V, CHUNK_SIZE>,
+    G: ChunkGenerator<V, S> + Resource,
+    S: ChunkShape,
 {
     fn setup(&self, builder: &mut WorldBuilder) -> Result<(), Error> {
-        builder.configure_background_task_queue::<GenerateChunkTask<V, G, CHUNK_SIZE>>(
-            self.task_config,
-        );
+        builder.configure_background_task_queue::<GenerateChunkTask<V, S, G>>(self.task_config);
 
         builder.add_systems(
             schedule::Update,
             (
-                make_chunk_generator_shared::<V, G, CHUNK_SIZE>.run_if(resource_exists::<G>),
-                dispatch_chunk_generation::<V, G, CHUNK_SIZE>
+                make_chunk_generator_shared::<V, S, G>.run_if(resource_exists::<G>),
+                dispatch_chunk_generation::<V, S, G>
                     .run_if(resource_exists::<SharedChunkGenerator<G>>),
             )
                 .chain(),
@@ -95,37 +98,46 @@ where
 }
 
 #[derive(Clone, Copy, Debug, Default, Component)]
-pub struct GenerateChunk;
+pub struct GenerateChunk<S> {
+    pub shape: S,
+}
 
 #[derive(Clone, Debug, Resource)]
 struct SharedChunkGenerator<G>(Arc<G>);
 
-fn make_chunk_generator_shared<V, G, const CHUNK_SIZE: usize>(world: &mut World)
+fn make_chunk_generator_shared<V, S, G>(world: &mut World)
 where
     V: Voxel,
-    G: ChunkGenerator<V, CHUNK_SIZE>,
+    S: ChunkShape,
+    G: ChunkGenerator<V, S> + Resource,
 {
     let chunk_generator = world.remove_resource::<G>().unwrap();
     world.insert_resource(SharedChunkGenerator(Arc::new(chunk_generator)));
 }
 
-fn dispatch_chunk_generation<V, G, const CHUNK_SIZE: usize>(
+fn dispatch_chunk_generation<V, S, G>(
     background_tasks: Res<BackgroundTaskPool>,
     chunk_generator: Res<SharedChunkGenerator<G>>,
-    chunks: Query<(Entity, &ChunkPosition), With<GenerateChunk>>,
+    chunks: Query<(Entity, &ChunkPosition, &GenerateChunk<S>)>,
     mut commands: Commands,
 ) where
     V: Voxel,
-    G: ChunkGenerator<V, CHUNK_SIZE>,
+    S: ChunkShape,
+    G: ChunkGenerator<V, S>,
 {
     background_tasks.push_tasks(
         chunks
             .iter()
-            .filter(|(_entity, position)| !chunk_generator.0.early_discard(position.0))
-            .map(|(entity, position)| {
-                commands.entity(entity).remove::<GenerateChunk>();
-                GenerateChunkTask::<V, G, CHUNK_SIZE> {
+            .filter(|(_entity, position, generate_chunk)| {
+                !chunk_generator
+                    .0
+                    .early_discard(position.0, &generate_chunk.shape)
+            })
+            .map(|(entity, position, generate_chunk)| {
+                commands.entity(entity).remove::<GenerateChunk<S>>();
+                GenerateChunkTask::<V, S, G> {
                     position: position.0,
+                    shape: generate_chunk.shape.clone(),
                     entity,
                     chunk_generator: chunk_generator.0.clone(),
                     _phantom: PhantomData,
@@ -135,20 +147,25 @@ fn dispatch_chunk_generation<V, G, const CHUNK_SIZE: usize>(
 }
 
 #[derive(Debug)]
-struct GenerateChunkTask<V, G, const CHUNK_SIZE: usize> {
+struct GenerateChunkTask<V, S, G> {
     position: Point3<i32>,
+    shape: S,
     entity: Entity,
     chunk_generator: Arc<G>,
-    _phantom: PhantomData<V>,
+    _phantom: PhantomData<fn() -> V>,
 }
 
-impl<V, G, const CHUNK_SIZE: usize> Task for GenerateChunkTask<V, G, CHUNK_SIZE>
+impl<V, S, G> Task for GenerateChunkTask<V, S, G>
 where
     V: Voxel,
-    G: ChunkGenerator<V, CHUNK_SIZE>,
+    S: ChunkShape,
+    G: ChunkGenerator<V, S>,
 {
     fn run(self, world_modifications: &mut CommandQueue) {
-        if let Some(chunk) = self.chunk_generator.generate_chunk(self.position) {
+        if let Some(chunk) = self
+            .chunk_generator
+            .generate_chunk(self.position, self.shape)
+        {
             world_modifications.push(move |world: &mut World| {
                 let mut chunk_statistics = world.resource_mut::<ChunkStatistics>();
                 chunk_statistics.num_chunks_loaded += 1;
@@ -160,11 +177,16 @@ where
     }
 }
 
-pub trait ChunkGenerator<V, const CHUNK_SIZE: usize>: Resource + Send + Sync + 'static {
-    fn early_discard(&self, position: Point3<i32>) -> bool {
-        let _ = position;
+pub trait ChunkGenerator<V, S>: Send + Sync + 'static
+where
+    V: Voxel,
+    S: ChunkShape,
+{
+    #[inline]
+    fn early_discard(&self, position: Point3<i32>, shape: &S) -> bool {
+        let _ = (position, shape);
         false
     }
 
-    fn generate_chunk(&self, chunk_position: Point3<i32>) -> Option<Chunk<V, CHUNK_SIZE>>;
+    fn generate_chunk(&self, position: Point3<i32>, shape: S) -> Option<Chunk<V, S>>;
 }

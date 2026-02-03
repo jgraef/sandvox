@@ -14,12 +14,12 @@ use bevy_ecs::{
         Or,
         Without,
     },
+    resource::Resource,
     system::{
         Commands,
         Local,
         Populated,
         Res,
-        StaticSystemParam,
     },
     world::{
         CommandQueue,
@@ -58,21 +58,23 @@ use crate::{
     voxel::{
         BlockFace,
         Voxel,
-        chunk::Chunk,
+        VoxelData,
+        chunk::{
+            Chunk,
+            ChunkShape,
+        },
         chunk_map::ChunkStatistics,
     },
     wgpu::WgpuContext,
 };
 
-pub struct ChunkMeshPlugin<V, M, const CHUNK_SIZE: usize> {
+pub struct ChunkMeshPlugin<V, S, D, M> {
     task_config: BackgroundTaskConfig,
-    _phantom: PhantomData<(V, M)>,
+    _phantom: PhantomData<fn() -> (V, S, D, M)>,
 }
 
-impl<V, M, const CHUNK_SIZE: usize> ChunkMeshPlugin<V, M, CHUNK_SIZE> {
+impl<V, S, D, M> ChunkMeshPlugin<V, S, D, M> {
     pub fn new(task_config: BackgroundTaskConfig) -> Self {
-        assert!(CHUNK_SIZE.is_power_of_two());
-
         Self {
             task_config,
             _phantom: PhantomData,
@@ -80,24 +82,25 @@ impl<V, M, const CHUNK_SIZE: usize> ChunkMeshPlugin<V, M, CHUNK_SIZE> {
     }
 }
 
-impl<V, M, const CHUNK_SIZE: usize> Default for ChunkMeshPlugin<V, M, CHUNK_SIZE> {
+impl<V, S, D, M> Default for ChunkMeshPlugin<V, S, D, M> {
     fn default() -> Self {
         Self::new(Default::default())
     }
 }
 
-impl<V, M, const CHUNK_SIZE: usize> Plugin for ChunkMeshPlugin<V, M, CHUNK_SIZE>
+impl<V, S, D, M> Plugin for ChunkMeshPlugin<V, S, D, M>
 where
     V: Voxel,
-    M: ChunkMesher<V, CHUNK_SIZE>,
+    S: ChunkShape,
+    D: Resource + Clone + VoxelData<V>,
+    M: ChunkMesher<V, S>,
 {
     fn setup(&self, builder: &mut WorldBuilder) -> Result<(), Error> {
-        builder
-            .configure_background_task_queue::<MeshChunkTask<V, M, CHUNK_SIZE>>(self.task_config);
+        builder.configure_background_task_queue::<MeshChunkTask<V, S, D, M>>(self.task_config);
 
         builder
             .add_plugin(MeshPlugin)?
-            .add_systems(schedule::Update, dispatch_chunk_meshing::<V, M, CHUNK_SIZE>);
+            .add_systems(schedule::Update, dispatch_chunk_meshing::<V, S, D, M>);
 
         Ok(())
     }
@@ -110,25 +113,30 @@ struct ChunkMeshed;
 struct MeshChunkTaskDispatched;
 
 #[derive(Debug)]
-struct MeshChunkTask<V, M, const CHUNK_SIZE: usize>
+struct MeshChunkTask<V, S, D, M>
 where
     V: Voxel,
 {
     entity: Entity,
-    chunk: Chunk<V, CHUNK_SIZE>,
+    chunk: Chunk<V, S>,
     wgpu: WgpuContext,
     mesh_bind_group_layout: wgpu::BindGroupLayout,
-    voxel_data: V::Data,
+    voxel_data: D,
     workspaces: Workspaces<(MeshBuilder, M)>,
 }
 
-impl<V, M, const CHUNK_SIZE: usize> Task for MeshChunkTask<V, M, CHUNK_SIZE>
+impl<V, S, D, M> Task for MeshChunkTask<V, S, D, M>
 where
     V: Voxel,
-    M: ChunkMesher<V, CHUNK_SIZE>,
+    S: ChunkShape,
+    M: ChunkMesher<V, S>,
+    D: VoxelData<V> + Send + Sync + 'static,
 {
     fn run(self, world_modifications: &mut CommandQueue) {
-        let mut workspace = self.workspaces.get();
+        let mut workspace = self
+            .workspaces
+            .get_or_init(|| (MeshBuilder::default(), M::new(self.chunk.shape())));
+
         let (mesh_builder, chunk_mesher) = &mut *workspace;
 
         let t_start = Instant::now();
@@ -161,25 +169,26 @@ where
     }
 }
 
-fn dispatch_chunk_meshing<V, M, const CHUNK_SIZE: usize>(
+fn dispatch_chunk_meshing<V, S, D, M>(
     wgpu: Res<WgpuContext>,
     background_tasks: Res<BackgroundTaskPool>,
     chunks: Populated<
-        (Entity, &Chunk<V, CHUNK_SIZE>),
+        (Entity, &Chunk<V, S>),
         (
-            Or<(Without<ChunkMeshed>, Changed<Chunk<V, CHUNK_SIZE>>)>,
+            Or<(Without<ChunkMeshed>, Changed<Chunk<V, S>>)>,
             Without<MeshChunkTaskDispatched>,
         ),
     >,
-    voxel_data: StaticSystemParam<V::FetchData>,
+    voxel_data: Res<D>,
     workspaces: Local<Workspaces<(MeshBuilder, M)>>,
     mesh_layout: Res<MeshPipelineLayout>,
     mut commands: Commands,
 ) where
     V: Voxel,
-    M: ChunkMesher<V, CHUNK_SIZE>,
+    S: ChunkShape,
+    D: Resource + Clone + VoxelData<V> + Send + Sync + 'static,
+    M: ChunkMesher<V, S>,
 {
-    let voxel_data: V::Data = (&*voxel_data).into();
     background_tasks.push_tasks(chunks.iter().map(|(entity, chunk)| {
         commands.entity(entity).insert(MeshChunkTaskDispatched);
 
@@ -194,16 +203,16 @@ fn dispatch_chunk_meshing<V, M, const CHUNK_SIZE: usize>(
     }));
 }
 
-pub trait ChunkMesher<V, const CHUNK_SIZE: usize>: Send + Sync + Default + 'static
+pub trait ChunkMesher<V, S>: Send + Sync + 'static
 where
     V: Voxel,
+    S: ChunkShape,
 {
-    fn mesh_chunk<'w, 's>(
-        &mut self,
-        chunk: &Chunk<V, CHUNK_SIZE>,
-        mesh_builder: &mut MeshBuilder,
-        data: &V::Data,
-    );
+    fn new(shape: &S) -> Self;
+
+    fn mesh_chunk<D>(&mut self, chunk: &Chunk<V, S>, mesh_builder: &mut MeshBuilder, data: &D)
+    where
+        D: VoxelData<V>;
 }
 
 #[derive(Clone, Copy, Debug)]

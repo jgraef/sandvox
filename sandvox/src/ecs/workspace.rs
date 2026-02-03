@@ -32,19 +32,28 @@ impl<T> Default for Workspaces<T> {
 
 impl<T> Workspaces<T>
 where
-    T: Send + Sync + Default,
+    T: Send + Sync,
 {
-    pub fn get(&self) -> WorkspaceGuard<T> {
+    pub fn get_or_init(&self, init: impl FnOnce() -> T) -> WorkspaceGuard<T> {
         let mut inner = self.inner.lock();
         let inner = inner.pop().unwrap_or_else(|| {
             tracing::debug!("allocating workspace: {}", type_name::<T>());
-            T::default()
+            init()
         });
 
         WorkspaceGuard {
             inner: Some(inner),
             pool: self.clone(),
         }
+    }
+}
+
+impl<T> Workspaces<T>
+where
+    T: Send + Sync + Default,
+{
+    pub fn get(&self) -> WorkspaceGuard<T> {
+        self.get_or_init(Default::default)
     }
 }
 

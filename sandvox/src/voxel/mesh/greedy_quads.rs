@@ -1,3 +1,5 @@
+use std::marker::PhantomData;
+
 use nalgebra::{
     Point2,
     Point3,
@@ -8,7 +10,11 @@ use crate::{
     voxel::{
         BlockFace,
         Voxel,
-        chunk::Chunk,
+        VoxelData,
+        chunk::{
+            Chunk,
+            ChunkShape,
+        },
         mesh::{
             ChunkMesher,
             UnorientedQuad,
@@ -23,36 +29,37 @@ use crate::{
 };
 
 #[derive(Debug)]
-pub struct GreedyMesher<V, const CHUNK_SIZE: usize> {
-    opacity: OpacityMasks<CHUNK_SIZE>,
-    mesh_face_buffer: MeshFaceBuffer<V, CHUNK_SIZE>,
+pub struct GreedyMesher<V, S> {
+    opacity: OpacityMasks,
+    mesh_face_buffer: MeshFaceBuffer<V>,
+    _marker: PhantomData<fn() -> S>,
 }
 
-impl<V, const CHUNK_SIZE: usize> Default for GreedyMesher<V, CHUNK_SIZE> {
-    fn default() -> Self {
-        Self {
-            opacity: Default::default(),
-            mesh_face_buffer: Default::default(),
-        }
-    }
-}
-
-impl<V, const CHUNK_SIZE: usize> ChunkMesher<V, CHUNK_SIZE> for GreedyMesher<V, CHUNK_SIZE>
+impl<V, S> ChunkMesher<V, S> for GreedyMesher<V, S>
 where
+    S: ChunkShape,
     V: Voxel,
 {
+    fn new(shape: &S) -> Self {
+        Self {
+            opacity: OpacityMasks::new(shape),
+            mesh_face_buffer: MeshFaceBuffer::new(shape),
+            _marker: PhantomData,
+        }
+    }
+
     #[profiling::function]
-    fn mesh_chunk<'w, 's>(
-        &mut self,
-        chunk: &Chunk<V, CHUNK_SIZE>,
-        mesh_builder: &mut MeshBuilder,
-        data: &V::Data,
-    ) {
+    fn mesh_chunk<D>(&mut self, chunk: &Chunk<V, S>, mesh_builder: &mut MeshBuilder, data: &D)
+    where
+        D: VoxelData<V>,
+    {
+        let chunk_size: u16 = chunk.shape().side_length().try_into().unwrap();
+
         self.opacity.fill(chunk, data);
 
         let mut mesh_quad = |quad: &GreedyQuad<V>, face| {
-            if let Some(texture) = quad.voxel.texture(face, data) {
-                let mesh = quad.inner.mesh(face, texture.id());
+            if let Some(texture) = data.texture(&quad.voxel, face) {
+                let mesh = quad.inner.mesh(face, texture);
                 mesh_builder.push(mesh.vertices, mesh.faces);
             }
         };
@@ -63,6 +70,7 @@ where
 
         // XY front
         self.mesh_face_buffer.mesh_faces(
+            chunk_size,
             xy_voxel,
             |xy| front_face_mask(self.opacity.opacity_xy(xy)),
             |quad| mesh_quad(&quad, BlockFace::Front),
@@ -71,6 +79,7 @@ where
 
         // XY back
         self.mesh_face_buffer.mesh_faces(
+            chunk_size,
             xy_voxel,
             |xy| back_face_mask(self.opacity.opacity_xy(xy)),
             |quad| mesh_quad(&quad, BlockFace::Back),
@@ -79,6 +88,7 @@ where
 
         // ZY front (left)
         self.mesh_face_buffer.mesh_faces(
+            chunk_size,
             zy_voxel,
             |zy| front_face_mask(self.opacity.opacity_zy(zy)),
             |quad| mesh_quad(&quad, BlockFace::Left),
@@ -87,6 +97,7 @@ where
 
         // ZY back (right)
         self.mesh_face_buffer.mesh_faces(
+            chunk_size,
             zy_voxel,
             |zy| back_face_mask(self.opacity.opacity_zy(zy)),
             |quad| mesh_quad(&quad, BlockFace::Right),
@@ -95,6 +106,7 @@ where
 
         // XZ front (down)
         self.mesh_face_buffer.mesh_faces(
+            chunk_size,
             xz_voxel,
             |xz| front_face_mask(self.opacity.opacity_xz(xz)),
             |quad| mesh_quad(&quad, BlockFace::Down),
@@ -103,6 +115,7 @@ where
 
         // XY back (up)
         self.mesh_face_buffer.mesh_faces(
+            chunk_size,
             xz_voxel,
             |xz| back_face_mask(self.opacity.opacity_xz(xz)),
             |quad| mesh_quad(&quad, BlockFace::Up),
@@ -112,7 +125,7 @@ where
 }
 
 #[derive(Debug)]
-struct MeshFaceBuffer<V, const CHUNK_SIZE: usize> {
+struct MeshFaceBuffer<V> {
     face_masks: Box<[u64]>,
 
     /// Quads that can still grow
@@ -122,31 +135,37 @@ struct MeshFaceBuffer<V, const CHUNK_SIZE: usize> {
     active_quads: Vec<GreedyQuad<V>>,
 }
 
-impl<V, const CHUNK_SIZE: usize> Default for MeshFaceBuffer<V, CHUNK_SIZE> {
-    fn default() -> Self {
+impl<V> MeshFaceBuffer<V> {
+    fn new<S>(shape: &S) -> Self
+    where
+        S: ChunkShape,
+    {
+        let side_length = shape.side_length();
         Self {
-            face_masks: vec![0; CHUNK_SIZE].into_boxed_slice(),
-            active_quads: Vec::with_capacity(CHUNK_SIZE),
+            face_masks: vec![0; side_length].into_boxed_slice(),
+            active_quads: Vec::with_capacity(side_length),
         }
     }
 }
 
-impl<V, const CHUNK_SIZE: usize> MeshFaceBuffer<V, CHUNK_SIZE> {
+impl<V> MeshFaceBuffer<V> {
     /// Documentation and variable names are for XY faces, but are
     /// representative for other directions as well.
     #[profiling::function]
-    fn mesh_faces<'v>(
+    fn mesh_faces<'v, D>(
         &mut self,
+        chunk_size: u16,
         get_voxel: impl Fn(Point3<u16>) -> &'v V,
         face_mask: impl Fn(Point2<u16>) -> u64,
         mut emit_quad: impl FnMut(GreedyQuad<V>),
-        data: &V::Data,
+        data: &D,
     ) where
         V: Voxel,
+        D: VoxelData<V>,
     {
-        for y in 0..CHUNK_SIZE as u16 {
+        for y in 0..chunk_size {
             // get XZ faces
-            for x in 0..CHUNK_SIZE as u16 {
+            for x in 0..chunk_size {
                 self.face_masks[x as usize] = face_mask(Point2::new(x, y));
             }
 
@@ -167,8 +186,7 @@ impl<V, const CHUNK_SIZE: usize> MeshFaceBuffer<V, CHUNK_SIZE> {
                 if quad.mask & *face_mask == quad.mask {
                     // check if we can actually merge these voxels
                     let can_merge = (quad.inner.ij0.x..quad.inner.ij1.x).all(|x| {
-                        quad.voxel
-                            .can_merge(get_voxel(Point3::new(x, y, quad.inner.k)), data)
+                        data.can_merge(&quad.voxel, get_voxel(Point3::new(x, y, quad.inner.k)))
                     });
 
                     if can_merge {
@@ -197,7 +215,7 @@ impl<V, const CHUNK_SIZE: usize> MeshFaceBuffer<V, CHUNK_SIZE> {
             }
 
             // create active quads for any faces that hasn't been meshed yet
-            for z in 0..CHUNK_SIZE as u16 {
+            for z in 0..chunk_size {
                 let mut face_mask = self.face_masks[z as usize];
 
                 // keeps track of how many voxels in the row have already been processed. the
@@ -221,7 +239,7 @@ impl<V, const CHUNK_SIZE: usize> MeshFaceBuffer<V, CHUNK_SIZE> {
                     // if we find one, this relative position is the actual number of faces we
                     // can merge
                     for x in 1..num_faces {
-                        if !voxel.can_merge(get_voxel(Point3::new(x0 + x, y, z)), data) {
+                        if !data.can_merge(&voxel, get_voxel(Point3::new(x0 + x, y, z))) {
                             num_faces = x;
                             break;
                         }
@@ -275,7 +293,7 @@ struct GreedyQuad<V> {
 
 /// Opacity masks for 3 axis: XY, ZY, XZ
 #[derive(Debug)]
-struct OpacityMasks<const CHUNK_SIZE: usize> {
+struct OpacityMasks {
     /// The outer array has one element per direction. They contain the same
     /// data (if a voxel is opaque or not), but a different axis is stored in
     /// the bits.
@@ -291,8 +309,11 @@ struct OpacityMasks<const CHUNK_SIZE: usize> {
     xz: Box<[u64]>,
 }
 
-impl<const CHUNK_SIZE: usize> Default for OpacityMasks<CHUNK_SIZE> {
-    fn default() -> Self {
+impl OpacityMasks {
+    fn new<S>(shape: &S) -> Self
+    where
+        S: ChunkShape,
+    {
         // This is rather large (288 KiB for 64^3 chunks) so it is
         // heap-allocated.
         //
@@ -305,26 +326,31 @@ impl<const CHUNK_SIZE: usize> Default for OpacityMasks<CHUNK_SIZE> {
         //
         // [1]: https://doc.rust-lang.org/src/alloc/boxed.rs.html#1694
 
+        let side_length = shape.side_length();
+        let num_voxels = side_length * side_length * side_length;
+
         Self {
-            xy: vec![0; CHUNK_SIZE * CHUNK_SIZE].into_boxed_slice(),
-            zy: vec![0; CHUNK_SIZE * CHUNK_SIZE].into_boxed_slice(),
-            xz: vec![0; CHUNK_SIZE * CHUNK_SIZE].into_boxed_slice(),
+            xy: vec![0; num_voxels].into_boxed_slice(),
+            zy: vec![0; num_voxels].into_boxed_slice(),
+            xz: vec![0; num_voxels].into_boxed_slice(),
         }
     }
-}
 
-impl<const CHUNK_SIZE: usize> OpacityMasks<CHUNK_SIZE> {
     #[profiling::function]
-    fn fill<V>(&mut self, chunk: &Chunk<V, CHUNK_SIZE>, data: &V::Data)
+    fn fill<V, S, D>(&mut self, chunk: &Chunk<V, S>, data: &D)
     where
         V: Voxel,
+        S: ChunkShape,
+        D: VoxelData<V>,
     {
+        let chunk_size = chunk.shape().side_length();
+
         // fill XY opacity matrix
-        for i in 0..(CHUNK_SIZE * CHUNK_SIZE) {
+        for i in 0..(chunk_size * chunk_size) {
             let [x, y] = morton::decode::<[u16; 2]>(i.try_into().unwrap());
             let mut mask_i = 0;
-            for z in 0..CHUNK_SIZE as u16 {
-                if chunk[Point3::new(x, y, z)].is_opaque(data) {
+            for z in 0..chunk_size as u16 {
+                if data.is_opaque(&chunk[Point3::new(x, y, z)]) {
                     mask_i |= 1 << z;
                 }
             }
@@ -333,10 +359,10 @@ impl<const CHUNK_SIZE: usize> OpacityMasks<CHUNK_SIZE> {
 
         // flip X and Z
         self.zy.copy_from_slice(&self.xy);
-        for y in 0..CHUNK_SIZE as u16 {
+        for y in 0..chunk_size as u16 {
             OpacityMaskView {
                 mask: &mut self.zy,
-                side_length: CHUNK_SIZE,
+                side_length: chunk_size,
                 view: RowView { y },
             }
             .transpose();
@@ -344,10 +370,10 @@ impl<const CHUNK_SIZE: usize> OpacityMasks<CHUNK_SIZE> {
 
         // flip Y and Z
         self.xz.copy_from_slice(&self.xy);
-        for x in 0..CHUNK_SIZE as u16 {
+        for x in 0..chunk_size as u16 {
             OpacityMaskView {
                 mask: &mut self.xz,
-                side_length: CHUNK_SIZE,
+                side_length: chunk_size,
                 view: ColumnView { x },
             }
             .transpose();

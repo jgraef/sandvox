@@ -8,6 +8,7 @@ use bevy_ecs::{
         With,
         Without,
     },
+    resource::Resource,
     schedule::IntoScheduleConfigs,
     system::{
         Commands,
@@ -38,6 +39,7 @@ use crate::{
     },
     render::camera::FrustrumCulled,
     voxel::{
+        chunk::ChunkShape,
         chunk_generator::GenerateChunk,
         chunk_map::{
             ChunkMap,
@@ -47,19 +49,26 @@ use crate::{
 };
 
 #[derive(Clone, Copy, Debug, Default)]
-pub struct ChunkLoaderPlugin<const CHUNK_SIZE: usize>;
+pub struct ChunkLoaderPlugin<S> {
+    pub shape: S,
+}
 
-impl<const CHUNK_SIZE: usize> Plugin for ChunkLoaderPlugin<CHUNK_SIZE> {
+impl<S> Plugin for ChunkLoaderPlugin<S>
+where
+    S: ChunkShape,
+{
     fn setup(&self, builder: &mut WorldBuilder) -> Result<(), Error> {
-        builder.add_systems(
-            schedule::PostUpdate,
-            (
-                create_chunk_loader_states::<CHUNK_SIZE>,
-                update_chunk_loader_states::<CHUNK_SIZE>,
-                remove_chunk_loader_states,
-            )
-                .after(TransformSystems::Propagate),
-        );
+        builder
+            .insert_resource(ChunkLoaderShape(self.shape.clone()))
+            .add_systems(
+                schedule::PostUpdate,
+                (
+                    create_chunk_loader_states::<S>,
+                    update_chunk_loader_states::<S>,
+                    remove_chunk_loader_states,
+                )
+                    .after(TransformSystems::Propagate),
+            );
 
         Ok(())
     }
@@ -75,7 +84,7 @@ struct ChunkLoaderState {
     chunk_position: Point3<i32>,
 }
 
-fn create_chunk_loader_states<const CHUNK_SIZE: usize>(
+fn create_chunk_loader_states<S>(
     mut new_chunk_loaders: Query<
         (Entity, &ChunkLoader, &GlobalTransform),
         (
@@ -84,10 +93,12 @@ fn create_chunk_loader_states<const CHUNK_SIZE: usize>(
         ),
     >,
     mut commands: Commands,
-    mut load_chunks: LoadChunks<CHUNK_SIZE>,
-) {
+    mut load_chunks: LoadChunks<S>,
+) where
+    S: ChunkShape,
+{
     for (entity, chunk_loader, transform) in &mut new_chunk_loaders {
-        let chunk_position = chunk_position_from_transform::<CHUNK_SIZE>(transform);
+        let chunk_position = chunk_position_from_transform::<S>(&load_chunks.shape.0, transform);
 
         commands
             .entity(entity)
@@ -98,15 +109,17 @@ fn create_chunk_loader_states<const CHUNK_SIZE: usize>(
     }
 }
 
-fn update_chunk_loader_states<const CHUNK_SIZE: usize>(
+fn update_chunk_loader_states<S>(
     changed_chunk_loaders: Query<
         (&ChunkLoader, &mut ChunkLoaderState, &GlobalTransform),
         Or<(Changed<ChunkLoader>, Changed<GlobalTransform>)>,
     >,
-    mut load_chunks: LoadChunks<CHUNK_SIZE>,
-) {
+    mut load_chunks: LoadChunks<S>,
+) where
+    S: ChunkShape,
+{
     for (chunk_loader, mut state, transform) in changed_chunk_loaders {
-        let chunk_position = chunk_position_from_transform::<CHUNK_SIZE>(transform);
+        let chunk_position = chunk_position_from_transform::<S>(&load_chunks.shape.0, transform);
         if chunk_position != state.chunk_position {
             tracing::debug!(?chunk_position, radius=?chunk_loader.radius, "trigger chunk loads");
 
@@ -139,13 +152,23 @@ fn remove_chunk_loader_states(
     }
 }
 
+#[derive(Debug, Resource)]
+struct ChunkLoaderShape<S>(S);
+
 #[derive(SystemParam)]
-struct LoadChunks<'w, 's, const CHUNK_SIZE: usize> {
+struct LoadChunks<'w, 's, S>
+where
+    S: ChunkShape,
+{
     chunk_map: Res<'w, ChunkMap>,
     commands: Commands<'w, 's>,
+    shape: Res<'w, ChunkLoaderShape<S>>,
 }
 
-impl<'w, 's, const CHUNK_SIZE: usize> LoadChunks<'w, 's, CHUNK_SIZE> {
+impl<'w, 's, S> LoadChunks<'w, 's, S>
+where
+    S: ChunkShape,
+{
     fn load_all(&mut self, positions: impl IntoIterator<Item = Point3<i32>>) {
         for chunk_position in positions {
             if !self.chunk_map.contains(chunk_position) {
@@ -155,15 +178,18 @@ impl<'w, 's, const CHUNK_SIZE: usize> LoadChunks<'w, 's, CHUNK_SIZE> {
                 // though on second thought it might be a good idea to make sure this can't
                 // endlessly create entities if e.g. the chunk map system doesn't work.
 
-                let origin = (CHUNK_SIZE as i32 * chunk_position).cast::<f32>();
-                let aabb = Aabb::from_size(origin, Vector3::repeat(CHUNK_SIZE as f32));
+                let chunk_size: i32 = self.shape.0.side_length().try_into().unwrap();
+                let origin = (chunk_size as i32 * chunk_position).cast::<f32>();
+                let aabb = Aabb::from_size(origin, Vector3::repeat(chunk_size as f32));
 
                 let entity = self
                     .commands
                     .spawn((
                         ChunkPosition(chunk_position),
                         LocalTransform::from(origin),
-                        GenerateChunk,
+                        GenerateChunk {
+                            shape: self.shape.0.clone(),
+                        },
                         FrustrumCulled { aabb },
                     ))
                     .id();
@@ -174,15 +200,18 @@ impl<'w, 's, const CHUNK_SIZE: usize> LoadChunks<'w, 's, CHUNK_SIZE> {
     }
 }
 
-fn chunk_position_from_transform<const CHUNK_SIZE: usize>(
-    transform: &GlobalTransform,
-) -> Point3<i32> {
+fn chunk_position_from_transform<S>(shape: &S, transform: &GlobalTransform) -> Point3<i32>
+where
+    S: ChunkShape,
+{
+    let chunk_size: i32 = shape.side_length().try_into().unwrap();
+
     (transform
         .position()
         .coords
         .try_cast::<i32>()
         .unwrap()
-        .map(|c| c.div_euclid(CHUNK_SIZE as i32)))
+        .map(|c| c.div_euclid(chunk_size)))
     .into()
 }
 

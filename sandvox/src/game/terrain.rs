@@ -1,9 +1,6 @@
 use std::time::Instant;
 
-use bevy_ecs::{
-    resource::Resource,
-    system::Res,
-};
+use bevy_ecs::resource::Resource;
 use nalgebra::{
     Point3,
     Vector2,
@@ -24,14 +21,10 @@ use serde::{
 };
 
 use crate::{
-    game::{
-        CHUNK_SIZE,
-        block_type::{
-            BlockType,
-            BlockTypes,
-        },
+    game::block_type::{
+        BlockType,
+        BlockTypes,
     },
-    render::atlas::AtlasHandle,
     util::noise::{
         FractalNoise,
         NoiseFn,
@@ -43,7 +36,11 @@ use crate::{
     voxel::{
         BlockFace,
         Voxel,
-        chunk::Chunk,
+        VoxelData,
+        chunk::{
+            Chunk,
+            ChunkShape,
+        },
         chunk_generator::ChunkGenerator,
     },
 };
@@ -65,32 +62,26 @@ pub struct TerrainVoxel {
     pub block_type: BlockType,
 }
 
-impl Voxel for TerrainVoxel {
-    type FetchData = Res<'static, BlockTypes>;
-    type Data = BlockTypes;
-
+impl VoxelData<TerrainVoxel> for BlockTypes {
     #[inline]
-    fn texture<'a>(
-        &'a self,
-        face: BlockFace,
-        block_types: &'a BlockTypes,
-    ) -> Option<&'a AtlasHandle> {
-        block_types[self.block_type].face_texture(face)
+    fn texture(&self, voxel: &TerrainVoxel, face: BlockFace) -> Option<u32> {
+        self[voxel.block_type]
+            .face_texture(face)
+            .map(|texture| texture.id())
     }
 
     #[inline]
-    fn is_opaque(&self, block_types: &BlockTypes) -> bool {
-        let block_type_data = &block_types[self.block_type];
-        block_type_data.is_opaque
+    fn is_opaque(&self, voxel: &TerrainVoxel) -> bool {
+        self[voxel.block_type].is_opaque
     }
 
     #[inline]
-    fn can_merge(&self, other: &Self, block_types: &BlockTypes) -> bool {
-        let _ = block_types;
-        // todo: proper check (e.g. for log textures). this needs to know the face.
-        self.block_type == other.block_type
+    fn can_merge(&self, first: &TerrainVoxel, second: &TerrainVoxel) -> bool {
+        first.block_type == second.block_type
     }
 }
+
+impl Voxel for TerrainVoxel {}
 
 #[derive(Debug, Resource)]
 pub struct TerrainGenerator {
@@ -110,7 +101,7 @@ pub struct TerrainGenerator {
 }
 
 impl TerrainGenerator {
-    pub fn new(world_config: &WorldConfig, block_types: &BlockTypes) -> Self {
+    pub fn new<Tex>(world_config: &WorldConfig, block_types: &BlockTypes<Tex>) -> Self {
         // seed a RNG with the world seed so each individual noise function is seeded
         // differently
         let mut rng = Xoroshiro128PlusPlus::seed_from_u64(world_config.seed.0);
@@ -136,8 +127,11 @@ impl TerrainGenerator {
     }
 }
 
-impl ChunkGenerator<TerrainVoxel, CHUNK_SIZE> for TerrainGenerator {
-    fn early_discard(&self, position: Point3<i32>) -> bool {
+impl<S> ChunkGenerator<TerrainVoxel, S> for TerrainGenerator
+where
+    S: ChunkShape,
+{
+    fn early_discard(&self, position: Point3<i32>, _shape: &S) -> bool {
         // todo: should this be an option on the chunk loader instead? (we should still
         // keep this trait method so the chunk generator can opt out of generating a
         // chunk early before dispatching the request to a thread).
@@ -153,11 +147,10 @@ impl ChunkGenerator<TerrainVoxel, CHUNK_SIZE> for TerrainGenerator {
     }
 
     #[profiling::function]
-    fn generate_chunk(
-        &self,
-        chunk_position: Point3<i32>,
-    ) -> Option<Chunk<TerrainVoxel, CHUNK_SIZE>> {
+    fn generate_chunk(&self, position: Point3<i32>, shape: S) -> Option<Chunk<TerrainVoxel, S>> {
         let start_time = Instant::now();
+
+        let chunk_size = shape.side_length();
 
         #[derive(Debug, Default)]
         struct Cell {
@@ -166,13 +159,13 @@ impl ChunkGenerator<TerrainVoxel, CHUNK_SIZE> for TerrainGenerator {
         }
 
         let mut any_blocks = false;
-        let chunk_y = chunk_position.y as i64 * CHUNK_SIZE as i64;
+        let chunk_y = position.y as i64 * chunk_size as i64;
 
-        let cells = (0..(CHUNK_SIZE * CHUNK_SIZE))
+        let cells = (0..(chunk_size * chunk_size))
             .map(|i| {
                 let chunk_offset = Vector2::from(morton::decode::<[u16; 2]>(i as u32));
-                let point = chunk_position.xz().cast::<f32>() * CHUNK_SIZE as f32
-                    + chunk_offset.cast::<f32>();
+                let point =
+                    position.xz().cast::<f32>() * chunk_size as f32 + chunk_offset.cast::<f32>();
 
                 let surface_height = self.surface_height.evaluate_at(point) as i64;
                 let dirt_depth = self.dirt_depth.evaluate_at(point) as i64;
@@ -191,9 +184,9 @@ impl ChunkGenerator<TerrainVoxel, CHUNK_SIZE> for TerrainGenerator {
         let mut chunk = None;
 
         if any_blocks {
-            chunk = Some(Chunk::from_fn(move |point| {
+            chunk = Some(Chunk::from_fn(shape, move |point| {
                 let cell = &cells[morton::encode::<[u16; 2]>(point.xz().into()) as usize];
-                let y = chunk_position.y as i64 * CHUNK_SIZE as i64 + point.y as i64;
+                let y = position.y as i64 * chunk_size as i64 + point.y as i64;
 
                 let block_type = if y > cell.surface_height {
                     self.air
@@ -212,7 +205,7 @@ impl ChunkGenerator<TerrainVoxel, CHUNK_SIZE> for TerrainGenerator {
             }));
 
             let elapsed = start_time.elapsed();
-            tracing::trace!(?chunk_position, ?elapsed, "generated chunk");
+            tracing::trace!(?position, ?elapsed, "generated chunk");
         }
 
         chunk
@@ -270,16 +263,16 @@ impl TestChunkGenerator {
     }
 }
 
-impl ChunkGenerator<TerrainVoxel, CHUNK_SIZE> for TestChunkGenerator {
-    fn early_discard(&self, position: Point3<i32>) -> bool {
+impl<S> ChunkGenerator<TerrainVoxel, S> for TestChunkGenerator
+where
+    S: ChunkShape,
+{
+    fn early_discard(&self, position: Point3<i32>, _shape: &S) -> bool {
         position != Point3::origin()
     }
 
-    fn generate_chunk(
-        &self,
-        _chunk_position: Point3<i32>,
-    ) -> Option<Chunk<TerrainVoxel, CHUNK_SIZE>> {
-        Some(Chunk::from_fn(move |_point| {
+    fn generate_chunk(&self, _position: Point3<i32>, shape: S) -> Option<Chunk<TerrainVoxel, S>> {
+        Some(Chunk::from_fn(shape, move |_point| {
             TerrainVoxel {
                 block_type: self.stone,
             }

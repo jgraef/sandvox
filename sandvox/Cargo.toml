@@ -94,8 +94,16 @@ dotenvy = "0.15.7"
 tracing = "0.1.41"
 tracing-subscriber = "0.3.20"
 
+[dev-dependencies]
+criterion = { version = "0.7", features = ["html_reports"] }
+
 [features]
 default = ["puffin", "rcon"]
 puffin = ["dep:puffin", "dep:puffin_http", "profiling/profile-with-puffin"]
 rcon = ["tokio", "dep:sandvox-rcon"]
 tokio = ["dep:tokio", "dep:tokio-util", "dep:futures-lite"]
+
+
+[[bench]]
+name = "mesh_chunk"
+harness = false

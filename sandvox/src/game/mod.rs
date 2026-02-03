@@ -144,6 +144,7 @@ use crate::{
         stats_alloc::bytes_allocated,
     },
     voxel::{
+        chunk::MortonShape,
         chunk_generator::ChunkGeneratorPlugin,
         chunk_map::{
             ChunkMapPlugin,
@@ -162,7 +163,9 @@ use crate::{
     wgpu::WgpuContext,
 };
 
-pub const CHUNK_SIZE: usize = 32;
+const CHUNK_SIZE: usize = 32;
+pub type ChunkShape = MortonShape<CHUNK_SIZE>;
+//pub type ChunkShape = LinearShape<CHUNK_SIZE>;
 
 #[derive(Clone, Debug, Default)]
 pub struct GamePlugin {
@@ -252,17 +255,19 @@ impl Plugin for GamePlugin {
             .add_plugin(CameraControllerPlugin)?
             .add_plugin(ChunkMeshPlugin::<
                 TerrainVoxel,
-                GreedyMesher<TerrainVoxel, CHUNK_SIZE>,
-                //NaiveMesher,
-                CHUNK_SIZE,
+                ChunkShape,
+                BlockTypes,
+                GreedyMesher<TerrainVoxel, ChunkShape>,
             >::default())?
             .add_plugin(ChunkMapPlugin)?
-            .add_plugin(ChunkLoaderPlugin::<CHUNK_SIZE>)?
+            .add_plugin(ChunkLoaderPlugin {
+                shape: ChunkShape::default(),
+            })?
             .add_plugin(ChunkGeneratorPlugin::<
                 TerrainVoxel,
+                ChunkShape,
                 TerrainGenerator,
                 //TestChunkGenerator,
-                CHUNK_SIZE,
             >::new(self.game_config.chunk_generator_config))?
             .add_plugin(SkyboxPlugin)?
             .add_systems(
