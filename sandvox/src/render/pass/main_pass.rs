@@ -334,10 +334,10 @@ fn render_main_pass(
     surfaces: Populated<&Surface>,
     mut render_functions: MainPassRenderFunctions,
     any_wireframe: Query<(), (With<MainPass>, With<Wireframe>)>,
-    any_depth_prepass: Query<(), (With<MainPass>, With<Wireframe>)>,
+    any_depth_prepass: Query<(), (With<MainPass>, With<DepthPrepass>)>,
 ) {
-    let any_wireframe = any_wireframe.is_empty();
-    let any_depth_prepass = any_depth_prepass.is_empty();
+    let any_wireframe = !any_wireframe.is_empty();
+    let any_depth_prepass = !any_depth_prepass.is_empty();
 
     // prepare
     render_functions.opaque().prepare();

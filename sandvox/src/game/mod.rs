@@ -634,18 +634,22 @@ fn handle_keys(
             let mut player = commands.entity(player_entity);
 
             if wireframe_enabled {
-                player.insert(Wireframe);
+                tracing::debug!("disable wireframe");
+                player.remove::<Wireframe>();
             }
             else {
-                player.remove::<Wireframe>();
+                tracing::debug!("enable wireframe");
+                player.insert(Wireframe);
             }
         }
 
         if keys.just_pressed.contains(&KeyCode::F7) {
             if show_ui_layout.is_none() {
+                tracing::debug!("enable ui outlines");
                 commands.insert_resource(ShowDebugOutlines);
             }
             else {
+                tracing::debug!("disable ui outlines");
                 commands.remove_resource::<ShowDebugOutlines>();
             }
         }
