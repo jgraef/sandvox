@@ -1,5 +1,6 @@
 pub mod greedy_quads;
 pub mod naive;
+pub mod opacity_mask;
 
 use std::{
     marker::PhantomData,

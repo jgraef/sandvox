@@ -28,7 +28,10 @@ use sandvox::{
         mesh::{
             ChunkMesher,
             greedy_quads::GreedyMesher,
-            naive::NaiveMesher,
+            naive::{
+                NaiveHullMesher,
+                NaiveMesher,
+            },
         },
     },
 };
@@ -103,7 +106,15 @@ where
     });
 
     let mut chunk_mesher = <NaiveMesher as ChunkMesher<TestVoxel, S>>::new(&shape);
-    group.bench_function(format!("naive/{shape_name}"), |b| {
+    group.bench_function(format!("naive_all/{shape_name}"), |b| {
+        b.iter(|| {
+            chunk_mesher.mesh_chunk(black_box(chunks.next().unwrap()), &mut mesh_builder, &());
+            mesh_builder.clear();
+        })
+    });
+
+    let mut chunk_mesher = <NaiveHullMesher as ChunkMesher<TestVoxel, S>>::new(&shape);
+    group.bench_function(format!("naive_hull/{shape_name}"), |b| {
         b.iter(|| {
             chunk_mesher.mesh_chunk(black_box(chunks.next().unwrap()), &mut mesh_builder, &());
             mesh_builder.clear();

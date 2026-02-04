@@ -1,5 +1,3 @@
-use std::marker::PhantomData;
-
 use nalgebra::{
     Point2,
     Point3,
@@ -7,6 +5,10 @@ use nalgebra::{
 
 use crate::{
     render::mesh::MeshBuilder,
+    util::{
+        bitmask,
+        bitmatrix_transpose::BitMatrix,
+    },
     voxel::{
         BlockFace,
         Voxel,
@@ -18,24 +20,18 @@ use crate::{
         mesh::{
             ChunkMesher,
             UnorientedQuad,
-            greedy_quads::tranpose::{
-                BitMatrix,
-                ColumnView,
-                OpacityMaskView,
-                RowView,
-            },
+            opacity_mask::OpacityMasks,
         },
     },
 };
 
 #[derive(Debug)]
-pub struct GreedyMesher<V, S> {
+pub struct GreedyMesher<V> {
     opacity: OpacityMasks,
     mesh_face_buffer: MeshFaceBuffer<V>,
-    _marker: PhantomData<fn() -> S>,
 }
 
-impl<V, S> ChunkMesher<V, S> for GreedyMesher<V, S>
+impl<V, S> ChunkMesher<V, S> for GreedyMesher<V>
 where
     S: ChunkShape,
     V: Voxel,
@@ -44,7 +40,6 @@ where
         Self {
             opacity: OpacityMasks::new(shape),
             mesh_face_buffer: MeshFaceBuffer::new(shape),
-            _marker: PhantomData,
         }
     }
 
@@ -72,7 +67,7 @@ where
         self.mesh_face_buffer.mesh_faces(
             chunk_size,
             xy_voxel,
-            |xy| front_face_mask(self.opacity.opacity_xy(xy)),
+            |xy| self.opacity.opacity_xy(xy).front_face_mask(),
             |quad| mesh_quad(&quad, BlockFace::Front),
             data,
         );
@@ -81,7 +76,7 @@ where
         self.mesh_face_buffer.mesh_faces(
             chunk_size,
             xy_voxel,
-            |xy| back_face_mask(self.opacity.opacity_xy(xy)),
+            |xy| self.opacity.opacity_xy(xy).back_face_mask(),
             |quad| mesh_quad(&quad, BlockFace::Back),
             data,
         );
@@ -90,7 +85,7 @@ where
         self.mesh_face_buffer.mesh_faces(
             chunk_size,
             zy_voxel,
-            |zy| front_face_mask(self.opacity.opacity_zy(zy)),
+            |zy| self.opacity.opacity_zy(zy).front_face_mask(),
             |quad| mesh_quad(&quad, BlockFace::Left),
             data,
         );
@@ -99,7 +94,7 @@ where
         self.mesh_face_buffer.mesh_faces(
             chunk_size,
             zy_voxel,
-            |zy| back_face_mask(self.opacity.opacity_zy(zy)),
+            |zy| self.opacity.opacity_zy(zy).back_face_mask(),
             |quad| mesh_quad(&quad, BlockFace::Right),
             data,
         );
@@ -108,7 +103,7 @@ where
         self.mesh_face_buffer.mesh_faces(
             chunk_size,
             xz_voxel,
-            |xz| front_face_mask(self.opacity.opacity_xz(xz)),
+            |xz| self.opacity.opacity_xz(xz).front_face_mask(),
             |quad| mesh_quad(&quad, BlockFace::Down),
             data,
         );
@@ -117,7 +112,7 @@ where
         self.mesh_face_buffer.mesh_faces(
             chunk_size,
             xz_voxel,
-            |xz| back_face_mask(self.opacity.opacity_xz(xz)),
+            |xz| self.opacity.opacity_xz(xz).back_face_mask(),
             |quad| mesh_quad(&quad, BlockFace::Up),
             data,
         );
@@ -289,269 +284,4 @@ struct GreedyQuad<V> {
     inner: UnorientedQuad,
     /// which voxels are covered by this quad in X direction
     mask: u64,
-}
-
-/// Opacity masks for 3 axis: XY, ZY, XZ
-#[derive(Debug)]
-struct OpacityMasks {
-    /// The outer array has one element per direction. They contain the same
-    /// data (if a voxel is opaque or not), but a different axis is stored in
-    /// the bits.
-    ///
-    /// The outer array corresponds to faces: XY, ZY, XZ. Or equivalently the
-    /// bit masks correspond to stacks along Z, X and Y axis.
-    ///
-    /// Each inner array is in morton-order. Two axis (e.g. XY) are mapped to
-    /// array elements. The third axis (e.g. Z) is represented by individual
-    /// bits in the array entries.
-    xy: Box<[u64]>,
-    zy: Box<[u64]>,
-    xz: Box<[u64]>,
-}
-
-impl OpacityMasks {
-    fn new<S>(shape: &S) -> Self
-    where
-        S: ChunkShape,
-    {
-        // This is rather large (288 KiB for 64^3 chunks) so it is
-        // heap-allocated.
-        //
-        // The implementation of [`Default` for `Box`][1] seems to not
-        // construct the value on the stack and then move it, but
-        // initialize it on the heap directly - which is desired.
-        //
-        // Unfortunately for some reason `Default` is not implemented for large
-        // arrays, so we can't use that. Let's just hope this is optimized.
-        //
-        // [1]: https://doc.rust-lang.org/src/alloc/boxed.rs.html#1694
-
-        let side_length = shape.side_length();
-        let num_voxels = side_length * side_length * side_length;
-
-        Self {
-            xy: vec![0; num_voxels].into_boxed_slice(),
-            zy: vec![0; num_voxels].into_boxed_slice(),
-            xz: vec![0; num_voxels].into_boxed_slice(),
-        }
-    }
-
-    #[profiling::function]
-    fn fill<V, S, D>(&mut self, chunk: &Chunk<V, S>, data: &D)
-    where
-        V: Voxel,
-        S: ChunkShape,
-        D: VoxelData<V>,
-    {
-        let chunk_size = chunk.shape().side_length();
-
-        // fill XY opacity matrix
-        for i in 0..(chunk_size * chunk_size) {
-            let [x, y] = morton::decode::<[u16; 2]>(i.try_into().unwrap());
-            let mut mask_i = 0;
-            for z in 0..chunk_size as u16 {
-                if data.is_opaque(&chunk[Point3::new(x, y, z)]) {
-                    mask_i |= 1 << z;
-                }
-            }
-            self.xy[i] = mask_i;
-        }
-
-        // flip X and Z
-        self.zy.copy_from_slice(&self.xy);
-        for y in 0..chunk_size as u16 {
-            OpacityMaskView {
-                mask: &mut self.zy,
-                side_length: chunk_size,
-                view: RowView { y },
-            }
-            .transpose();
-        }
-
-        // flip Y and Z
-        self.xz.copy_from_slice(&self.xy);
-        for x in 0..chunk_size as u16 {
-            OpacityMaskView {
-                mask: &mut self.xz,
-                side_length: chunk_size,
-                view: ColumnView { x },
-            }
-            .transpose();
-        }
-    }
-
-    #[inline]
-    fn opacity_xy(&self, xy: Point2<u16>) -> u64 {
-        let i: usize = morton::encode::<[u16; 2]>(xy.into()).try_into().unwrap();
-        self.xy[i]
-    }
-
-    #[inline]
-    fn opacity_zy(&self, zy: Point2<u16>) -> u64 {
-        let i: usize = morton::encode::<[u16; 2]>(zy.into()).try_into().unwrap();
-        self.zy[i]
-    }
-
-    #[inline]
-    fn opacity_xz(&self, xz: Point2<u16>) -> u64 {
-        let i: usize = morton::encode::<[u16; 2]>(xz.into()).try_into().unwrap();
-        self.xz[i]
-    }
-}
-
-#[inline]
-fn front_face_mask(opacity_mask: u64) -> u64 {
-    opacity_mask & !(opacity_mask << 1)
-}
-
-#[inline]
-fn back_face_mask(opacity_mask: u64) -> u64 {
-    opacity_mask & !(opacity_mask >> 1)
-}
-
-mod tranpose {
-    // stuff to transpose bit matrices
-
-    use crate::voxel::mesh::greedy_quads::bitmask;
-
-    pub trait View {
-        fn index(&self, index: usize) -> usize;
-    }
-
-    #[derive(Clone, Copy, Debug)]
-    pub struct RowView {
-        pub y: u16,
-    }
-
-    impl View for RowView {
-        #[inline]
-        fn index(&self, index: usize) -> usize {
-            usize::try_from(morton::encode::<[u16; 2]>([
-                u16::try_from(index).unwrap(),
-                self.y,
-            ]))
-            .unwrap()
-        }
-    }
-
-    #[derive(Clone, Copy, Debug)]
-    pub struct ColumnView {
-        pub x: u16,
-    }
-
-    impl View for ColumnView {
-        #[inline]
-        fn index(&self, index: usize) -> usize {
-            usize::try_from(morton::encode::<[u16; 2]>([
-                self.x,
-                u16::try_from(index).unwrap(),
-            ]))
-            .unwrap()
-        }
-    }
-
-    #[derive(Debug)]
-    pub struct OpacityMaskView<'a, V> {
-        pub mask: &'a mut [u64],
-        pub side_length: usize,
-        pub view: V,
-    }
-
-    impl<'a, V> BitMatrix for OpacityMaskView<'a, V>
-    where
-        V: View,
-    {
-        #[inline]
-        fn len(&self) -> usize {
-            self.side_length
-        }
-
-        #[inline]
-        fn get_mut_2(&mut self, rows: [usize; 2]) -> [&mut u64; 2] {
-            let indices = rows.map(|row| self.view.index(row));
-            slice_get_mut_2(self.mask, indices)
-        }
-    }
-
-    pub trait BitMatrix {
-        fn len(&self) -> usize;
-        fn get_mut_2(&mut self, rows: [usize; 2]) -> [&mut u64; 2];
-
-        /// Taken from [`dsnet/matrix-transpose`][1]
-        ///
-        /// [1]: https://github.com/dsnet/matrix-transpose
-        #[profiling::function]
-        fn transpose(&mut self) {
-            //let mut swap_width = 64;
-            //let mut swap_mask = u64::MAX;
-
-            let mut swap_width = self.len();
-            if swap_width < 2 {
-                return;
-            }
-            assert!(swap_width.is_power_of_two());
-
-            let mut swap_mask = bitmask(swap_width);
-
-            let mut outer_count = 1;
-
-            while swap_width != 1 {
-                swap_width >>= 1;
-                swap_mask = swap_mask ^ (swap_mask >> swap_width);
-
-                for outer in 0..outer_count {
-                    for inner in 0..swap_width {
-                        let inner_offset = inner + outer * swap_width * 2;
-                        let [x, y] = self.get_mut_2([inner_offset, inner_offset + swap_width]);
-
-                        *x = ((*y << swap_width) & swap_mask) ^ *x;
-                        *y = ((*x & swap_mask) >> swap_width) ^ *y;
-                        *x = ((*y << swap_width) & swap_mask) ^ *x;
-                    }
-                }
-
-                outer_count <<= 1;
-            }
-        }
-    }
-
-    impl BitMatrix for [u64] {
-        #[inline]
-        fn len(&self) -> usize {
-            <[_]>::len(self)
-        }
-
-        #[inline]
-        fn get_mut_2(&mut self, rows: [usize; 2]) -> [&mut u64; 2] {
-            slice_get_mut_2(self, rows)
-        }
-    }
-
-    fn slice_get_mut_2<T>(slice: &mut [T], [i, j]: [usize; 2]) -> [&mut T; 2] {
-        if i < j {
-            let (left, right) = slice.split_at_mut(j);
-            [&mut left[i], &mut right[0]]
-        }
-        else if j < i {
-            let (left, right) = slice.split_at_mut(i);
-            [&mut right[0], &mut left[j]]
-        }
-        else {
-            panic!("Both indices can't be equal: {i} != {j}");
-        }
-    }
-}
-
-#[inline]
-fn bitmask(n: usize) -> u64 {
-    assert!(n <= 64);
-    if n < 64 {
-        (1 << n) - 1
-    }
-    else if n == 64 {
-        u64::MAX
-    }
-    else {
-        unreachable!();
-    }
 }

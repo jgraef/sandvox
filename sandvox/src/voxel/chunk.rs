@@ -48,6 +48,11 @@ where
             .enumerate()
             .map(|(i, voxel)| (self.shape.decode(i), voxel))
     }
+
+    #[inline]
+    pub fn get(&self, point: Point3<u16>) -> Option<&V> {
+        self.voxels.get(self.shape.encode(point))
+    }
 }
 
 impl<V, S> Chunk<V, S> {

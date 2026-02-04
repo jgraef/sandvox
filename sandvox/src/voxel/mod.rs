@@ -6,6 +6,8 @@ pub mod mesh;
 
 use std::fmt::Debug;
 
+use nalgebra::Vector3;
+
 pub trait Voxel: Clone + Debug + Send + Sync + 'static {}
 
 pub trait VoxelData<V>: Clone + Send + Sync + 'static {
@@ -34,4 +36,16 @@ impl BlockFace {
         Self::Front,
         Self::Back,
     ];
+
+    #[inline]
+    pub fn neighbor(&self) -> Vector3<i16> {
+        match self {
+            BlockFace::Left => Vector3::new(-1, 0, 0),
+            BlockFace::Right => Vector3::new(1, 0, 0),
+            BlockFace::Down => Vector3::new(0, -1, 0),
+            BlockFace::Up => Vector3::new(0, 1, 0),
+            BlockFace::Front => Vector3::new(0, 0, -1),
+            BlockFace::Back => Vector3::new(0, 0, 1),
+        }
+    }
 }

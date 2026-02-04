@@ -1,3 +1,4 @@
+pub mod bitmatrix_transpose;
 pub mod image;
 pub mod noise;
 pub mod oneshot;
@@ -66,4 +67,18 @@ macro_rules! define_atomic_id {
             }
         }
     };
+}
+
+#[inline]
+pub fn bitmask(n: usize) -> u64 {
+    assert!(n <= 64);
+    if n < 64 {
+        (1 << n) - 1
+    }
+    else if n == 64 {
+        u64::MAX
+    }
+    else {
+        unreachable!();
+    }
 }

@@ -257,7 +257,7 @@ impl Plugin for GamePlugin {
                 TerrainVoxel,
                 ChunkShape,
                 BlockTypes,
-                GreedyMesher<TerrainVoxel, ChunkShape>,
+                GreedyMesher<TerrainVoxel>,
             >::default())?
             .add_plugin(ChunkMapPlugin)?
             .add_plugin(ChunkLoaderPlugin {
