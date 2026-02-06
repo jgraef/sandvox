@@ -28,6 +28,10 @@ pub fn print(path: impl AsRef<Path>, json_output: Option<&Path>) -> Result<(), E
         .default_scene()
         .ok_or_else(|| eyre!("No default scene"))?;
 
+    if let Some(name) = scene.name() {
+        println!("- Scene: {name}");
+    }
+
     fn print_node(node: &Node, depth: usize) {
         print_ident(depth);
         println!("- Node #{}: {:?}", node.index(), node.name());
@@ -47,7 +51,7 @@ pub fn print(path: impl AsRef<Path>, json_output: Option<&Path>) -> Result<(), E
 
                 let aabb = primitive.bounding_box();
                 print_ident(depth);
-                println!("    - AABB: {aabb:?}");
+                println!("      - AABB: {aabb:?}");
 
                 if let Some(indices) = primitive.indices() {
                     let view = indices.view().unwrap();
@@ -60,7 +64,7 @@ pub fn print(path: impl AsRef<Path>, json_output: Option<&Path>) -> Result<(), E
 
                     print_ident(depth);
                     println!(
-                        "    - Indices: {:?}x{}, {:?}, {}..+{}",
+                        "      - Indices: {:?}x{}, {:?}, {}..+{}",
                         indices.data_type(),
                         indices.count(),
                         indices.dimensions(),
@@ -80,7 +84,7 @@ pub fn print(path: impl AsRef<Path>, json_output: Option<&Path>) -> Result<(), E
 
                     print_ident(depth);
                     println!(
-                        "    - {semantic:?}: {:?}x{}, {:?}, {}..+{}",
+                        "      - {semantic:?}: {:?}x{}, {:?}, {}..+{}",
                         attribute.data_type(),
                         attribute.count(),
                         attribute.dimensions(),
@@ -106,7 +110,7 @@ pub fn print(path: impl AsRef<Path>, json_output: Option<&Path>) -> Result<(), E
     }
 
     for animation in gltf.animations() {
-        println!("- Animation #{}: {:?}", animation.index(), animation.name(),);
+        println!("- Animation #{}: {:?}", animation.index(), animation.name());
 
         for channel in animation.channels() {
             let target = channel.target();
@@ -119,6 +123,20 @@ pub fn print(path: impl AsRef<Path>, json_output: Option<&Path>) -> Result<(), E
                 target.property(),
             );
         }
+    }
+
+    for sampler in gltf.samplers() {
+        if let Some(index) = sampler.index() {
+            println!("- Sampler #{}: {:?}", index, sampler.name());
+        }
+        else {
+            println!("- Sampler (default): {:?}", sampler.name());
+        }
+
+        println!("  - Mag Filter: {:?}", sampler.mag_filter());
+        println!("  - Min Filter: {:?}", sampler.min_filter());
+        println!("  - Wrapping Mode S: {:?}", sampler.wrap_s());
+        println!("  - Wrapping Mode T: {:?}", sampler.wrap_t());
     }
 
     Ok(())

@@ -176,8 +176,8 @@ impl MeshBuilder {
                     usage: wgpu::BufferUsages::STORAGE,
                 });
 
-            let num_vertices = self.vertices.len();
-            let num_indices = 3 * self.faces.len();
+            let num_vertices = self.vertices.len().try_into().unwrap();
+            let num_indices = (3 * self.faces.len()).try_into().unwrap();
 
             let bind_group = wgpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some(&format!("{label} bind group")),
@@ -197,9 +197,13 @@ impl MeshBuilder {
             Some(Mesh {
                 vertex_buffer,
                 index_buffer,
-                num_vertices,
-                num_indices,
                 bind_group,
+                span: MeshBufferSpan {
+                    vertex_buffer_offset: 0,
+                    num_vertices,
+                    index_buffer_offset: 0,
+                    num_indices,
+                },
             })
         }
     }
@@ -209,6 +213,8 @@ impl MeshBuilder {
 #[repr(C)]
 struct Instance {
     model_matrix: Matrix4<f32>,
+    vertex_buffer_offset: u32,
+    _padding: [u32; 3],
 }
 
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -225,17 +231,23 @@ pub struct Vertex {
 pub struct Mesh {
     pub vertex_buffer: wgpu::Buffer,
     pub index_buffer: wgpu::Buffer,
-
-    pub num_vertices: usize,
-    pub num_indices: usize,
-
     pub bind_group: wgpu::BindGroup,
+    pub span: MeshBufferSpan,
 }
 
 impl Mesh {
     pub fn byte_size(&self) -> usize {
-        size_of::<Vertex>() * self.num_vertices + size_of::<u32>() * self.num_indices
+        size_of::<Vertex>() * usize::try_from(self.span.num_vertices).unwrap()
+            + size_of::<u32>() * usize::try_from(self.span.num_indices).unwrap()
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct MeshBufferSpan {
+    pub vertex_buffer_offset: u32,
+    pub num_vertices: u32,
+    pub index_buffer_offset: u32,
+    pub num_indices: u32,
 }
 
 #[derive(Debug, Resource)]
@@ -507,7 +519,7 @@ fn update_instance_buffer(
     wgpu: Res<WgpuContext>,
     layout: Res<MeshPipelineLayout>,
     mut instance_buffer: ResMut<InstanceBuffer>,
-    meshes: Populated<(Entity, &GlobalTransform, Option<&mut InstanceId>), With<Mesh>>,
+    meshes: Populated<(Entity, &Mesh, &GlobalTransform, Option<&mut InstanceId>)>,
     mut commands: Commands,
     mut instance_data: Local<Vec<Instance>>,
     mut staging: ResMut<Staging>,
@@ -516,11 +528,13 @@ fn update_instance_buffer(
     assert!(instance_data.is_empty());
 
     // create data for instance buffer
-    for (entity, transform, instance_id) in meshes {
+    for (entity, mesh, transform, instance_id) in meshes {
         let id = instance_data.len().try_into().unwrap();
 
         instance_data.push(Instance {
             model_matrix: transform.isometry.to_homogeneous(),
+            vertex_buffer_offset: mesh.span.vertex_buffer_offset,
+            ..Zeroable::zeroed()
         });
 
         if let Some(mut instance_id) = instance_id {
@@ -566,11 +580,15 @@ impl<P> Default for RenderMeshes<P> {
 trait RenderMeshesForPhase: Send + Sync + 'static {
     fn scope_label() -> &'static str;
     fn get_pipeline(pipeline: &MeshPipeline) -> &wgpu::RenderPipeline;
-    fn vertices(num_indices: usize) -> Range<u32>;
 
     #[inline]
-    fn count_stats(stats: &mut RenderMeshStatistics, culled: bool, num_vertices: usize) {
-        let _ = (stats, culled, num_vertices);
+    fn vertices(span: &MeshBufferSpan) -> Range<u32> {
+        span.index_buffer_offset..(span.index_buffer_offset + span.num_indices)
+    }
+
+    #[inline]
+    fn count_stats(stats: &mut RenderMeshStatistics, culled: bool, span: &MeshBufferSpan) {
+        let _ = (stats, culled, span);
     }
 
     #[inline]
@@ -591,18 +609,13 @@ impl RenderMeshesForPhase for phase::Opaque {
     }
 
     #[inline]
-    fn vertices(num_indices: usize) -> Range<u32> {
-        0..u32::try_from(num_indices).unwrap()
-    }
-
-    #[inline]
-    fn count_stats(stats: &mut RenderMeshStatistics, culled: bool, num_vertices: usize) {
+    fn count_stats(stats: &mut RenderMeshStatistics, culled: bool, span: &MeshBufferSpan) {
         if culled {
             stats.num_culled += 1;
         }
         else {
             stats.num_rendered += 1;
-            stats.num_vertices += num_vertices;
+            stats.num_vertices += usize::try_from(span.num_indices).unwrap();
         }
     }
 
@@ -624,10 +637,11 @@ impl RenderMeshesForPhase for phase::Wireframe {
     }
 
     #[inline]
-    fn vertices(num_indices: usize) -> Range<u32> {
+    fn vertices(span: &MeshBufferSpan) -> Range<u32> {
         // n vertices are n/3 triangles, which require n lines to connect, which require
         // 2*n vertices
-        0..u32::try_from(2 * num_indices).unwrap()
+
+        span.index_buffer_offset..(span.index_buffer_offset + 2 * span.num_indices)
     }
 }
 
@@ -643,11 +657,6 @@ impl RenderMeshesForPhase for phase::DepthPrepass {
             .depth_prepass
             .as_ref()
             .expect("no depth-prepass pipeline")
-    }
-
-    #[inline]
-    fn vertices(num_indices: usize) -> Range<u32> {
-        0..u32::try_from(num_indices).unwrap()
     }
 }
 
@@ -703,17 +712,11 @@ where
                 let cull = cull_aabb
                     .is_some_and(|cull_aabb| !camera_frustrum.intersect_aabb(&cull_aabb.aabb));
 
-                if cull {
-                    P::count_stats(&mut stats, true, mesh.num_indices);
-                }
-                else {
-                    render_pass.set_bind_group(2, &mesh.bind_group, &[]);
-                    render_pass.draw(
-                        P::vertices(mesh.num_indices),
-                        instance_id.0..(instance_id.0 + 1),
-                    );
+                P::count_stats(&mut stats, cull, &mesh.span);
 
-                    P::count_stats(&mut stats, false, mesh.num_indices);
+                if !cull {
+                    render_pass.set_bind_group(2, &mesh.bind_group, &[]);
+                    render_pass.draw(P::vertices(&mesh.span), instance_id.0..(instance_id.0 + 1));
                 }
             }
 

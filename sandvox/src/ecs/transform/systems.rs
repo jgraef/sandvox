@@ -19,6 +19,19 @@ use crate::ecs::transform::{
 #[derive(Clone, Copy, Default, PartialEq, Debug, Component, Serialize, Deserialize)]
 pub(super) struct TransformTreeChanged;
 
+pub(super) fn create_global_transforms(
+    query: Populated<Entity, (Without<GlobalTransform>, With<LocalTransform>)>,
+    mut commands: Commands,
+) {
+    // Create global transforms for anything that doesn't have it yet, but has a
+    // local transform
+    query.iter().for_each(|entity| {
+        commands
+            .entity(entity)
+            .insert((GlobalTransform::identity(), TransformTreeChanged));
+    })
+}
+
 /// Update [`GlobalTransform`] component of entities that aren't in the
 /// hierarchy
 ///
@@ -35,10 +48,8 @@ pub(super) fn sync_simple_transforms(
             ),
         >,
         Query<(Ref<LocalTransform>, &mut GlobalTransform), (Without<ChildOf>, Without<Children>)>,
-        Query<(Entity, &LocalTransform), Without<GlobalTransform>>,
     )>,
     mut orphaned: RemovedComponents<ChildOf>,
-    mut commands: Commands,
 ) {
     // Update changed entities.
     query
@@ -58,36 +69,34 @@ pub(super) fn sync_simple_transforms(
             }
         }
     }
-
-    // Create global transforms for anything that doesn't have it yet, but has a
-    // local transform
-    query.p2().iter().for_each(|(entity, local_transform)| {
-        let mut entity = commands.entity(entity);
-        entity.insert((
-            GlobalTransform::from(*local_transform),
-            TransformTreeChanged,
-        ));
-    })
 }
 
 /// Optimization for static scenes. Propagates a "dirty bit" up the hierarchy
 /// towards ancestors. Transform propagation can ignore entire subtrees of the
 /// hierarchy if it encounters an entity without the dirty bit.
 pub(super) fn mark_dirty_trees(
-    changed_transforms: Query<
+    changed_transforms: Populated<
         Entity,
-        Or<(
-            Changed<LocalTransform>,
-            Changed<ChildOf>,
-            Added<GlobalTransform>,
-        )>,
+        (
+            Or<(
+                Changed<LocalTransform>,
+                Changed<ChildOf>,
+                Added<GlobalTransform>,
+            )>,
+            With<LocalTransform>,
+        ),
     >,
     mut orphaned: RemovedComponents<ChildOf>,
     mut transforms: Query<(Option<&ChildOf>, &mut TransformTreeChanged)>,
 ) {
     for entity in changed_transforms.iter().chain(orphaned.read()) {
         let mut next = entity;
-        while let Ok((child_of, mut tree)) = transforms.get_mut(next) {
+
+        loop {
+            let (child_of, mut tree) = transforms
+                .get_mut(next)
+                .expect("entity without TransformTreeChanged in transform hierarchy");
+
             if tree.is_changed() && !tree.is_added() {
                 // If the component was changed, this part of the tree has already been
                 // processed. Ignore this if the change was caused by the

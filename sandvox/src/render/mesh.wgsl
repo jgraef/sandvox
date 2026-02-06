@@ -47,6 +47,8 @@ struct Vertex {
 
 struct Instance {
     model_matrix: mat4x4f,
+    vertex_buffer_offset: u32,
+    // padding: 12 bytes
 }
 
 @group(1)
@@ -67,9 +69,10 @@ fn mesh_shaded_vertex(
     @builtin(vertex_index) vertex_index: u32,
     @builtin(instance_index) instance_index: u32,
 ) -> ShadedOutput {
-    let resolved_vertex_index = index_buffer[vertex_index];
-    let vertex = vertex_buffer[resolved_vertex_index];
     let instance = instance_buffer[instance_index];
+
+    let resolved_vertex_index = index_buffer[vertex_index] + instance.vertex_buffer_offset;
+    let vertex = vertex_buffer[resolved_vertex_index];
 
     let world_position = instance.model_matrix * vertex.position;
     let normal = instance.model_matrix * vertex.normal;
@@ -109,19 +112,23 @@ struct ShadedOutput {
 fn mesh_shaded_fragment(input: ShadedOutput) -> @location(0) vec4f {
     var color: vec4f;
 
-    // todo: figure out where the sun is (https://iurietarlev.github.io/SunpathDiagram/),
-    // but move this out of shader and send light direction/color via frame uniform
-    //let sun_phase = main_pass_uniform.time / 60.0 * 2.0 * PI;
-    //let light_dir = normalize(vec3f(sin(sun_phase), cos(sun_phase), 0.5));
-
+    // todo: use skybox planets as light sources
     let light_color = vec3f(1);
     let light_dir = normalize(vec3f(0.5, 1, 0.5));
+
     let normal = normalize(input.normal.xyz);
     let brightness = 0.5 * dot(normal, light_dir) + 0.5;
 
     // color sampled from texture
-    let uv = atlas_map_uv(input.texture_id, input.uv);
-    color = textureSample(atlas_texture, default_sampler, uv);
+    if input.texture_id < arrayLength(&atlas_data) {
+        let uv = atlas_map_uv(input.texture_id, input.uv);
+        color = textureSample(atlas_texture, default_sampler, uv);
+
+    }
+    else {
+        color = vec4f(0.8, 0.8, 0.8, 1);
+    }
+
     color = vec4f(color.rgb * brightness * light_color, 1);
 
     return color;
@@ -159,10 +166,11 @@ fn mesh_wireframe_vertex(
         `(i / 6) * 3` gives the vertex index for the first index of a triangle.
     */
 
-    var line_vertex_index = ((vertex_index + 1) % 6) / 2 + (vertex_index / 6) * 3;
-    let resolved_vertex_index = index_buffer[line_vertex_index];
-    let vertex = vertex_buffer[resolved_vertex_index];
     let instance = instance_buffer[instance_index];
+
+    var line_vertex_index = ((vertex_index + 1) % 6) / 2 + (vertex_index / 6) * 3;
+    let resolved_vertex_index = index_buffer[line_vertex_index] + instance.vertex_buffer_offset;
+    let vertex = vertex_buffer[resolved_vertex_index];
 
     let world_position = instance.model_matrix * vertex.position;
     let position = main_pass_uniform.camera.projection * main_pass_uniform.camera.view * world_position;
@@ -186,9 +194,10 @@ fn mesh_depth_prepass_vertex(
     @builtin(vertex_index) vertex_index: u32,
     @builtin(instance_index) instance_index: u32,
 ) -> DepthPrepassOutput {
-    let resolved_vertex_index = index_buffer[vertex_index];
-    let vertex = vertex_buffer[resolved_vertex_index];
     let instance = instance_buffer[instance_index];
+
+    let resolved_vertex_index = index_buffer[vertex_index] + instance.vertex_buffer_offset;
+    let vertex = vertex_buffer[resolved_vertex_index];
 
     let world_position = instance.model_matrix * vertex.position;
     let position = main_pass_uniform.camera.projection * main_pass_uniform.camera.view * world_position;

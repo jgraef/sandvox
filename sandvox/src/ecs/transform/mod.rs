@@ -19,6 +19,7 @@ use crate::ecs::{
     },
     schedule,
     transform::systems::{
+        create_global_transforms,
         mark_dirty_trees,
         propagate_parent_transforms,
         sync_simple_transforms,
@@ -44,6 +45,7 @@ impl Plugin for TransformHierarchyPlugin {
             .add_systems(
                 schedule::PostStartup,
                 (
+                    create_global_transforms,
                     mark_dirty_trees,
                     propagate_parent_transforms,
                     sync_simple_transforms,
@@ -54,6 +56,7 @@ impl Plugin for TransformHierarchyPlugin {
             .add_systems(
                 schedule::PostUpdate,
                 (
+                    create_global_transforms,
                     mark_dirty_trees,
                     propagate_parent_transforms,
                     // TODO: Adjust the internal parallel queries to make this system more

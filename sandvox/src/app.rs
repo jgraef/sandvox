@@ -224,7 +224,7 @@ impl App {
                         WorldConfig {
                             seed: WorldSeed::FIXED_DEFAULT,
                             bounds: WorldBounds {
-                                min: Vector3::new(None, Some(-2), Some(1)),
+                                min: Vector3::new(None, Some(-2), Some(-1)),
                                 max: Default::default(),
                             },
                         }

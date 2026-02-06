@@ -113,6 +113,7 @@ use crate::{
             FpsCounterConfig,
         },
         mesh::RenderMeshStatistics,
+        model::ModelLoader,
         pass::main_pass::{
             DepthPrepass,
             Wireframe,
@@ -376,6 +377,7 @@ enum PlanetId {
 fn create_terrain_generator(
     block_types: Res<BlockTypes>,
     world_config: Res<WorldConfig>,
+
     mut commands: Commands,
 ) {
     commands.insert_resource(TerrainGenerator::new(&world_config, &block_types));
@@ -388,11 +390,12 @@ fn init_player(
     sprites: Res<Sprites>,
     mut fps_counter_config: ResMut<FpsCounterConfig>,
     mut commands: Commands,
+    mut model_loader: ModelLoader,
 ) {
     tracing::debug!("initializing world");
 
     let chunk_side_length = CHUNK_SIZE as f32;
-    let chunk_center = Point3::from(Vector3::repeat(0.5 * chunk_side_length));
+    let _chunk_center = Point3::from(Vector3::repeat(0.5 * chunk_side_length));
 
     // spawn window
     let window = commands
@@ -404,33 +407,41 @@ fn init_player(
         ))
         .id();
 
-    // spawn camera
-    let mut camera = commands.spawn((
-        Name::new("main_camera"),
-        RenderTarget(window),
-        ClearColor(palette::named::LIGHTSKYBLUE.into_format().with_alpha(1.0)),
-        Camera {
-            aspect_ratio: 1.0,
-            fovy: render_config.fov.to_radians(),
-            z_near: 0.1,
-            z_far: config.chunk_render_distance as f32 * CHUNK_SIZE as f32,
-        },
-        LocalTransform::from(chunk_center + chunk_side_length * Vector3::y()),
-        CameraController {
-            state: CameraControllerState {
-                yaw: 0.0,
-                pitch: 0.0,
+    {
+        // spawn camera
+        let mut camera = commands.spawn((
+            Name::new("main_camera"),
+            RenderTarget(window),
+            ClearColor(palette::named::LIGHTSKYBLUE.into_format().with_alpha(1.0)),
+            Camera {
+                aspect_ratio: 1.0,
+                fovy: render_config.fov.to_radians(),
+                z_near: 0.1,
+                z_far: config.chunk_render_distance as f32 * CHUNK_SIZE as f32,
             },
-            config: config.camera_controller.clone(),
-        },
-        ChunkLoader {
-            radius: Vector3::repeat(config.chunk_load_distance),
-        },
-        Player,
-    ));
+            LocalTransform::from(Vector3::new(0.0, 2.0, -2.0)),
+            CameraController {
+                state: CameraControllerState {
+                    yaw: 0.0,
+                    pitch: 0.0,
+                },
+                config: config.camera_controller.clone(),
+            },
+            ChunkLoader {
+                radius: Vector3::repeat(config.chunk_load_distance),
+            },
+            Player,
+        ));
 
-    if render_config.depth_prepass {
-        camera.insert(DepthPrepass);
+        if render_config.depth_prepass {
+            camera.insert(DepthPrepass);
+        }
+    }
+
+    {
+        // load robot model
+        let mut robot = model_loader.load_scene("assets/robot_merged.glb").unwrap();
+        robot.insert(LocalTransform::from(Vector3::new(0.0, 1.0, 0.0)));
     }
 
     {
