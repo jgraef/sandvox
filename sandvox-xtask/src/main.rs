@@ -1,3 +1,4 @@
+pub mod model;
 pub mod skybox;
 pub mod tres;
 
@@ -40,6 +41,12 @@ enum Command {
         #[clap(subcommand)]
         command: sandvox_rcon_client::Command,
     },
+    PrintGltf {
+        #[clap(short, long)]
+        json_output: Option<PathBuf>,
+
+        path: PathBuf,
+    },
 }
 
 #[tokio::main]
@@ -65,6 +72,9 @@ async fn main() -> Result<(), Error> {
         Command::Rcon { address, command } => {
             let mut client = RconClient::connect(&address).await?;
             client.send(&command).await?;
+        }
+        Command::PrintGltf { json_output, path } => {
+            model::print(path, json_output.as_deref())?;
         }
     }
 

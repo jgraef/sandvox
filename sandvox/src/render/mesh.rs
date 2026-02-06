@@ -44,7 +44,7 @@ use nalgebra::{
 use wgpu::util::DeviceExt;
 
 use crate::{
-    collide::frustrum::Frustrum,
+    collide::Frustrum,
     ecs::{
         plugin::{
             Plugin,

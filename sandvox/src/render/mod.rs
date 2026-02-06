@@ -3,6 +3,7 @@ pub mod camera;
 pub mod command;
 pub mod fps_counter;
 pub mod mesh;
+pub mod model;
 pub mod pass;
 pub mod render_target;
 pub mod shadow_map;
