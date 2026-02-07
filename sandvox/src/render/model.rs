@@ -38,11 +38,17 @@ use nalgebra::{
 
 use crate::{
     ecs::transform::LocalTransform,
-    render::mesh::{
-        Mesh,
-        MeshBufferSpan,
-        MeshPipelineLayout,
-        Vertex,
+    render::{
+        animation::{
+            Channel,
+            KeyFrame,
+        },
+        mesh::{
+            Mesh,
+            MeshBufferSpan,
+            MeshPipelineLayout,
+            Vertex,
+        },
     },
     wgpu::WgpuContext,
 };
@@ -62,7 +68,16 @@ impl<'w, 's> ModelLoader<'w, 's> {
 
         let mut importer = ModelImporter::new(&gltf)?;
         let mut scene_entity = importer.import_default_scene(&mut self.commands)?;
-        importer.import_meshes(&self.wgpu, &self.mesh_layout, scene_entity.commands_mut())?;
+
+        // reborrow commands from the scene entity
+        let commands = scene_entity.commands_mut();
+
+        // import meshes. this actually creates the mesh buffers and attaches `Mesh`
+        // components
+        importer.import_meshes(&self.wgpu, &self.mesh_layout, commands)?;
+
+        // import animations
+        importer.import_animations(commands)?;
 
         Ok(scene_entity)
     }
@@ -199,6 +214,14 @@ impl<'a> ModelImporter<'a> {
         mesh_layout: &MeshPipelineLayout,
         commands: &mut Commands,
     ) -> Result<(), Error> {
+        if self.load_meshes.is_empty() {
+            // early return.
+            //
+            // not only does this prevent us from trying to create an empty mesh buffer.
+            // this will also avoid returning an error if there is no blob in this file
+            return Ok(());
+        }
+
         let mut loaded_meshes: HashMap<usize, Option<(MeshBufferSpan, gltf::Primitive<'_>)>> =
             HashMap::new();
 
@@ -237,6 +260,17 @@ impl<'a> ModelImporter<'a> {
                     }
                 }
             }
+        }
+
+        if vertex_buffer_offset == 0 || index_buffer_offset == 0 || loaded_meshes.is_empty() {
+            // all meshes are empty
+
+            // if either is true, all must be true
+            assert!(
+                vertex_buffer_offset == 0 && index_buffer_offset == 0 && loaded_meshes.is_empty()
+            );
+
+            return Ok(());
         }
 
         // allocate buffers
@@ -317,6 +351,97 @@ impl<'a> ModelImporter<'a> {
         }
 
         Ok(())
+    }
+
+    pub fn import_animations(&mut self, commands: &mut Commands) -> Result<(), Error> {
+        // get the blob. return an empty one if necessary
+        let blob = self.gltf.blob.as_deref().unwrap_or_default();
+
+        for animation in self.gltf.animations() {
+            tracing::debug!(name = ?animation.name(), "animation");
+
+            let mut channels = Vec::with_capacity(animation.channels().count());
+
+            for channel in animation.channels() {
+                let target = channel.target();
+
+                let target_entity_id = *self
+                    .node_to_entity
+                    .get(&target.node().index())
+                    .ok_or_else(|| {
+                        eyre!(
+                            "Animation for node that was not imported: #{}",
+                            target.node().index()
+                        )
+                    })?;
+
+                let target_property = target.property();
+
+                tracing::debug!(index = ?channel.index(), ?target_entity_id, ?target_property, "channel");
+
+                let sampler = channel.sampler();
+
+                let input = sampler.input();
+                let output = sampler.output();
+                if input.count() != output.count() {
+                    bail!(
+                        "Animation #{} channel #{} input frame count {} doesn't match output frame count {}",
+                        animation.index(),
+                        channel.index(),
+                        input.count(),
+                        output.count()
+                    );
+                }
+                let num_frames = input.count();
+
+                tracing::debug!(animation = ?animation.name(), data_type = ?input.data_type(), dimensions = ?input.dimensions(), "input");
+                tracing::debug!(animation = ?animation.name(), data_type = ?output.data_type(), dimensions = ?output.dimensions(), "output");
+
+                let channel = match target_property {
+                    gltf::animation::Property::Translation => {
+                        import_animation_channel::<[f32; 3], _>(
+                            blob,
+                            &input,
+                            &output,
+                            num_frames,
+                            |data| Translation3::from(Vector3::from(data)),
+                            |key_frames| {
+                                Channel::Translation {
+                                    target: target_entity_id,
+                                    key_frames,
+                                }
+                            },
+                        )?
+                    }
+                    gltf::animation::Property::Rotation => {
+                        import_animation_channel::<[f32; 4], _>(
+                            blob,
+                            &input,
+                            &output,
+                            num_frames,
+                            |data| UnitQuaternion::new_unchecked(data.into()),
+                            |key_frames| {
+                                Channel::Rotation {
+                                    target: target_entity_id,
+                                    key_frames,
+                                }
+                            },
+                        )?
+                    }
+                    gltf::animation::Property::Scale => {
+                        tracing::warn!("Ignoring scale animation");
+                        continue;
+                    }
+                    gltf::animation::Property::MorphTargetWeights => {
+                        todo!("animate MorphTargetWeights");
+                    }
+                };
+
+                channels.push(channel);
+            }
+        }
+
+        todo!();
     }
 }
 
@@ -451,6 +576,81 @@ fn fill_index_buffer(
     Ok(())
 }
 
+fn convert_transform(transform: gltf::scene::Transform) -> LocalTransform {
+    match transform {
+        gltf::scene::Transform::Matrix { matrix: _ } => {
+            // per glTF spec:
+            //
+            // > When matrix is defined, it MUST be decomposable to TRS properties.
+            //
+            // so we can implement this
+            todo!("Node with matrix transform",);
+        }
+        gltf::scene::Transform::Decomposed {
+            translation,
+            rotation,
+            scale,
+        } => {
+                // from the glTF spec:
+                //
+                // > rotation is a unit quaternion value, XYZW, in the local coordinate system, where W is the scalar.
+                //
+                // from nalgebra:
+                //
+                // > This quaternion as a 4D vector of coordinates in the [ x, y, z, w ] storage order.
+                //
+                // glTF uses a right-handed coordinate system with Z pointing in a different direction than we do, so we need to convert here
+
+                // due to change of handedness we negate X, Y, and Z. and because Z is inverted we negate it again.
+                let mut rotation = Quaternion::from(rotation);
+                rotation.coords.x *= -1.0;
+                rotation.coords.y *= -1.0;
+                let rotation = UnitQuaternion::new_unchecked(rotation);
+
+                let mut translation = Translation3::from(translation);
+                translation.z *= -1.0;
+
+                if scale != [1.0, 1.0, 1.0] {
+                    todo!("scaling");
+                }
+
+                LocalTransform {
+                    isometry: Isometry3::from_parts(
+                        translation,
+                        rotation,
+                    ),
+                }
+            }
+    }
+}
+
+fn import_animation_channel<T, U>(
+    blob: &[u8],
+    input: &gltf::Accessor,
+    output: &gltf::Accessor,
+    num_frames: usize,
+    mut convert_key_frame: impl FnMut(T) -> U,
+    make_channel: impl FnOnce(Vec<KeyFrame<U>>) -> Channel,
+) -> Result<Channel, Error>
+where
+    T: GltfType + AnyBitPattern,
+{
+    let mut input_buffer = BufferReader::<f32>::new(blob, &input)?;
+    let mut output_buffer = BufferReader::<T>::new(blob, &output)?;
+
+    let mut key_frames = Vec::with_capacity(num_frames);
+
+    for i in 0..num_frames {
+        let time = input_buffer.next();
+        key_frames.push(KeyFrame {
+            time,
+            value: convert_key_frame(output_buffer.next()),
+        });
+    }
+
+    Ok(make_channel(key_frames))
+}
+
 struct BufferReader<'a, T> {
     blob_slice: &'a [u8],
     stride: usize,
@@ -560,51 +760,3 @@ impl_gltf_type_for_primitives!(
     u32 => U32,
     f32 => F32,
 );
-
-fn convert_transform(transform: gltf::scene::Transform) -> LocalTransform {
-    match transform {
-        gltf::scene::Transform::Matrix { matrix: _ } => {
-            // per glTF spec:
-            //
-            // > When matrix is defined, it MUST be decomposable to TRS properties.
-            //
-            // so we can implement this
-            todo!("Node with matrix transform",);
-        }
-        gltf::scene::Transform::Decomposed {
-            translation,
-            rotation,
-            scale,
-        } => {
-                // from the glTF spec:
-                //
-                // > rotation is a unit quaternion value, XYZW, in the local coordinate system, where W is the scalar.
-                //
-                // from nalgebra:
-                //
-                // > This quaternion as a 4D vector of coordinates in the [ x, y, z, w ] storage order.
-                //
-                // glTF uses a right-handed coordinate system with Z pointing in a different direction than we do, so we need to convert here
-
-                // due to change of handedness we negate X, Y, and Z. and because Z is inverted we negate it again.
-                let mut rotation = Quaternion::from(rotation);
-                rotation.coords.x *= -1.0;
-                rotation.coords.y *= -1.0;
-                let rotation = UnitQuaternion::new_unchecked(rotation);
-
-                let mut translation = Translation3::from(translation);
-                translation.z *= -1.0;
-
-                if scale != [1.0, 1.0, 1.0] {
-                    todo!("scaling: {scale:?}");
-                }
-
-                LocalTransform {
-                    isometry: Isometry3::from_parts(
-                        translation,
-                        rotation,
-                    ),
-                }
-            }
-    }
-}

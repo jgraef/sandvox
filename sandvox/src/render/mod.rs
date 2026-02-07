@@ -1,3 +1,4 @@
+pub mod animation;
 pub mod atlas;
 pub mod camera;
 pub mod command;
