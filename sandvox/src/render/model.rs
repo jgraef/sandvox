@@ -405,12 +405,7 @@ impl<'a> ModelImporter<'a> {
                             &output,
                             num_frames,
                             |data| Translation3::from(Vector3::from(data)),
-                            |key_frames| {
-                                Channel::Translation {
-                                    target: target_entity_id,
-                                    key_frames,
-                                }
-                            },
+                            |key_frames| Channel::Translation { key_frames },
                         )?
                     }
                     gltf::animation::Property::Rotation => {
@@ -420,12 +415,7 @@ impl<'a> ModelImporter<'a> {
                             &output,
                             num_frames,
                             |data| UnitQuaternion::new_unchecked(data.into()),
-                            |key_frames| {
-                                Channel::Rotation {
-                                    target: target_entity_id,
-                                    key_frames,
-                                }
-                            },
+                            |key_frames| Channel::Rotation { key_frames },
                         )?
                     }
                     gltf::animation::Property::Scale => {
@@ -439,6 +429,8 @@ impl<'a> ModelImporter<'a> {
 
                 channels.push(channel);
             }
+
+            todo!("do something with the channels/animations")
         }
 
         todo!();
@@ -640,7 +632,7 @@ where
 
     let mut key_frames = Vec::with_capacity(num_frames);
 
-    for i in 0..num_frames {
+    for _i in 0..num_frames {
         let time = input_buffer.next();
         key_frames.push(KeyFrame {
             time,
